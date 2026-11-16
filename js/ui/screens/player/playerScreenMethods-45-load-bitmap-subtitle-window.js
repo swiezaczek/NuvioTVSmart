@@ -2,7 +2,6 @@ import { stripSubtitleSdh } from "../../../core/player/subtitleSdhFilter.js";
 /* eslint-disable no-unused-vars */
 import * as internals from "./playerScreenContext.js";
 import { buildHtmlSubtitleCueIndex, findActiveHtmlSubtitleCues } from "./htmlSubtitleCueIndex.js";
-import { hdrSubtitleBrightnessFactor, scaleRgbaBrightness } from "../../../core/player/hdrSubtitleStyle.js";
 
 export function createPlayerScreenMethods45() {
   const {
@@ -116,8 +115,6 @@ export function createPlayerScreenMethods45() {
       const viewportWidth = Math.max(1, Number(viewport?.width || window.innerWidth || document.documentElement?.clientWidth || 1920));
       const viewportHeight = Math.max(1, Number(viewport?.height || window.innerHeight || document.documentElement?.clientHeight || 1080));
       const style = this.subtitleStyleSettings || {};
-      const brightnessFactor =
-        style.hdrStyleEnabled === true ? hdrSubtitleBrightnessFactor(style, this.isCurrentPlaybackHdr?.() === true) : 1;
       const sizeScale = normalizeSubtitleFontSize(style.fontSize) / 100;
       const verticalOffsetVh = getSubtitleVerticalOffsetVh(style.verticalOffset);
       const verticalOffsetPx = (verticalOffsetVh / 100) * viewportHeight;
@@ -136,8 +133,7 @@ export function createPlayerScreenMethods45() {
         modeScaleX,
         modeScaleY,
         sizeScale,
-        verticalOffsetPx,
-        brightnessFactor
+        verticalOffsetPx
       ].join(":");
       const hasRenderableCompositions = compositions.some(
         (composition) =>
@@ -175,11 +171,7 @@ export function createPlayerScreenMethods45() {
         scratch.width = composition.width;
         scratch.height = composition.height;
         const imageData = scratchContext.createImageData(composition.width, composition.height);
-        if (brightnessFactor < 1) {
-          scaleRgbaBrightness(composition.rgba, brightnessFactor, imageData.data);
-        } else {
-          imageData.data.set(composition.rgba);
-        }
+        imageData.data.set(composition.rgba);
         scratchContext.putImageData(imageData, 0, 0);
         const targetWidth = composition.width * contentScaleX * sizeScale * modeScaleX;
         const targetHeight = composition.height * contentScaleY * sizeScale * modeScaleY;
