@@ -309,15 +309,14 @@ export function createPlayerScreenMethods24() {
       const boldShadow = style.bold
         ? `0.45px 0 0 ${subtitleColor}, -0.45px 0 0 ${subtitleColor}, 0 0.45px 0 ${subtitleColor}, 0 -0.45px 0 ${subtitleColor}`
         : "";
-      const outlineShadow = style.outlineEnabled
-        ? Environment.isWebOS()
-          ? `-2px -2px 0 ${outlineColor}, 0 -2px 0 ${outlineColor}, 2px -2px 0 ${outlineColor}, -2px 0 0 ${outlineColor}, 2px 0 0 ${outlineColor}, -2px 2px 0 ${outlineColor}, 0 2px 0 ${outlineColor}, 2px 2px 0 ${outlineColor}`
-          : `0 0 2px ${outlineColor}, 0 0 4px ${outlineColor}`
-        : "";
+      const outlineShadow = SubtitleAppearance.subtitleOutlineShadowCss(style, {
+        outlineColor,
+        crisp: Environment.isWebOS(),
+        unit: "px"
+      });
       // Android drop shadow (offset, blurred black) under the text fill.
       const dropShadow = SubtitleAppearance.subtitleDropShadowCss(style);
-      const subtitleShadow =
-        [outlineShadow, boldShadow, dropShadow === "none" ? "" : dropShadow].filter(Boolean).join(", ") || "none";
+      const subtitleShadow = [outlineShadow, boldShadow, dropShadow === "none" ? "" : dropShadow].filter(Boolean).join(", ") || "none";
       const htmlSubtitleShadow = Environment.isWebOS()
         ? outlineShadow || "none"
         : [outlineShadow, boldShadow].filter(Boolean).join(", ") || "none";

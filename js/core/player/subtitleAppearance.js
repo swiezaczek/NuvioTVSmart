@@ -13,6 +13,9 @@ export const SUBTITLE_SHADOW_OPACITY_DEFAULT = 75;
 export const SUBTITLE_SHADOW_SIZE_MIN = 1;
 export const SUBTITLE_SHADOW_SIZE_MAX = 8;
 export const SUBTITLE_SHADOW_SIZE_DEFAULT = 2;
+export const SUBTITLE_OUTLINE_SIZE_MIN = 1;
+export const SUBTITLE_OUTLINE_SIZE_MAX = 8;
+export const SUBTITLE_OUTLINE_SIZE_DEFAULT = 2;
 // Android StyledSubtitle: sizes are in units of a 24sp base text.
 export const SUBTITLE_BASE_TEXT_UNITS = 24;
 
@@ -37,6 +40,12 @@ export function normalizeSubtitleAppearance(style = {}) {
       SUBTITLE_SHADOW_SIZE_MIN,
       SUBTITLE_SHADOW_SIZE_MAX,
       SUBTITLE_SHADOW_SIZE_DEFAULT
+    ),
+    outlineSize: intInRange(
+      style.outlineSize,
+      SUBTITLE_OUTLINE_SIZE_MIN,
+      SUBTITLE_OUTLINE_SIZE_MAX,
+      SUBTITLE_OUTLINE_SIZE_DEFAULT
     )
   };
 }
@@ -64,6 +73,31 @@ export function subtitleDropShadowCss(style = {}) {
   return `${size.toFixed(4)}em ${size.toFixed(4)}em ${(size * 2).toFixed(4)}em rgba(0, 0, 0, ${alpha})`;
 }
 
+/** CSS text-shadow for subtitle outline; crisp 8-way offsets for webOS/em, blur for Tizen/browser. */
+export function subtitleOutlineShadowCss(
+  style = {},
+  { outlineColor = "#000000", crisp = false, unit = "px" } = {}
+) {
+  if (!style?.outlineEnabled) {
+    return "";
+  }
+  const size = normalizeSubtitleAppearance(style).outlineSize;
+  if (!crisp) {
+    return `0 0 ${size}px ${outlineColor}, 0 0 ${size * 2}px ${outlineColor}`;
+  }
+  const offset = unit === "em" ? `${(size / SUBTITLE_BASE_TEXT_UNITS).toFixed(4)}em` : `${size}px`;
+  return [
+    `-${offset} -${offset} 0 ${outlineColor}`,
+    `0 -${offset} 0 ${outlineColor}`,
+    `${offset} -${offset} 0 ${outlineColor}`,
+    `-${offset} 0 0 ${outlineColor}`,
+    `${offset} 0 0 ${outlineColor}`,
+    `-${offset} ${offset} 0 ${outlineColor}`,
+    `0 ${offset} 0 ${outlineColor}`,
+    `${offset} ${offset} 0 ${outlineColor}`
+  ].join(", ");
+}
+
 /** Background corner radius in em of the subtitle text. */
 export function subtitleBackgroundRadiusCss(style = {}) {
   const radius = normalizeSubtitleAppearance(style).backgroundRadius / SUBTITLE_BASE_TEXT_UNITS;
@@ -76,7 +110,8 @@ export const SUBTITLE_APPEARANCE_DEFAULTS = Object.freeze({
   backgroundRadius: 0,
   shadowEnabled: false,
   shadowOpacity: SUBTITLE_SHADOW_OPACITY_DEFAULT,
-  shadowSize: SUBTITLE_SHADOW_SIZE_DEFAULT
+  shadowSize: SUBTITLE_SHADOW_SIZE_DEFAULT,
+  outlineSize: SUBTITLE_OUTLINE_SIZE_DEFAULT
 });
 
 /** Whether a #RRGGBB / #RRGGBBAA background color draws anything. */

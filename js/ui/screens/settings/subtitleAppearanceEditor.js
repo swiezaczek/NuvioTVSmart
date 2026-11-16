@@ -3,11 +3,14 @@ import {
   SUBTITLE_BACKGROUND_RADIUS_MAX,
   SUBTITLE_BACKGROUND_RADIUS_STEP,
   SUBTITLE_BASE_TEXT_UNITS,
+  SUBTITLE_OUTLINE_SIZE_MAX,
+  SUBTITLE_OUTLINE_SIZE_MIN,
   SUBTITLE_SHADOW_SIZE_MAX,
   SUBTITLE_SHADOW_SIZE_MIN,
   normalizeSubtitleAppearance,
   subtitleBackgroundRadiusCss,
   subtitleDropShadowCss,
+  subtitleOutlineShadowCss,
   subtitleFontFamilyCss,
   splitSubtitleBackground,
   joinSubtitleBackground,
@@ -82,12 +85,11 @@ export function buildSubtitleAppearancePreviewHtml(style = {}, { t, escapeHtml }
     : "#000000";
   const textAlpha = Math.min(100, Math.max(0, Number(style.textOpacity ?? 100))) / 100;
   const background = splitBackgroundColor(style.backgroundColor);
-  const outline = (2 / SUBTITLE_BASE_TEXT_UNITS).toFixed(4);
-  const outlineShadow = style.outlineEnabled
-    ? [`-${outline}em 0`, `${outline}em 0`, `0 -${outline}em`, `0 ${outline}em`]
-        .map((offset) => `${offset} 0 ${rgba(outlineColor, textAlpha)}`)
-        .join(", ")
-    : "";
+  const outlineShadow = subtitleOutlineShadowCss(style, {
+    outlineColor: rgba(outlineColor, textAlpha),
+    crisp: true,
+    unit: "em"
+  });
   const dropShadow = subtitleDropShadowCss(appearance);
   const shadow =
     [outlineShadow, dropShadow === "none" ? "" : dropShadow].filter(Boolean).join(", ") || "none";
@@ -125,6 +127,8 @@ export function buildSubtitleAppearancePreviewHtml(style = {}, { t, escapeHtml }
 export const SUBTITLE_APPEARANCE_LIMITS = {
   radiusMax: SUBTITLE_BACKGROUND_RADIUS_MAX,
   radiusStep: SUBTITLE_BACKGROUND_RADIUS_STEP,
+  outlineSizeMin: SUBTITLE_OUTLINE_SIZE_MIN,
+  outlineSizeMax: SUBTITLE_OUTLINE_SIZE_MAX,
   shadowSizeMin: SUBTITLE_SHADOW_SIZE_MIN,
   shadowSizeMax: SUBTITLE_SHADOW_SIZE_MAX
 };
