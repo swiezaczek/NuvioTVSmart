@@ -10,6 +10,7 @@ import {
   mapPremiumizeCloudItems,
   mapTorboxCloudItems
 } from "../../core/cloud/cloudLibraryModels.js";
+import { ProviderCredentialSyncService } from "../../core/profile/providerCredentialSyncService.js";
 
 function responseError(response = {}) {
   return String(
@@ -22,7 +23,7 @@ function responseError(response = {}) {
   );
 }
 
-async function listProviderItems(credential) {
+async function listProviderItems(credential, allowCredentialRefresh = true) {
   const { provider, apiKey } = credential;
   if (provider.id === DEBRID_PROVIDER_IDS.TORBOX) {
     const definitions = [
@@ -33,8 +34,19 @@ async function listProviderItems(credential) {
     const items = [];
     for (const [path, type] of definitions) {
       const response = await DebridApi.torboxListCloudItems(apiKey, path);
-      if (!response.ok || response.data?.success === false)
+      if (!response.ok || response.data?.success === false) {
+        if (allowCredentialRefresh) {
+          const refreshedKey = await ProviderCredentialSyncService.refreshDebridApiKeyOnAuthError(
+            provider.id,
+            apiKey,
+            response
+          );
+          if (refreshedKey) {
+            return listProviderItems({ ...credential, apiKey: refreshedKey }, false);
+          }
+        }
         throw new Error(responseError(response));
+      }
       items.push(
         ...mapTorboxCloudItems(response.data?.data, {
           providerId: provider.id,
@@ -131,12 +143,27 @@ export const cloudLibraryRepository = {
         : { status: "failed", message: responseError(response) };
     }
     if (item.providerId === DEBRID_PROVIDER_IDS.TORBOX) {
-      const response = await DebridApi.torboxRequestCloudDownloadLink(
+      let response = await DebridApi.torboxRequestCloudDownloadLink(
         apiKey,
         item.type,
         item.id,
         file.id
       );
+      if (!response.ok || response.data?.success === false) {
+        const refreshedKey = await ProviderCredentialSyncService.refreshDebridApiKeyOnAuthError(
+          item.providerId,
+          apiKey,
+          response
+        );
+        if (refreshedKey) {
+          response = await DebridApi.torboxRequestCloudDownloadLink(
+            refreshedKey,
+            item.type,
+            item.id,
+            file.id
+          );
+        }
+      }
       const url = typeof response.data?.data === "string" ? response.data.data.trim() : "";
       return response.ok && response.data?.success !== false && url
         ? {

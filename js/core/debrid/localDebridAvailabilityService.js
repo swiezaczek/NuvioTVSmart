@@ -2,6 +2,7 @@ import { DebridSettingsStore } from "../../data/local/debridSettingsStore.js";
 import { DebridApi } from "../../data/remote/api/debridApi.js";
 import { DEBRID_CAPABILITIES, DEBRID_PROVIDER_IDS, DebridProviders } from "./debridProviders.js";
 import { resolveAlternativeHashMatches, torboxCachedEntries } from "./torboxCacheAliases.js";
+import { ProviderCredentialSyncService } from "../profile/providerCredentialSyncService.js";
 
 const FINAL_STATES = new Set(["CACHED", "NOT_CACHED"]);
 
@@ -61,7 +62,19 @@ async function checkCached(account, hashes = []) {
     return {};
   }
   if (account.provider.id === DEBRID_PROVIDER_IDS.TORBOX) {
-    const response = await DebridApi.torboxCheckCached(account.apiKey, normalized);
+    let activeKey = account.apiKey;
+    let response = await DebridApi.torboxCheckCached(activeKey, normalized);
+    if (!response.ok || response.data?.success === false) {
+      const refreshedKey = await ProviderCredentialSyncService.refreshDebridApiKeyOnAuthError(
+        account.provider.id,
+        activeKey,
+        response
+      );
+      if (refreshedKey) {
+        activeKey = refreshedKey;
+        response = await DebridApi.torboxCheckCached(activeKey, normalized);
+      }
+    }
     if (!response.ok || response.data?.success === false) {
       return null;
     }
@@ -69,7 +82,7 @@ async function checkCached(account, hashes = []) {
       torboxCachedEntries(response),
       normalized,
       async (hash) => {
-        const single = await DebridApi.torboxCheckCached(account.apiKey, [hash]);
+        const single = await DebridApi.torboxCheckCached(activeKey, [hash]);
         return single.ok && single.data?.success !== false ? torboxCachedEntries(single) : null;
       }
     );

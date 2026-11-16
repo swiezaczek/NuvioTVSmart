@@ -7,8 +7,11 @@ export function createStartupSyncServiceMethods01() {
     LocalStore,
     addonRepository,
     ProfileManager,
+    LibrarySyncService,
     PluginSyncService,
+    ProviderCredentialSyncService,
     getSyncBackoffRemainingMs,
+    runSurface,
     resetSyncBackoff,
     FOREGROUND_ACTIVITY_PULL_DELAY_MS,
     FOREGROUND_ACTIVITY_PULL_MIN_INTERVAL_MS,
@@ -213,7 +216,12 @@ export function createStartupSyncServiceMethods01() {
             return;
           }
           let foregroundPullPromise = null;
-          foregroundPullPromise = Promise.all([this.requestWatchStateSyncNow(), this.requestLibrarySyncNow()])
+          foregroundPullPromise = Promise.all([
+            this.requestWatchStateSyncNow(),
+            this.requestLibrarySyncNow(),
+            runSurface("periodic provider credentials", () => ProviderCredentialSyncService.syncFromRemote(profileId)),
+            runSurface("periodic addons", () => LibrarySyncService.pull())
+          ])
             .then(([watchSucceeded, librarySucceeded]) => {
               if (watchSucceeded && librarySucceeded) {
                 this.lastForegroundPullKey = key;
