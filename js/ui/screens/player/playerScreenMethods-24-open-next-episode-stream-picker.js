@@ -352,6 +352,13 @@ export function createPlayerScreenMethods24() {
       }
       uiRoot.style.setProperty("--player-subtitle-drop-shadow", dropShadow);
       uiRoot.style.setProperty("--player-subtitle-background-radius", SubtitleAppearance.subtitleBackgroundRadiusCss(style));
+      const lineSpacingMetrics = SubtitleAppearance.subtitleLineSpacingMetrics(style, {
+        isWebOs: Environment.isWebOS(),
+        blockBackground: SubtitleAppearance.hasVisibleSubtitleBackground(hdrStyle.backgroundColor)
+      });
+      uiRoot.style.setProperty("--player-subtitle-line-height", lineSpacingMetrics.lineHeight);
+      uiRoot.style.setProperty("--player-subtitle-line-gap", lineSpacingMetrics.gap);
+      uiRoot.style.setProperty("--player-subtitle-line-padding-block", lineSpacingMetrics.paddingBlock);
       // Android draws one rounded background around the widest line of a cue.
       this.uiRefs?.htmlSubtitles?.classList.toggle(
         "player-html-subtitles-block-background",

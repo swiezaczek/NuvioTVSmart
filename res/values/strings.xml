@@ -722,6 +722,7 @@
     <string name="sub_outline_sub">Add outline around subtitle text for better visibility</string>
     <string name="sub_outline_color">Outline Color</string>
     <string name="sub_outline_size">Outline Size</string>
+    <string name="sub_line_spacing">Line Spacing</string>
     <string name="sub_hdr_style">Separate HDR / Dolby Vision style</string>
     <string name="sub_hdr_style_sub">Use a different text color and a dimmer brightness for subtitles on HDR and Dolby Vision video</string>
     <string name="sub_hdr_text_color">HDR Text Color</string>

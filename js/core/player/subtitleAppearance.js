@@ -16,12 +16,25 @@ export const SUBTITLE_SHADOW_SIZE_DEFAULT = 2;
 export const SUBTITLE_OUTLINE_SIZE_MIN = 1;
 export const SUBTITLE_OUTLINE_SIZE_MAX = 8;
 export const SUBTITLE_OUTLINE_SIZE_DEFAULT = 2;
+export const SUBTITLE_LINE_SPACING_MIN = 50;
+export const SUBTITLE_LINE_SPACING_MAX = 150;
+export const SUBTITLE_LINE_SPACING_STEP = 5;
+export const SUBTITLE_LINE_SPACING_DEFAULT = 100;
 // Android StyledSubtitle: sizes are in units of a 24sp base text.
 export const SUBTITLE_BASE_TEXT_UNITS = 24;
 
 function intInRange(value, min, max, fallback) {
   const number = Math.round(Number(value));
   return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
+}
+
+function intInSteppedRange(value, min, max, step, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || value === null || value === "") {
+    return fallback;
+  }
+  const clamped = Math.min(max, Math.max(min, Math.round(number)));
+  return min + Math.round((clamped - min) / step) * step;
 }
 
 export function normalizeSubtitleFontId(value) {
@@ -46,6 +59,13 @@ export function normalizeSubtitleAppearance(style = {}) {
       SUBTITLE_OUTLINE_SIZE_MIN,
       SUBTITLE_OUTLINE_SIZE_MAX,
       SUBTITLE_OUTLINE_SIZE_DEFAULT
+    ),
+    lineSpacing: intInSteppedRange(
+      style.lineSpacing,
+      SUBTITLE_LINE_SPACING_MIN,
+      SUBTITLE_LINE_SPACING_MAX,
+      SUBTITLE_LINE_SPACING_STEP,
+      SUBTITLE_LINE_SPACING_DEFAULT
     )
   };
 }
@@ -98,6 +118,45 @@ export function subtitleOutlineShadowCss(
   ].join(", ");
 }
 
+/** CSS line-height, flex gap, and vertical line padding for HTML subtitles. */
+export function subtitleLineSpacingMetrics(
+  style = {},
+  { isWebOs = false, blockBackground = false } = {}
+) {
+  const percent = normalizeSubtitleAppearance(style).lineSpacing;
+  const baseLineHeight = isWebOs ? 1.2 : 1.28;
+  const baseGapEm = isWebOs || blockBackground ? 0 : 0.18;
+  const basePaddingBlockEm = isWebOs || blockBackground ? 0 : 0.06;
+
+  let lineHeight = baseLineHeight;
+  let gapEm = baseGapEm;
+  let paddingBlockEm = basePaddingBlockEm;
+
+  if (percent < SUBTITLE_LINE_SPACING_DEFAULT) {
+    const t =
+      (percent - SUBTITLE_LINE_SPACING_MIN) /
+      (SUBTITLE_LINE_SPACING_DEFAULT - SUBTITLE_LINE_SPACING_MIN);
+    const minLineHeight = 0.95;
+    lineHeight = minLineHeight + (baseLineHeight - minLineHeight) * t;
+    gapEm = baseGapEm * t;
+    paddingBlockEm = basePaddingBlockEm * t;
+  } else if (percent > SUBTITLE_LINE_SPACING_DEFAULT) {
+    const t =
+      (percent - SUBTITLE_LINE_SPACING_DEFAULT) /
+      (SUBTITLE_LINE_SPACING_MAX - SUBTITLE_LINE_SPACING_DEFAULT);
+    const maxLineHeight = 1.9;
+    lineHeight = baseLineHeight + (maxLineHeight - baseLineHeight) * t;
+    gapEm = baseGapEm * (1 + t);
+  }
+
+  const formatNum = (n) => String(Number(n.toFixed(4)));
+  return {
+    lineHeight: formatNum(lineHeight),
+    gap: `${formatNum(gapEm)}em`,
+    paddingBlock: `${formatNum(paddingBlockEm)}em`
+  };
+}
+
 /** Background corner radius in em of the subtitle text. */
 export function subtitleBackgroundRadiusCss(style = {}) {
   const radius = normalizeSubtitleAppearance(style).backgroundRadius / SUBTITLE_BASE_TEXT_UNITS;
@@ -111,7 +170,8 @@ export const SUBTITLE_APPEARANCE_DEFAULTS = Object.freeze({
   shadowEnabled: false,
   shadowOpacity: SUBTITLE_SHADOW_OPACITY_DEFAULT,
   shadowSize: SUBTITLE_SHADOW_SIZE_DEFAULT,
-  outlineSize: SUBTITLE_OUTLINE_SIZE_DEFAULT
+  outlineSize: SUBTITLE_OUTLINE_SIZE_DEFAULT,
+  lineSpacing: SUBTITLE_LINE_SPACING_DEFAULT
 });
 
 /** Whether a #RRGGBB / #RRGGBBAA background color draws anything. */

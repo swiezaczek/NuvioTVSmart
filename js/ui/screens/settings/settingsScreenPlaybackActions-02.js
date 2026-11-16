@@ -194,6 +194,7 @@ export function registerPlaybackActionsPart02(model) {
     const rows = [
       { id: "font", label: t("sub_font", {}, "Font"), value: fontLabel(appearance.fontId) },
       { id: "size", label: t("sub_size", {}, "Size"), value: `${clampSubtitleSize(style.fontSize ?? 120)}%` },
+      { id: "lineSpacing", label: t("sub_line_spacing", {}, "Line Spacing"), value: `${appearance.lineSpacing}%` },
       { id: "bold", label: t("sub_bold", {}, "Bold"), value: onOff(style.bold) },
       { id: "textColor", label: t("sub_text_color", {}, "Text Color"), swatch: style.textColor || "#FFFFFF" },
       {
@@ -278,6 +279,18 @@ export function registerPlaybackActionsPart02(model) {
               numberOptions(SUBTITLE_SIZE_RANGE),
               clampSubtitleSize(current.fontSize ?? 120),
               (value) => updateSubtitleStyle({ fontSize: clampSubtitleSize(value) })
+            );
+          case "lineSpacing":
+            return choose(
+              "lineSpacing",
+              t("sub_line_spacing", {}, "Line Spacing"),
+              numberOptions({
+                min: SUBTITLE_APPEARANCE_LIMITS.lineSpacingMin,
+                max: SUBTITLE_APPEARANCE_LIMITS.lineSpacingMax,
+                step: SUBTITLE_APPEARANCE_LIMITS.lineSpacingStep
+              }),
+              normalizeSubtitleAppearance(current).lineSpacing,
+              (value) => updateSubtitleStyle({ lineSpacing: Number(value) })
             );
           case "bold":
             updateSubtitleStyle({ bold: !current.bold });

@@ -54,11 +54,11 @@
 
 .player-platform-webos .player-html-subtitles {
   font-family: var(--player-html-subtitle-font-family, "Roboto", Arial, sans-serif);
-  line-height: 1.2;
+  line-height: var(--player-subtitle-line-height, 1.2);
 }
 
 .player-platform-webos .player-html-subtitle-cue {
-  gap: 0;
+  gap: var(--player-subtitle-line-gap, 0);
 }
 
 .player-platform-webos .player-html-subtitle-line {

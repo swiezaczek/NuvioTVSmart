@@ -94,6 +94,12 @@ export function createPlayerScreenMethods53() {
         );
       } else if (controlId === "fontSize") {
         style.fontSize = normalizeSubtitleFontSize(Number(style.fontSize || 120) + delta * SUBTITLE_FONT_STEP);
+      } else if (controlId === "lineSpacing") {
+        style.lineSpacing = clamp(
+          SubtitleAppearance.normalizeSubtitleAppearance(style).lineSpacing + delta * SubtitleAppearance.SUBTITLE_LINE_SPACING_STEP,
+          SubtitleAppearance.SUBTITLE_LINE_SPACING_MIN,
+          SubtitleAppearance.SUBTITLE_LINE_SPACING_MAX
+        );
       } else if (controlId === "stripSdh" && delta !== 0) {
         style.stripSdh = !style.stripSdh;
       } else if (controlId === "bold" && delta !== 0) {

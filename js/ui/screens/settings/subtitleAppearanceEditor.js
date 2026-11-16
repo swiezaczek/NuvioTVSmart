@@ -5,11 +5,15 @@ import {
   SUBTITLE_BASE_TEXT_UNITS,
   SUBTITLE_OUTLINE_SIZE_MAX,
   SUBTITLE_OUTLINE_SIZE_MIN,
+  SUBTITLE_LINE_SPACING_MAX,
+  SUBTITLE_LINE_SPACING_MIN,
+  SUBTITLE_LINE_SPACING_STEP,
   SUBTITLE_SHADOW_SIZE_MAX,
   SUBTITLE_SHADOW_SIZE_MIN,
   normalizeSubtitleAppearance,
   subtitleBackgroundRadiusCss,
   subtitleDropShadowCss,
+  subtitleLineSpacingMetrics,
   subtitleOutlineShadowCss,
   subtitleFontFamilyCss,
   splitSubtitleBackground,
@@ -95,6 +99,7 @@ export function buildSubtitleAppearancePreviewHtml(style = {}, { t, escapeHtml }
     [outlineShadow, dropShadow === "none" ? "" : dropShadow].filter(Boolean).join(", ") || "none";
   const textStyle = [
     `font-size:${Math.round((PREVIEW_BASE_FONT_PX * sizePercent) / 100)}px`,
+    `line-height:${subtitleLineSpacingMetrics(appearance).lineHeight}`,
     `font-weight:${style.bold ? 700 : 400}`,
     subtitleFontFamilyCss(appearance.fontId)
       ? `font-family:${subtitleFontFamilyCss(appearance.fontId)}`
@@ -127,6 +132,9 @@ export function buildSubtitleAppearancePreviewHtml(style = {}, { t, escapeHtml }
 export const SUBTITLE_APPEARANCE_LIMITS = {
   radiusMax: SUBTITLE_BACKGROUND_RADIUS_MAX,
   radiusStep: SUBTITLE_BACKGROUND_RADIUS_STEP,
+  lineSpacingMin: SUBTITLE_LINE_SPACING_MIN,
+  lineSpacingMax: SUBTITLE_LINE_SPACING_MAX,
+  lineSpacingStep: SUBTITLE_LINE_SPACING_STEP,
   outlineSizeMin: SUBTITLE_OUTLINE_SIZE_MIN,
   outlineSizeMax: SUBTITLE_OUTLINE_SIZE_MAX,
   shadowSizeMin: SUBTITLE_SHADOW_SIZE_MIN,

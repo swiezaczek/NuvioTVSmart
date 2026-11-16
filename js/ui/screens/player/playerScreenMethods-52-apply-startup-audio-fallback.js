@@ -488,6 +488,11 @@ export function createPlayerScreenMethods52() {
           value: `${normalizeSubtitleFontSize(style.fontSize)}%`
         },
         {
+          id: "lineSpacing",
+          label: t("sub_line_spacing", {}, "Line Spacing"),
+          value: `${appearance.lineSpacing}%`
+        },
+        {
           id: "stripSdh",
           label: t("sub_strip_sdh", {}, "Strip SDH subtitles"),
           value: style.stripSdh ? t("subtitle_style_on", {}, "On") : t("subtitle_style_off", {}, "Off")

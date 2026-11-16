@@ -207,7 +207,7 @@
   color: var(--player-subtitle-text-color);
   font-size: var(--player-html-subtitle-font-size);
   font-weight: var(--player-subtitle-font-weight);
-  line-height: 1.28;
+  line-height: var(--player-subtitle-line-height, 1.28);
   text-align: center;
   text-shadow: none;
   pointer-events: none;
@@ -282,7 +282,7 @@
   position: absolute;
   display: flex;
   flex-direction: column;
-  gap: 0.18em;
+  gap: var(--player-subtitle-line-gap, 0.18em);
   max-width: 90vw;
 }
 
@@ -331,7 +331,7 @@
 }
 
 .player-html-subtitle-line {
-  --player-html-subtitle-padding-block: 0.06em;
+  --player-html-subtitle-padding-block: var(--player-subtitle-line-padding-block, 0.06em);
   --player-html-subtitle-padding-inline: 0.28em;
   position: relative;
   display: inline-block;

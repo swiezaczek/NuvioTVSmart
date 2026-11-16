@@ -2,6 +2,7 @@ const SUBTITLE_STYLE_CONTROL_IDS = [
   "delay",
   "font",
   "fontSize",
+  "lineSpacing",
   "bold",
   "stripSdh",
   "textColor",
@@ -22,6 +23,7 @@ const SUBTITLE_STYLE_CONTROL_IDS = [
 const ASS_STYLE_CONTROL_IDS = [
   "font",
   "fontSize",
+  "lineSpacing",
   "bold",
   "textColor",
   "textOpacity",

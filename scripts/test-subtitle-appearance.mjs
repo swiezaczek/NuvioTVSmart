@@ -7,6 +7,7 @@ import {
   subtitleBackgroundRadiusCss,
   subtitleDropShadowCss,
   subtitleFontFamilyCss,
+  subtitleLineSpacingMetrics,
   subtitleOutlineShadowCss
 } from "../js/core/player/subtitleAppearance.js";
 
@@ -17,21 +18,55 @@ test("appearance values are kept in Android's ranges", () => {
     shadowEnabled: false,
     shadowOpacity: 75,
     shadowSize: 2,
-    outlineSize: 2
+    outlineSize: 2,
+    lineSpacing: 100
   });
   const clamped = normalizeSubtitleAppearance({
     fontId: "custom-x",
     backgroundRadius: 99,
     shadowOpacity: -3,
     shadowSize: 40,
-    outlineSize: 0
+    outlineSize: 0,
+    lineSpacing: 12
   });
   assert.equal(clamped.fontId, "default");
   assert.equal(clamped.backgroundRadius, 24);
   assert.equal(clamped.shadowOpacity, 0);
   assert.equal(clamped.shadowSize, 8);
   assert.equal(clamped.outlineSize, 1);
+  assert.equal(clamped.lineSpacing, 50);
   assert.equal(normalizeSubtitleAppearance({ outlineSize: 20 }).outlineSize, 8);
+  assert.equal(normalizeSubtitleAppearance({ lineSpacing: 97 }).lineSpacing, 95);
+  assert.equal(normalizeSubtitleAppearance({ lineSpacing: 98 }).lineSpacing, 100);
+  assert.equal(normalizeSubtitleAppearance({ lineSpacing: 220 }).lineSpacing, 150);
+});
+
+test("line spacing preserves current defaults at 100% and maps 50%-150% cleanly", () => {
+  assert.deepEqual(subtitleLineSpacingMetrics({ lineSpacing: 100 }), {
+    lineHeight: "1.28",
+    gap: "0.18em",
+    paddingBlock: "0.06em"
+  });
+  assert.deepEqual(subtitleLineSpacingMetrics({ lineSpacing: 100 }, { isWebOs: true }), {
+    lineHeight: "1.2",
+    gap: "0em",
+    paddingBlock: "0em"
+  });
+  assert.deepEqual(subtitleLineSpacingMetrics({ lineSpacing: 100 }, { blockBackground: true }), {
+    lineHeight: "1.28",
+    gap: "0em",
+    paddingBlock: "0em"
+  });
+  assert.deepEqual(subtitleLineSpacingMetrics({ lineSpacing: 50 }), {
+    lineHeight: "0.95",
+    gap: "0em",
+    paddingBlock: "0em"
+  });
+  assert.deepEqual(subtitleLineSpacingMetrics({ lineSpacing: 150 }), {
+    lineHeight: "1.9",
+    gap: "0.36em",
+    paddingBlock: "0.06em"
+  });
 });
 
 test("outline shadow scales across Tizen/browser blur and webOS/preview crisp offsets", () => {
