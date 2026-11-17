@@ -28,16 +28,16 @@ test("appearance values are kept in Android's ranges", () => {
     backgroundRadius: 99,
     shadowOpacity: -3,
     shadowSize: 40,
-    outlineSize: 0,
+    outlineSize: 9,
     lineSpacing: 12
   });
   assert.equal(clamped.fontId, "default");
   assert.equal(clamped.backgroundRadius, 24);
   assert.equal(clamped.shadowOpacity, 0);
   assert.equal(clamped.shadowSize, 8);
-  assert.equal(clamped.outlineSize, 1);
+  assert.equal(clamped.outlineSize, 5);
   assert.equal(clamped.lineSpacing, 50);
-  assert.equal(normalizeSubtitleAppearance({ outlineSize: 20 }).outlineSize, 8);
+  assert.equal(normalizeSubtitleAppearance({ outlineSize: 0 }).outlineSize, 1);
   assert.equal(normalizeSubtitleAppearance({ lineSpacing: 97 }).lineSpacing, 95);
   assert.equal(normalizeSubtitleAppearance({ lineSpacing: 98 }).lineSpacing, 100);
   assert.equal(normalizeSubtitleAppearance({ lineSpacing: 220 }).lineSpacing, 150);
@@ -71,38 +71,42 @@ test("line spacing preserves current defaults at 100% and maps 50%-150% cleanly"
   });
 });
 
-test("outline shadow scales across Tizen/browser blur and webOS/preview crisp offsets", () => {
-  assert.equal(subtitleOutlineShadowCss({ outlineEnabled: false, outlineSize: 4 }), "");
-  assert.equal(
-    subtitleOutlineShadowCss({ outlineEnabled: true, outlineSize: 2 }, { outlineColor: "#000000" }),
-    "0 0 2px #000000, 0 0 4px #000000"
-  );
-  assert.equal(
-    subtitleOutlineShadowCss({ outlineEnabled: true, outlineSize: 4 }, { outlineColor: "#112233" }),
-    "0 0 4px #112233, 0 0 8px #112233"
-  );
-  assert.equal(
-    subtitleOutlineShadowCss(
-      { outlineEnabled: true, outlineSize: 3 },
-      { outlineColor: "#000000", crisp: true, unit: "px" }
-    ),
-    "-3px -3px 0 #000000, 0 -3px 0 #000000, 3px -3px 0 #000000, -3px 0 0 #000000, 3px 0 0 #000000, -3px 3px 0 #000000, 0 3px 0 #000000, 3px 3px 0 #000000"
-  );
-  assert.match(
-    subtitleOutlineShadowCss(
-      { outlineEnabled: true, outlineSize: 4 },
-      { outlineColor: "#000000", crisp: true, unit: "em" }
-    ),
-    /^-0\.1667em -0\.1667em 0 #000000/
-  );
-});
-
 test("the drop shadow is offset by its size and blurred by twice it, in 24-unit text", () => {
   assert.equal(subtitleDropShadowCss({ shadowEnabled: false }), "none");
   assert.equal(
     subtitleDropShadowCss({ shadowEnabled: true, shadowSize: 2, shadowOpacity: 75 }),
     "0.0833em 0.0833em 0.1667em rgba(0, 0, 0, 0.75)"
   );
+});
+
+test("the outline width keeps the 2px edge at the default size", () => {
+  assert.equal(subtitleOutlineShadowCss({ outlineEnabled: false }), "");
+  assert.equal(
+    subtitleOutlineShadowCss({ outlineEnabled: true }),
+    "0 0 2px #000000, 0 0 4px #000000"
+  );
+  assert.equal(
+    subtitleOutlineShadowCss({ outlineEnabled: true }, { crisp: true }),
+    "-2px -2px 0 #000000, 0 -2px 0 #000000, 2px -2px 0 #000000, -2px 0 0 #000000, 2px 0 0 #000000, -2px 2px 0 #000000, 0 2px 0 #000000, 2px 2px 0 #000000"
+  );
+  assert.equal(
+    subtitleOutlineShadowCss(
+      { outlineEnabled: true, outlineSize: 1 },
+      { crisp: true, color: "#123456" }
+    ),
+    "-1px -1px 0 #123456, 0 -1px 0 #123456, 1px -1px 0 #123456, -1px 0 0 #123456, 1px 0 0 #123456, -1px 1px 0 #123456, 0 1px 0 #123456, 1px 1px 0 #123456"
+  );
+});
+
+test("the settings preview scales the outline for Android's half-unit stroke per step", () => {
+  const preview = (outlineSize) =>
+    buildSubtitleAppearancePreviewHtml(
+      { outlineEnabled: true, outlineSize, textColor: "#FFFFFF", textOpacity: 100 },
+      { t: (_key, _params, fallback) => fallback, escapeHtml: (value) => value }
+    );
+  assert.match(preview(2), /-0\.0417em 0 0 rgba\(0, 0, 0, 1\)/);
+  assert.match(preview(5), /-0\.1042em 0 0 rgba\(0, 0, 0, 1\)/);
+  assert.doesNotMatch(preview(1), /0\.1042em/);
 });
 
 test("roundness, fonts and background visibility", () => {

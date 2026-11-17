@@ -1,4 +1,4 @@
-// Android SubtitleStyleSettings font, background roundness and drop shadow.
+// Android SubtitleStyleSettings font, background roundness, outline and drop shadow.
 export const SUBTITLE_FONT_DEFAULT = "default";
 export const SUBTITLE_FONT_SERIF = "serif";
 export const SUBTITLE_FONT_MONO = "mono";
@@ -13,8 +13,9 @@ export const SUBTITLE_SHADOW_OPACITY_DEFAULT = 75;
 export const SUBTITLE_SHADOW_SIZE_MIN = 1;
 export const SUBTITLE_SHADOW_SIZE_MAX = 8;
 export const SUBTITLE_SHADOW_SIZE_DEFAULT = 2;
+// Android SubtitleStyleSettings.OUTLINE_WIDTH_*.
 export const SUBTITLE_OUTLINE_SIZE_MIN = 1;
-export const SUBTITLE_OUTLINE_SIZE_MAX = 8;
+export const SUBTITLE_OUTLINE_SIZE_MAX = 5;
 export const SUBTITLE_OUTLINE_SIZE_DEFAULT = 2;
 export const SUBTITLE_LINE_SPACING_MIN = 50;
 export const SUBTITLE_LINE_SPACING_MAX = 150;
@@ -93,31 +94,6 @@ export function subtitleDropShadowCss(style = {}) {
   return `${size.toFixed(4)}em ${size.toFixed(4)}em ${(size * 2).toFixed(4)}em rgba(0, 0, 0, ${alpha})`;
 }
 
-/** CSS text-shadow for subtitle outline; crisp 8-way offsets for webOS/em, blur for Tizen/browser. */
-export function subtitleOutlineShadowCss(
-  style = {},
-  { outlineColor = "#000000", crisp = false, unit = "px" } = {}
-) {
-  if (!style?.outlineEnabled) {
-    return "";
-  }
-  const size = normalizeSubtitleAppearance(style).outlineSize;
-  if (!crisp) {
-    return `0 0 ${size}px ${outlineColor}, 0 0 ${size * 2}px ${outlineColor}`;
-  }
-  const offset = unit === "em" ? `${(size / SUBTITLE_BASE_TEXT_UNITS).toFixed(4)}em` : `${size}px`;
-  return [
-    `-${offset} -${offset} 0 ${outlineColor}`,
-    `0 -${offset} 0 ${outlineColor}`,
-    `${offset} -${offset} 0 ${outlineColor}`,
-    `-${offset} 0 0 ${outlineColor}`,
-    `${offset} 0 0 ${outlineColor}`,
-    `-${offset} ${offset} 0 ${outlineColor}`,
-    `0 ${offset} 0 ${outlineColor}`,
-    `${offset} ${offset} 0 ${outlineColor}`
-  ].join(", ");
-}
-
 /** CSS line-height, flex gap, and vertical line padding for HTML subtitles. */
 export function subtitleLineSpacingMetrics(
   style = {},
@@ -161,6 +137,32 @@ export function subtitleLineSpacingMetrics(
 export function subtitleBackgroundRadiusCss(style = {}) {
   const radius = normalizeSubtitleAppearance(style).backgroundRadius / SUBTITLE_BASE_TEXT_UNITS;
   return `${radius.toFixed(4)}em`;
+}
+
+/**
+ * Android outline width as a text shadow. Size 2 keeps the existing 2px edge:
+ * eight crisp offsets on webOS, a two-pass blur where the cue renderer needs it.
+ */
+export function subtitleOutlineShadowCss(style = {}, { color = "#000000", crisp = false } = {}) {
+  if (!style.outlineEnabled) {
+    return "";
+  }
+  const size = normalizeSubtitleAppearance(style).outlineSize;
+  if (!crisp) {
+    return `0 0 ${size}px ${color}, 0 0 ${size * 2}px ${color}`;
+  }
+  return [
+    `-${size}px -${size}px`,
+    `0 -${size}px`,
+    `${size}px -${size}px`,
+    `-${size}px 0`,
+    `${size}px 0`,
+    `-${size}px ${size}px`,
+    `0 ${size}px`,
+    `${size}px ${size}px`
+  ]
+    .map((offset) => `${offset} 0 ${color}`)
+    .join(", ");
 }
 
 /** The appearance defaults Android "Reset Appearance" restores, besides the colors and size. */

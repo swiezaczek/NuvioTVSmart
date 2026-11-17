@@ -170,7 +170,12 @@ function createScreenHarness({
     "playerScreenMethods-53-render-subtitle-style-control-in-place.js",
     "createPlayerScreenMethods53",
     internals,
-    { HDR_BRIGHTNESS_STEP, isEditingHdrSubtitleStyle, normalizeHdrBrightness, normalizeHdrTextColor }
+    {
+      HDR_BRIGHTNESS_STEP,
+      isEditingHdrSubtitleStyle,
+      normalizeHdrBrightness,
+      normalizeHdrTextColor
+    }
   );
   const methods24 = loadPlayerMethods(
     "playerScreenMethods-24-open-next-episode-stream-picker.js",

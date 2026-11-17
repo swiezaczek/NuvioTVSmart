@@ -539,7 +539,7 @@ export function createPlayerScreenMethods52() {
         },
         {
           id: "outlineSize",
-          label: t("sub_outline_size", {}, "Outline Size"),
+          label: t("sub_outline_width", {}, "Outline Width"),
           value: String(appearance.outlineSize)
         },
         {

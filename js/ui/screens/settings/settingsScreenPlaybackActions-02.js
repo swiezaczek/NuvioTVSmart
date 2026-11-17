@@ -214,7 +214,7 @@ export function registerPlaybackActionsPart02(model) {
       ...(style.outlineEnabled
         ? [
             { id: "outlineColor", label: t("sub_outline_color", {}, "Outline Color"), swatch: style.outlineColor || "#000000" },
-            { id: "outlineSize", label: t("sub_outline_size", {}, "Outline Size"), value: String(appearance.outlineSize) }
+            { id: "outlineSize", label: t("sub_outline_width", {}, "Outline Width"), value: String(appearance.outlineSize) }
           ]
         : []),
       { id: "shadow", label: t("sub_shadow", {}, "Drop Shadow"), value: onOff(appearance.shadowEnabled) },
@@ -356,7 +356,7 @@ export function registerPlaybackActionsPart02(model) {
           case "outlineSize":
             return choose(
               "outlineSize",
-              t("sub_outline_size", {}, "Outline Size"),
+              t("sub_outline_width", {}, "Outline Width"),
               numberOptions(
                 { min: SUBTITLE_APPEARANCE_LIMITS.outlineSizeMin, max: SUBTITLE_APPEARANCE_LIMITS.outlineSizeMax, step: 1 },
                 String

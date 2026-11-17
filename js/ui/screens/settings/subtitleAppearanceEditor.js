@@ -112,11 +112,13 @@ export function buildSubtitleAppearancePreviewHtml(style = {}, { t, escapeHtml }
     : "#000000";
   const textAlpha = Math.min(100, Math.max(0, Number(style.textOpacity ?? 100))) / 100;
   const background = splitBackgroundColor(style.backgroundColor);
-  const outlineShadow = subtitleOutlineShadowCss(style, {
-    outlineColor: rgba(outlineColor, textAlpha),
-    crisp: true,
-    unit: "em"
-  });
+  // Android draws a width/2 stroke on each side, so half a text unit per step.
+  const outline = (appearance.outlineSize / (SUBTITLE_BASE_TEXT_UNITS * 2)).toFixed(4);
+  const outlineShadow = style.outlineEnabled
+    ? [`-${outline}em 0`, `${outline}em 0`, `0 -${outline}em`, `0 ${outline}em`]
+        .map((offset) => `${offset} 0 ${rgba(outlineColor, textAlpha)}`)
+        .join(", ")
+    : "";
   const dropShadow = subtitleDropShadowCss(appearance);
   const shadow =
     [outlineShadow, dropShadow === "none" ? "" : dropShadow].filter(Boolean).join(", ") || "none";
@@ -160,8 +162,8 @@ export const SUBTITLE_APPEARANCE_LIMITS = {
   lineSpacingMin: SUBTITLE_LINE_SPACING_MIN,
   lineSpacingMax: SUBTITLE_LINE_SPACING_MAX,
   lineSpacingStep: SUBTITLE_LINE_SPACING_STEP,
-  outlineSizeMin: SUBTITLE_OUTLINE_SIZE_MIN,
-  outlineSizeMax: SUBTITLE_OUTLINE_SIZE_MAX,
   shadowSizeMin: SUBTITLE_SHADOW_SIZE_MIN,
-  shadowSizeMax: SUBTITLE_SHADOW_SIZE_MAX
+  shadowSizeMax: SUBTITLE_SHADOW_SIZE_MAX,
+  outlineSizeMin: SUBTITLE_OUTLINE_SIZE_MIN,
+  outlineSizeMax: SUBTITLE_OUTLINE_SIZE_MAX
 };
