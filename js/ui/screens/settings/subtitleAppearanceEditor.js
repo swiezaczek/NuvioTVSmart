@@ -79,6 +79,29 @@ export function subtitleAppearanceResetValues(defaults = {}) {
   };
 }
 
+function formatTwoLinePreviewText(text) {
+  const clean = String(text || "").trim();
+  if (!clean || clean.includes("\n")) {
+    return clean;
+  }
+  const mid = Math.floor(clean.length / 2);
+  let bestSplit = -1;
+  let bestDist = Infinity;
+  for (let i = 1; i < clean.length - 1; i += 1) {
+    if (clean[i] === " ") {
+      const dist = Math.abs(i - mid);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestSplit = i;
+      }
+    }
+  }
+  if (bestSplit === -1) {
+    return clean;
+  }
+  return `${clean.slice(0, bestSplit)}\n${clean.slice(bestSplit + 1)}`;
+}
+
 /** Android SubtitleAppearancePreview: the sample text drawn with the current style. */
 export function buildSubtitleAppearancePreviewHtml(style = {}, { t, escapeHtml }) {
   const appearance = normalizeSubtitleAppearance(style);
@@ -123,7 +146,9 @@ export function buildSubtitleAppearancePreviewHtml(style = {}, { t, escapeHtml }
       <div class="settings-subtitle-preview-label">${escapeHtml(t("sub_preview", {}, "Preview"))}</div>
       <div class="settings-subtitle-preview-text-wrap">
         <span class="settings-subtitle-preview-text" style="${escapeHtml(textStyle)}">${escapeHtml(
-          t("sub_preview_text", {}, "Every story begins with a little curiosity.")
+          formatTwoLinePreviewText(
+            t("sub_preview_text", {}, "Every story begins with a little curiosity.")
+          )
         )}</span>
       </div>
     </div>`;

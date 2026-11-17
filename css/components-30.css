@@ -57,13 +57,13 @@
   line-height: var(--player-subtitle-line-height, 1.2);
 }
 
-.player-platform-webos .player-html-subtitle-cue {
-  gap: var(--player-subtitle-line-gap, 0);
+.player-platform-webos .player-html-subtitle-line {
+  --player-html-subtitle-padding-block: var(--player-subtitle-line-padding-block, 0);
+  --player-html-subtitle-padding-inline: 0.08em;
 }
 
-.player-platform-webos .player-html-subtitle-line {
-  --player-html-subtitle-padding-block: 0;
-  --player-html-subtitle-padding-inline: 0.08em;
+.player-platform-webos .player-html-subtitle-line + .player-html-subtitle-line {
+  margin-top: var(--player-subtitle-line-gap, 0);
 }
 
 .player-loading-overlay {
@@ -548,7 +548,6 @@
   width: -webkit-max-content;
   width: max-content;
   max-width: 90vw;
-  gap: 0;
   padding: 0.2083em 0.4167em;
   border-radius: var(--player-subtitle-background-radius, 0);
   background: var(--player-subtitle-background);
@@ -559,6 +558,13 @@
   --player-html-subtitle-padding-block: 0;
   --player-html-subtitle-padding-inline: 0;
   background: transparent;
+}
+
+.player-html-subtitles-block-background
+  .player-html-subtitle-default
+  .player-html-subtitle-line
+  + .player-html-subtitle-line {
+  margin-top: 0;
 }
 
 #videoPlayer::cue {

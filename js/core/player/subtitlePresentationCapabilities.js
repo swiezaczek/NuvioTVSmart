@@ -55,6 +55,9 @@ export function resolveSubtitleStyleControlAvailability({
   );
   if (bitmap || (isWebOsNative && !["html", "html-callback"].includes(rendererMode)))
     availability.stripSdh = false;
+  if (bitmap) {
+    availability.lineSpacing = false;
+  }
   if (preserveAssStyles) {
     ASS_STYLE_CONTROL_IDS.forEach((controlId) => {
       availability[controlId] = false;
@@ -63,6 +66,7 @@ export function resolveSubtitleStyleControlAvailability({
   }
   if (isWebOsNative && !["html", "html-callback"].includes(rendererMode)) {
     availability.textOpacity = false;
+    availability.lineSpacing = false;
     // Native cues draw the background color but cannot round its corners.
     availability.backgroundRadius = false;
   }

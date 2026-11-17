@@ -10,6 +10,8 @@ import {
   subtitleLineSpacingMetrics,
   subtitleOutlineShadowCss
 } from "../js/core/player/subtitleAppearance.js";
+import { resolveSubtitleStyleControlAvailability } from "../js/core/player/subtitlePresentationCapabilities.js";
+import { buildSubtitleAppearancePreviewHtml } from "../js/ui/screens/settings/subtitleAppearanceEditor.js";
 
 test("appearance values are kept in Android's ranges", () => {
   assert.deepEqual(normalizeSubtitleAppearance({}), {
@@ -58,7 +60,7 @@ test("line spacing preserves current defaults at 100% and maps 50%-150% cleanly"
     paddingBlock: "0em"
   });
   assert.deepEqual(subtitleLineSpacingMetrics({ lineSpacing: 50 }), {
-    lineHeight: "0.95",
+    lineHeight: "1.05",
     gap: "0em",
     paddingBlock: "0em"
   });
@@ -112,4 +114,28 @@ test("roundness, fonts and background visibility", () => {
   assert.equal(hasVisibleSubtitleBackground("#00000080"), true);
   assert.equal(hasVisibleSubtitleBackground("#000000"), true);
   assert.equal(hasVisibleSubtitleBackground("transparent"), false);
+});
+
+test("lineSpacing is disabled for bitmap and native webOS cue renderers, and preview uses two lines", () => {
+  assert.equal(resolveSubtitleStyleControlAvailability({ bitmap: true }).lineSpacing, false);
+  assert.equal(
+    resolveSubtitleStyleControlAvailability({ isWebOsNative: true, rendererMode: "none" })
+      .lineSpacing,
+    false
+  );
+  assert.equal(
+    resolveSubtitleStyleControlAvailability({ isWebOsNative: true, rendererMode: "html" })
+      .lineSpacing,
+    true
+  );
+
+  const html = buildSubtitleAppearancePreviewHtml(
+    { lineSpacing: 140 },
+    {
+      t: (_key, _params, fallback) => fallback,
+      escapeHtml: (value) => String(value)
+    }
+  );
+  assert.match(html, /line-height:1\.776/);
+  assert.match(html, /Every story begins with\na little curiosity\./);
 });

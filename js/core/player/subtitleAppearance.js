@@ -136,7 +136,7 @@ export function subtitleLineSpacingMetrics(
     const t =
       (percent - SUBTITLE_LINE_SPACING_MIN) /
       (SUBTITLE_LINE_SPACING_DEFAULT - SUBTITLE_LINE_SPACING_MIN);
-    const minLineHeight = 0.95;
+    const minLineHeight = 1.05;
     lineHeight = minLineHeight + (baseLineHeight - minLineHeight) * t;
     gapEm = baseGapEm * t;
     paddingBlockEm = basePaddingBlockEm * t;

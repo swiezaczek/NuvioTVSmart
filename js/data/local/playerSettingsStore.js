@@ -440,6 +440,7 @@ export function normalizePlayerSettings(settings = {}) {
     secondarySubtitleLanguage: secondaryPreferredLanguage,
     subtitleStyle: {
       ...subtitleStyle,
+      ...normalizeSubtitleAppearance(subtitleStyle),
       stripSdh: subtitleStyle.stripSdh === true,
       preferredLanguage,
       secondaryPreferredLanguage,
