@@ -60,7 +60,7 @@ test("line spacing preserves current defaults at 100% and maps 50%-150% cleanly"
     paddingBlock: "0em"
   });
   assert.deepEqual(subtitleLineSpacingMetrics({ lineSpacing: 50 }), {
-    lineHeight: "1.05",
+    lineHeight: "1.1",
     gap: "0em",
     paddingBlock: "0em"
   });
