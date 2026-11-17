@@ -57,6 +57,7 @@ export function resolveSubtitleStyleControlAvailability({
     availability.stripSdh = false;
   if (bitmap) {
     availability.lineSpacing = false;
+    availability.hdrBrightness = false;
   }
   if (preserveAssStyles) {
     ASS_STYLE_CONTROL_IDS.forEach((controlId) => {

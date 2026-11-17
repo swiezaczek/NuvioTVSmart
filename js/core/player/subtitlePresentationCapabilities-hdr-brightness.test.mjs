@@ -292,10 +292,11 @@ test("resolveSubtitleStyleControlAvailability gates hdrBrightness consistently a
   assert.equal(assLocked.textColor, false);
   assert.equal(assLocked.verticalOffset, true);
 
-  // Bitmap aligns hdrBrightness with color/outline controls (only stripSdh is disabled)
+  // Bitmap subtitles do not support lineSpacing or hdrBrightness dimming
   const bitmap = resolveSubtitleStyleControlAvailability({ bitmap: true });
   assert.equal(bitmap.stripSdh, false);
-  assert.equal(bitmap.hdrBrightness, bitmap.textColor);
+  assert.equal(bitmap.lineSpacing, false);
+  assert.equal(bitmap.hdrBrightness, false);
 });
 
 test("Tizen AVPlay embedded-native and external-native disable hdrBrightness across Tizen versions", () => {
