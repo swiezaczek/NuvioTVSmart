@@ -128,12 +128,41 @@ export function buildHomeCatalogSnapshotKey({
   return `${currentProfileId(profileId)}:${stableHash(JSON.stringify([currentAccountKey(), addons, prefs]))}`;
 }
 
-function cloneJson(value) {
-  try {
-    return JSON.parse(JSON.stringify(value));
-  } catch (_) {
+function cloneSnapshotValue(value, depth = 0) {
+  if (value === null || typeof value !== "object") {
+    return typeof value === "function" || typeof value === "symbol" || value === undefined
+      ? null
+      : value;
+  }
+  if (depth > 16) {
     return null;
   }
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime()) ? value.toISOString() : null;
+  }
+  if (Array.isArray(value)) {
+    const length = value.length;
+    const copy = new Array(length);
+    for (let index = 0; index < length; index += 1) {
+      const entry = value[index];
+      copy[index] =
+        entry === undefined || typeof entry === "function" || typeof entry === "symbol"
+          ? null
+          : cloneSnapshotValue(entry, depth + 1);
+    }
+    return copy;
+  }
+  const copy = {};
+  const keys = Object.keys(value);
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index];
+    const prop = value[key];
+    if (prop === undefined || typeof prop === "function" || typeof prop === "symbol") {
+      continue;
+    }
+    copy[key] = cloneSnapshotValue(prop, depth + 1);
+  }
+  return copy;
 }
 
 function compactRow(row = {}) {
@@ -141,17 +170,24 @@ function compactRow(row = {}) {
   if (!result || result.status !== "success" || !Array.isArray(result?.data?.items)) {
     return null;
   }
-  const items = cloneJson(result.data.items.slice(0, MAX_ITEMS_PER_ROW));
-  if (!Array.isArray(items) || !items.length) return null;
+  const rawItems = result.data.items.slice(0, MAX_ITEMS_PER_ROW);
+  if (!rawItems.length) return null;
+  const items = rawItems
+    .map((item) => cloneSnapshotValue(item))
+    .filter((item) => item && typeof item === "object");
+  if (!items.length) return null;
   // Keep the whole catalog descriptor (type, skip settings...): a row painted
   // from disk must render exactly like the network row that replaces it.
   const { result: _result, loadingItems: _loadingItems, ...descriptor } = row;
+  // Strip the full items array before cloning result.data so items past
+  // MAX_ITEMS_PER_ROW are never visited or cloned.
+  const { items: _ignoredItems, ...dataRest } = result.data;
   return {
-    ...cloneJson(descriptor),
+    ...cloneSnapshotValue(descriptor),
     result: {
       status: "success",
       data: {
-        ...cloneJson(result.data),
+        ...cloneSnapshotValue(dataRest),
         items
       }
     },
@@ -217,7 +253,7 @@ export const HomeCatalogSnapshotStore = {
       if (record) await transaction("readwrite", (store) => store.delete(normalizedKey));
       return null;
     }
-    return cloneJson(record.rows) || [];
+    return cloneSnapshotValue(record.rows) || [];
   },
 
   async write({ profileId = null, key = null, rows = [] } = {}) {

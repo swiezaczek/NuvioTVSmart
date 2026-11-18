@@ -31,6 +31,8 @@ export function createHomeScreenMethods20() {
       const mountStart = HOME_PERF_DEBUG ? homePerfNow() : 0;
       const isBackNavigation = Boolean(navigationContext?.isBackNavigation);
       this.container = document.getElementById("home");
+      this.activeHomeTrailerLayers ||= new Set();
+      this.cancelHomeRouteReturnSettle?.();
       this.hasUserInteractedSinceHomePaint = false;
       const restoredRouteFocusState =
         navigationContext?.isBackNavigation && navigationContext?.restoredState?.layoutMode ? navigationContext.restoredState : null;
@@ -86,9 +88,14 @@ export function createHomeScreenMethods20() {
       const forceReload = Boolean(params?.forceReload && !isBackNavigation);
       if (profileChanged || watchProgressSourceChanged || forceReload) {
         this.hasLoadedOnce = false;
+        this.hasPaintedInitialHomeContent = false;
         this.hasAppliedInitialContinueWatchingFocus = false;
         this.sidebarProfile = null;
         this.savedFocusStates = {};
+        this.loadedHomeRouteInputSignature = "";
+        this.pendingHomeCatalogDescriptors = [];
+        this.lastHomeCatalogRefreshAtMs = 0;
+        this.lastHomeCatalogReturnCheckAtMs = 0;
       }
       if (returnFocusState?.layoutMode) {
         this.savedFocusStates = {
@@ -119,6 +126,7 @@ export function createHomeScreenMethods20() {
         String(this.renderedLayoutMode || "") === String(this.layoutMode || "")
       );
       if (canResumePreservedTvHome) {
+        this.hasPaintedInitialHomeContent = true;
         this.homeDomPreserved = false;
         this.container.classList.remove("home-dom-preserved");
         this.container.style.removeProperty("position");
@@ -194,6 +202,7 @@ export function createHomeScreenMethods20() {
       this.container.style.removeProperty("pointer-events");
 
       if (this.hasLoadedOnce && Array.isArray(this.rows) && this.rows.length) {
+        this.hasPaintedInitialHomeContent = true;
         this.homeLoadToken = (this.homeLoadToken || 0) + 1;
         this.render();
         this.ensureStartupSyncSubscription();
@@ -214,6 +223,7 @@ export function createHomeScreenMethods20() {
       }
 
       this.homeLoadToken = (this.homeLoadToken || 0) + 1;
+      this.hasPaintedInitialHomeContent = false;
       this.hasAppliedInitialContinueWatchingFocus = false;
       this.isInitialHomeLoading = true;
       this.ensureStartupSyncSubscription();

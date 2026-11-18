@@ -313,8 +313,15 @@ export function createHomeScreenMethods24() {
       image.loading = "eager";
       image.removeAttribute("data-src");
       // Only posters are worth rescaling. Logos carry transparency a JPEG
-      // would flatten, and they are small enough not to matter.
-      if (!shouldRescaleHomeArtwork() || !image.classList.contains("content-poster")) {
+      // would flatten, and they are small enough not to matter. Non-JPEG URLs
+      // (such as animated WebP/GIF collection artwork) also fast-skip before
+      // forcing getBoundingClientRect / getComputedStyle reads.
+      if (
+        !shouldRescaleHomeArtwork() ||
+        !image.classList.contains("content-poster") ||
+        /\.(?:gif|gifv|webp|png|svg|avif)(?:$|[?#])/i.test(src) ||
+        /^data:image\/(?:gif|webp|png|svg\+xml|avif)\b/i.test(src)
+      ) {
         image.src = src;
         return;
       }

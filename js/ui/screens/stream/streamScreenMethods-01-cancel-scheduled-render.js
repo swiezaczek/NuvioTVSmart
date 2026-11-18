@@ -243,6 +243,12 @@ export function createStreamScreenMethods01() {
         return null;
       }
       const expected = String(index);
+      if (typeof windowNode.querySelector === "function") {
+        const direct = windowNode.querySelector(`.stream-route-card-row[data-stream-row="${expected.replace(/["\\]/g, "\\$&")}"]`);
+        if (direct) {
+          return direct;
+        }
+      }
       return (
         Array.from(windowNode.querySelectorAll(".stream-route-card-row[data-stream-row]")).find(
           (row) => String(row.dataset.streamRow || "") === expected
@@ -263,14 +269,15 @@ export function createStreamScreenMethods01() {
       this.streamVirtualItems = streams;
       const model = this.getStreamVirtualModel(streams);
       const previousScrollTop = this.getListScrollTop(list);
+      const previousWindow = this.streamVirtualWindow;
       const virtualWindow = getStreamVirtualWindow(model, {
         scrollTop: previousScrollTop,
         viewportHeight: this.getStreamVirtualViewportHeight(list),
         overscanPx: STREAM_VIRTUALIZATION_OVERSCAN_PX,
         minWindow: STREAM_VIRTUALIZATION_MIN_WINDOW,
-        preferredIndex
+        preferredIndex,
+        previousWindow: force ? null : previousWindow
       });
-      const previousWindow = this.streamVirtualWindow;
       const sameWindow =
         previousWindow &&
         previousWindow.start === virtualWindow.start &&

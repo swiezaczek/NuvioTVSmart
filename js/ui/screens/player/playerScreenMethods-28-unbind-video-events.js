@@ -281,12 +281,8 @@ export function createPlayerScreenMethods28() {
         }
       }
 
-      // Preserve the non-markup side effects of renderControlButtons().
       this.syncSkipIntroFocusState();
-      this.renderNextEpisodeCard();
       this.syncNextEpisodeCardFocusState();
-      this.syncPlayerOverlayLayoutState();
-      this.renderBitmapSubtitleAtCurrentTime();
     },
     isDialogOpen() {
       return (

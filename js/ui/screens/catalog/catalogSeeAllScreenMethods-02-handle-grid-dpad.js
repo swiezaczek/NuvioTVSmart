@@ -65,8 +65,9 @@ export function createCatalogSeeAllScreenMethods02() {
     },
     restoreFocusedCard({ scrollMode = "center" } = {}) {
       const shell = this.container?.querySelector(".seeall-shell");
+      const escapedFocusKey = this.lastFocusedKey ? String(this.lastFocusedKey).replace(/["\\]/g, "\\$&") : "";
       const target =
-        (this.lastFocusedKey ? this.container?.querySelector(`.seeall-card[data-focus-key="${this.lastFocusedKey}"]`) : null) ||
+        (escapedFocusKey ? this.container?.querySelector(`.seeall-card[data-focus-key="${escapedFocusKey}"]`) : null) ||
         this.container?.querySelector(".seeall-card.focusable") ||
         null;
 
@@ -176,7 +177,9 @@ export function createCatalogSeeAllScreenMethods02() {
             this.posterOptionsFocusKey = "";
             this.pendingRestoreFocus = true;
             this.preserveViewportOnNextRender = true;
-            this.render();
+            if (!this.appendRenderedCatalogItems({ forceRestoreFocus: true })) {
+              this.render();
+            }
           },
           onChanged: () => {
             void this.refreshWatchedTitleIds(this.items).then(() => {
@@ -215,23 +218,19 @@ export function createCatalogSeeAllScreenMethods02() {
       });
       return true;
     },
-    render() {
-      const descriptor = this.params || {};
-      const title = descriptor.catalogName || "Catalog";
+    getCatalogRenderItems() {
       // Keep large paged catalogs windowed on constrained TVs. The window
       // expands as focus approaches its end, while original item indices stay stable.
       const allItems = Array.isArray(this.items) ? this.items : [];
       const currentRenderLimit = Number(this.renderedItemsLimit);
       const renderLimit = Number.isFinite(currentRenderLimit) ? Math.max(48, currentRenderLimit) : 48;
-      const renderItems =
-        allItems.length > 48 && this.hasMore && ScreenUtils.shouldSkipRouteEnter(this)
-          ? allItems.slice(0, Math.min(allItems.length, renderLimit))
-          : allItems;
-      const cards = renderItems.length
-        ? renderItems
-            .map((item) => customPosterForItem(item, "home"))
-            .map(
-              (item, index) => `
+      return allItems.length > 48 && this.hasMore && ScreenUtils.shouldSkipRouteEnter(this)
+        ? allItems.slice(0, Math.min(allItems.length, renderLimit))
+        : allItems;
+    },
+    renderCatalogCard(rawItem, index, descriptor = this.params || {}) {
+      const item = customPosterForItem(rawItem, "home");
+      return `
               <article class="seeall-card focusable"
                        data-action="openDetail"
                        data-item-id="${item.id || ""}"
@@ -262,9 +261,91 @@ export function createCatalogSeeAllScreenMethods02() {
                     : ""
                 }
               </article>
+            `;
+    },
+    renderCatalogLoadingMarkup() {
+      return this.loading
+        ? `
+              <div class="seeall-loading">
+                ${renderLoadingIndicator()}
+                <span>${escapeHtml(t("discover_loading", {}, "Loading..."))}</span>
+              </div>
             `
-            )
-            .join("")
+        : "";
+    },
+    syncLoadingFooter() {
+      const shell = this.container?.querySelector?.(".seeall-shell");
+      if (!shell) {
+        return;
+      }
+      const existing = shell.querySelector(".seeall-loading");
+      if (this.loading) {
+        if (!existing) {
+          shell.insertAdjacentHTML("beforeend", this.renderCatalogLoadingMarkup());
+        }
+      } else if (existing) {
+        existing.remove();
+      }
+    },
+    appendRenderedCatalogItems({ forceRestoreFocus = false } = {}) {
+      const shell = this.container?.querySelector?.(".seeall-shell");
+      const grid = shell?.querySelector?.(".seeall-grid");
+      const state = this._catalogRenderedGridState;
+      const renderItems = this.getCatalogRenderItems();
+      const posterLabelsEnabled = this.layoutPrefs?.posterLabelsEnabled !== false;
+      const canAppend = Boolean(
+        shell &&
+        grid &&
+        state &&
+        state.gridNode === grid &&
+        state.loadToken === this.loadToken &&
+        state.posterLabelsEnabled === posterLabelsEnabled &&
+        state.renderedCount > 0 &&
+        grid.children.length === state.renderedCount &&
+        renderItems.length >= state.renderedCount &&
+        renderItems[0] === state.firstItem &&
+        renderItems[state.renderedCount - 1] === state.lastItem
+      );
+      if (!canAppend) {
+        return false;
+      }
+
+      const previousCount = state.renderedCount;
+      if (renderItems.length > previousCount) {
+        const descriptor = this.params || {};
+        const appendedMarkup = renderItems
+          .slice(previousCount)
+          .map((item, offset) => this.renderCatalogCard(item, previousCount + offset, descriptor))
+          .join("");
+        grid.insertAdjacentHTML("beforeend", appendedMarkup);
+        const appendedNodes = Array.from(grid.children).slice(previousCount);
+        state.renderedCount = renderItems.length;
+        state.lastItem = renderItems[renderItems.length - 1];
+        this.bindCardEvents(appendedNodes);
+        ScreenUtils.indexFocusables(this.container);
+        this.buildNavigationModel();
+      }
+
+      this.syncLoadingFooter();
+
+      if (this.pendingRestoreFocus) {
+        const preserveViewport = Boolean(this.preserveViewportOnNextRender);
+        const scrollMode = preserveViewport ? "none" : "center";
+        this.pendingRestoreFocus = false;
+        this.preserveViewportOnNextRender = false;
+        if (forceRestoreFocus || !preserveViewport || !grid.querySelector(".seeall-card.focusable.focused")) {
+          this.restoreFocusedCard({ scrollMode });
+        }
+      }
+      return true;
+    },
+    render() {
+      this.invalidateNavRowCache?.();
+      const descriptor = this.params || {};
+      const title = descriptor.catalogName || "Catalog";
+      const renderItems = this.getCatalogRenderItems();
+      const cards = renderItems.length
+        ? renderItems.map((item, index) => this.renderCatalogCard(item, index, descriptor)).join("")
         : `<div class="seeall-empty">${escapeHtml(t("catalog_see_all_empty_title", {}, "No items available"))}</div>`;
 
       this.container.innerHTML = `
@@ -280,18 +361,22 @@ export function createCatalogSeeAllScreenMethods02() {
             <section class="seeall-grid">
               ${cards}
             </section>
-            ${
-              this.loading
-                ? `
-              <div class="seeall-loading">
-                ${renderLoadingIndicator()}
-                <span>${escapeHtml(t("discover_loading", {}, "Loading..."))}</span>
-              </div>
-            `
-                : ""
-            }
+            ${this.renderCatalogLoadingMarkup()}
           </div>
         `;
+
+      const mountedGrid = this.container?.querySelector?.(".seeall-grid") || null;
+      this._catalogRenderedGridState =
+        mountedGrid && renderItems.length > 0
+          ? {
+              gridNode: mountedGrid,
+              loadToken: this.loadToken,
+              posterLabelsEnabled: this.layoutPrefs?.posterLabelsEnabled !== false,
+              renderedCount: renderItems.length,
+              firstItem: renderItems[0],
+              lastItem: renderItems[renderItems.length - 1]
+            }
+          : null;
 
       ScreenUtils.indexFocusables(this.container);
       this.buildNavigationModel();
@@ -306,8 +391,9 @@ export function createCatalogSeeAllScreenMethods02() {
       }
       ScreenUtils.setInitialFocus(this.container);
     },
-    bindCardEvents() {
-      this.container?.querySelectorAll(".seeall-card.focusable").forEach((node) => {
+    bindCardEvents(nodes = null) {
+      const cardNodes = nodes || this.container?.querySelectorAll(".seeall-card.focusable") || [];
+      cardNodes.forEach((node) => {
         if (node.__boundFocusHandlers) return;
         node.__boundFocusHandlers = true;
         node.addEventListener("focus", () => {
@@ -320,6 +406,12 @@ export function createCatalogSeeAllScreenMethods02() {
       });
     },
     bindShellEvents() {
+      if (typeof window !== "undefined" && typeof window.addEventListener === "function" && !this._catalogResizeHandler) {
+        this._catalogResizeHandler = () => {
+          this.invalidateNavRowCache?.();
+        };
+        window.addEventListener("resize", this._catalogResizeHandler, { passive: true });
+      }
       const shell = this.container?.querySelector(".seeall-shell") || null;
       if (!shell || shell.__catalogSeeAllShellBound) {
         return;
@@ -331,7 +423,9 @@ export function createCatalogSeeAllScreenMethods02() {
           this.savedScrollTop = Number(shell.scrollTop || 0);
           if (this.shouldAutoLoadMoreFromScroll(shell)) {
             if (this.maybeExpandRenderedItems(this.renderedItemsLimit - 1)) {
-              this.render();
+              if (!this.appendRenderedCatalogItems()) {
+                this.render();
+              }
             }
           }
           const currentShell = this.container?.querySelector(".seeall-shell") || null;

@@ -4,6 +4,9 @@ import { HomeCatalogSnapshotStore, buildHomeCatalogSnapshotKey } from "../../../
 
 const SNAPSHOT_READ_TIMEOUT_MS = 500;
 const SNAPSHOT_WRITE_INTERVAL_MS = 60 * 1000;
+const SNAPSHOT_INPUT_IDLE_MS = 1500;
+const DEFERRED_ROWS_COALESCE_MS = 180;
+const DEFERRED_ROWS_MAX_WAIT_MS = 720;
 
 function readSnapshotWithTimeout(options) {
   let timeoutId = null;
@@ -22,11 +25,43 @@ function readSnapshotWithTimeout(options) {
   );
 }
 
-function persistHomeCatalogSnapshot(screen, token, { force = false } = {}) {
+function descriptorCacheKey(descriptor = {}) {
+  return [
+    String(descriptor?.addonBaseUrl || ""),
+    String(descriptor?.addonId || ""),
+    String(descriptor?.type || ""),
+    String(descriptor?.catalogId || "")
+  ].join("\u0000");
+}
+
+function persistHomeCatalogSnapshot(screen, token, { force = false, Router = null } = {}) {
   const key = screen?.homeCatalogSnapshotKey;
   if (!key || token !== screen.homeLoadToken) return;
+  if (screen.homeCatalogSnapshotWriteTimer) {
+    clearTimeout(screen.homeCatalogSnapshotWriteTimer);
+    screen.homeCatalogSnapshotWriteTimer = null;
+  }
+  screen.pendingHomeCatalogSnapshotForce = Boolean(screen.pendingHomeCatalogSnapshotForce || force);
   const now = Date.now();
-  if (!force && now - Number(screen.lastHomeCatalogSnapshotWriteAt || 0) < SNAPSHOT_WRITE_INTERVAL_MS) {
+  const lastInputAt = Number(screen.lastHomeInputAt || 0);
+  const idleElapsed = lastInputAt > 0 ? now - lastInputAt : Infinity;
+  if (idleElapsed <= SNAPSHOT_INPUT_IDLE_MS) {
+    const waitMs = Math.max(50, SNAPSHOT_INPUT_IDLE_MS - idleElapsed + 25);
+    screen.homeCatalogSnapshotWriteTimer = setTimeout(() => {
+      screen.homeCatalogSnapshotWriteTimer = null;
+      if (Router && Router.getCurrent() !== "home") {
+        return;
+      }
+      persistHomeCatalogSnapshot(screen, token, {
+        force: Boolean(screen.pendingHomeCatalogSnapshotForce),
+        Router
+      });
+    }, waitMs);
+    return;
+  }
+  const effectiveForce = Boolean(force || screen.pendingHomeCatalogSnapshotForce);
+  screen.pendingHomeCatalogSnapshotForce = false;
+  if (!effectiveForce && now - Number(screen.lastHomeCatalogSnapshotWriteAt || 0) < SNAPSHOT_WRITE_INTERVAL_MS) {
     return;
   }
   screen.lastHomeCatalogSnapshotWriteAt = now;
@@ -65,11 +100,140 @@ export function createHomeScreenMethods21() {
     buildHeroIdentity
   } = internals;
 
+  const loadDeferredCatalogDescriptors = (screen, descriptors = [], { token, routeInputSignature = "", prefetchedResults = null } = {}) => {
+    if (!Array.isArray(descriptors) || !descriptors.length) {
+      screen.pendingHomeCatalogDescriptors = [];
+      return Promise.resolve([]);
+    }
+    const pendingByKey = new Map();
+    descriptors.forEach((descriptor) => {
+      pendingByKey.set(descriptorCacheKey(descriptor), descriptor);
+    });
+    screen.pendingHomeCatalogDescriptors = Array.from(pendingByKey.values());
+    screen.homeDeferredLoadInFlightToken = token;
+
+    const pendingRows = new Map();
+    const clearFlushTimer = () => {
+      if (screen.homeDeferredRowsFlushTimer) {
+        clearTimeout(screen.homeDeferredRowsFlushTimer);
+        screen.homeDeferredRowsFlushTimer = null;
+      }
+      screen.homeDeferredRowsFirstQueuedAt = 0;
+    };
+    const flushDeferredRows = ({ render = true } = {}) => {
+      clearFlushTimer();
+      if (token !== screen.homeLoadToken || Router.getCurrent() !== "home") {
+        pendingRows.clear();
+        return;
+      }
+      if (!pendingRows.size) {
+        return;
+      }
+      const combinedByKey = new Map((screen.rows || []).map((entry) => [entry.homeCatalogKey, entry]));
+      pendingRows.forEach((entry, key) => combinedByKey.set(key, entry));
+      pendingRows.clear();
+      screen.rows = screen.sortAndFilterRows(Array.from(combinedByKey.values()), screen.collections);
+      screen.heroCandidates = uniqueById(screen.collectHeroCandidates(screen.rows));
+      if (!screen.heroItem) {
+        screen.heroItem = screen.pickInitialHero();
+      }
+      void screen.refreshWatchedTitleState({ token });
+      if (render) {
+        screen.requestRender();
+      }
+    };
+    const scheduleFlush = () => {
+      if (screen.homeDeferredRowsFlushTimer) {
+        clearTimeout(screen.homeDeferredRowsFlushTimer);
+        screen.homeDeferredRowsFlushTimer = null;
+      }
+      const now = Date.now();
+      if (!screen.homeDeferredRowsFirstQueuedAt) {
+        screen.homeDeferredRowsFirstQueuedAt = now;
+      }
+      const elapsed = now - screen.homeDeferredRowsFirstQueuedAt;
+      const delayMs = elapsed >= DEFERRED_ROWS_MAX_WAIT_MS ? 0 : Math.min(DEFERRED_ROWS_COALESCE_MS, DEFERRED_ROWS_MAX_WAIT_MS - elapsed);
+      screen.homeDeferredRowsFlushTimer = setTimeout(() => {
+        flushDeferredRows({ render: true });
+      }, delayMs);
+    };
+
+    return screen
+      .fetchCatalogRows(descriptors, {
+        allowLoading: true,
+        prefetchedResults,
+        batchSize: screen.getDeferredCatalogBatchSize(),
+        onRow: (row) => {
+          if (token !== screen.homeLoadToken || Router.getCurrent() !== "home") {
+            return;
+          }
+          pendingByKey.delete(descriptorCacheKey(row));
+          screen.pendingHomeCatalogDescriptors = Array.from(pendingByKey.values());
+          pendingRows.set(row.homeCatalogKey, row);
+          scheduleFlush();
+        }
+      })
+      .then((extraRows) => {
+        clearFlushTimer();
+        if (token !== screen.homeLoadToken || Router.getCurrent() !== "home") {
+          return extraRows;
+        }
+        screen.pendingHomeCatalogDescriptors = [];
+        if (routeInputSignature) {
+          screen.loadedHomeRouteInputSignature = routeInputSignature;
+        }
+        const combinedByKey = new Map((screen.rows || []).map((entry) => [entry.homeCatalogKey, entry]));
+        pendingRows.forEach((entry, key) => combinedByKey.set(key, entry));
+        pendingRows.clear();
+        (Array.isArray(extraRows) ? extraRows : []).forEach((row) => {
+          combinedByKey.set(row.homeCatalogKey, row);
+        });
+        screen.rows = screen.sortAndFilterRows(Array.from(combinedByKey.values()), screen.collections);
+        screen.heroCandidates = uniqueById(screen.collectHeroCandidates(screen.rows));
+        if (!screen.heroItem) {
+          screen.heroItem = screen.pickInitialHero();
+        }
+        void screen.refreshWatchedTitleState({ token });
+        persistHomeCatalogSnapshot(screen, token, { force: true, Router });
+        screen.requestBackgroundRender();
+        screen.retryPendingCatalogRows();
+        return extraRows;
+      })
+      .catch((error) => {
+        clearFlushTimer();
+        console.warn("Deferred home rows load failed", error);
+        return [];
+      })
+      .finally(() => {
+        if (screen.homeDeferredLoadInFlightToken === token) {
+          screen.homeDeferredLoadInFlightToken = null;
+        }
+      });
+  };
+
   return {
+    resumePendingHomeCatalogDescriptors({ token = this.homeLoadToken, routeInputSignature = "" } = {}) {
+      if (
+        token !== this.homeLoadToken ||
+        Router.getCurrent() !== "home" ||
+        !Array.isArray(this.pendingHomeCatalogDescriptors) ||
+        !this.pendingHomeCatalogDescriptors.length ||
+        this.homeDeferredLoadInFlightToken === token
+      ) {
+        return Promise.resolve([]);
+      }
+      return loadDeferredCatalogDescriptors(this, this.pendingHomeCatalogDescriptors.slice(), {
+        token,
+        routeInputSignature: routeInputSignature || this.loadedHomeRouteInputSignature
+      });
+    },
     async loadData({ background = false, preserveReturnState = false, refreshManifests = true } = {}) {
       const loadStart = HOME_PERF_DEBUG ? homePerfNow() : 0;
       const token = this.homeLoadToken;
-      this.loadedHomeRouteInputSignature = "";
+      if (!background) {
+        this.loadedHomeRouteInputSignature = "";
+        this.pendingHomeCatalogDescriptors = [];
+      }
       const preserveHomeReturnState = Boolean(background && preserveReturnState);
       const preservedHeroItem = preserveHomeReturnState ? this.heroItem : null;
       const preservedHeroIdentity = preserveHomeReturnState ? buildHeroIdentity(this.heroItem) : "";
@@ -88,7 +252,9 @@ export function createHomeScreenMethods21() {
         }
         this.watchedItems = Array.isArray(watchedItems) ? watchedItems : [];
         this.watchedTitleIds = buildWatchedTitleIdSet(this.watchedItems);
-        this.requestBackgroundRender();
+        if (!this.isInitialHomeLoading) {
+          this.requestBackgroundRender();
+        }
         void this.refreshWatchedTitleState({ token });
       });
 
@@ -254,7 +420,11 @@ export function createHomeScreenMethods21() {
           this.heroItem = this.pickInitialHero();
           this.releaseInitialHomeLoading();
           this.hasLoadedOnce = true;
-          this.render();
+          if (this.container?.querySelector(".home-shell")) {
+            this.requestRender();
+          } else {
+            this.render();
+          }
         }
       }
       // Start the visible rows first. Overlap one deferred batch only on a
@@ -302,7 +472,7 @@ export function createHomeScreenMethods21() {
         background
       });
       this.rows = this.sortAndFilterRows(nextInitialRows, this.collections);
-      persistHomeCatalogSnapshot(this, token);
+      persistHomeCatalogSnapshot(this, token, { Router });
       if (preserveContinueWatching) {
         this.continueWatchingLoading = false;
       } else if (
@@ -348,10 +518,13 @@ export function createHomeScreenMethods21() {
       this.loadedWatchProgressSourceKey = watchProgressRepository.getContinueWatchingSourceKey();
       this.releaseInitialHomeLoading();
       this.hasLoadedOnce = true;
-      if (!deferredDescriptors.length) {
-        this.loadedHomeRouteInputSignature = routeInputSignature;
+      this.loadedHomeRouteInputSignature = routeInputSignature;
+      this.pendingHomeCatalogDescriptors = deferredDescriptors.slice();
+      if (this.container?.querySelector(".home-shell")) {
+        this.requestRender();
+      } else {
+        this.render();
       }
-      this.render();
       this.maybeStartPendingHomeBackgroundRefresh();
       logHomePerf("loadData", {
         phase: "first-render",
@@ -374,49 +547,11 @@ export function createHomeScreenMethods21() {
       });
 
       if (deferredDescriptors.length) {
-        this.fetchCatalogRows(deferredDescriptors, {
-          allowLoading: true,
-          prefetchedResults,
-          batchSize: this.getDeferredCatalogBatchSize(),
-          // Publish completed rows independently; requestBackgroundRender keeps
-          // the legacy-TV render delay and navigation deferral in effect.
-          onRow: (row) => {
-            if (token !== this.homeLoadToken || Router.getCurrent() !== "home") {
-              return;
-            }
-            const combinedByKey = new Map((this.rows || []).map((entry) => [entry.homeCatalogKey, entry]));
-            combinedByKey.set(row.homeCatalogKey, row);
-            this.rows = this.sortAndFilterRows(Array.from(combinedByKey.values()), this.collections);
-            this.heroCandidates = uniqueById(this.collectHeroCandidates(this.rows));
-            if (!this.heroItem) {
-              this.heroItem = this.pickInitialHero();
-            }
-            void this.refreshWatchedTitleState({ token });
-            this.requestBackgroundRender();
-          }
-        })
-          .then((extraRows) => {
-            if (token !== this.homeLoadToken || Router.getCurrent() !== "home") {
-              return;
-            }
-            this.loadedHomeRouteInputSignature = routeInputSignature;
-            const combinedByKey = new Map();
-            [...this.rows, ...extraRows].forEach((row) => {
-              combinedByKey.set(row.homeCatalogKey, row);
-            });
-            this.rows = this.sortAndFilterRows(Array.from(combinedByKey.values()), this.collections);
-            this.heroCandidates = uniqueById(this.collectHeroCandidates(this.rows));
-            if (!this.heroItem) {
-              this.heroItem = this.pickInitialHero();
-            }
-            void this.refreshWatchedTitleState({ token });
-            persistHomeCatalogSnapshot(this, token, { force: true });
-            this.requestBackgroundRender();
-            this.retryPendingCatalogRows();
-          })
-          .catch((error) => {
-            console.warn("Deferred home rows load failed", error);
-          });
+        void loadDeferredCatalogDescriptors(this, deferredDescriptors, {
+          token,
+          routeInputSignature,
+          prefetchedResults
+        });
       }
 
       if (this.layoutMode !== "modern") {

@@ -69,13 +69,31 @@ export function createDiscoverScreenMethods04() {
         option.scrollIntoView({ block: "nearest" });
       }
     },
+    invalidateNavRowCache() {
+      this._discoverNavRowCache = null;
+    },
     buildNavigationModel() {
+      const grid = this.container?.querySelector?.(".discover-grid") || null;
       const cards = Array.from(this.container?.querySelectorAll(".discover-grid .seeall-card.focusable") || []);
-      const rows = groupNodesByOffsetTop(cards);
+      const cache = this._discoverNavRowCache || (this._discoverNavRowCache = {});
+      const previousRows = cache.rows;
+      const rows = groupNodesByOffsetTop(cards, {
+        cache,
+        containerClientWidth: Number(grid?.clientWidth || this.container?.clientWidth || 0)
+      });
+      if (this.navModel?.rows === rows && rows === previousRows) {
+        return;
+      }
       rows.forEach((rowNodes, rowIndex) => {
         rowNodes.forEach((node, colIndex) => {
-          node.dataset.navRow = String(rowIndex);
-          node.dataset.navCol = String(colIndex);
+          const r = String(rowIndex);
+          const c = String(colIndex);
+          if (node.dataset.navRow !== r) {
+            node.dataset.navRow = r;
+          }
+          if (node.dataset.navCol !== c) {
+            node.dataset.navCol = c;
+          }
         });
       });
       this.navModel = { rows };

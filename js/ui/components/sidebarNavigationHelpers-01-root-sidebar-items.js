@@ -135,6 +135,24 @@ export function getSidebarTextFitTargets(container) {
   );
 }
 
+const SIDEBAR_LABEL_FIT_CACHE_LIMIT = 64;
+const sidebarLabelFitCache = new Map();
+
+function rememberSidebarLabelFit(cacheKey, fontSize) {
+  if (!cacheKey) {
+    return;
+  }
+  if (sidebarLabelFitCache.has(cacheKey)) {
+    sidebarLabelFitCache.delete(cacheKey);
+  } else if (sidebarLabelFitCache.size >= SIDEBAR_LABEL_FIT_CACHE_LIMIT) {
+    const oldestKey = sidebarLabelFitCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      sidebarLabelFitCache.delete(oldestKey);
+    }
+  }
+  sidebarLabelFitCache.set(cacheKey, fontSize);
+}
+
 export function fitSidebarLabel(node, minFontSizePx) {
   if (!node || !node.isConnected) {
     return false;
@@ -143,6 +161,27 @@ export function fitSidebarLabel(node, minFontSizePx) {
   const targetWidth = node.getBoundingClientRect().width;
   if (!Number.isFinite(targetWidth) || targetWidth <= 0) {
     return false;
+  }
+
+  const text = String(node.textContent || "").trim();
+  const minSize = Math.max(12, Number(minFontSizePx) || 12);
+  let cacheKey = "";
+  if (text) {
+    const locale =
+      typeof I18n?.getLocale === "function" &&
+      (typeof globalThis?.localStorage !== "undefined" || globalThis?.document?.documentElement?.lang)
+        ? String(I18n.getLocale() || "")
+        : String(globalThis?.document?.documentElement?.lang || "");
+    const fontsStatus = String(globalThis?.document?.fonts?.status || "");
+    cacheKey = [text, Math.round(targetWidth * 100) / 100, locale, minSize, String(node.className || ""), fontsStatus].join("\u0000");
+  }
+  if (cacheKey && sidebarLabelFitCache.has(cacheKey)) {
+    const cachedFontSize = sidebarLabelFitCache.get(cacheKey);
+    rememberSidebarLabelFit(cacheKey, cachedFontSize);
+    if (node.style.fontSize !== cachedFontSize) {
+      node.style.fontSize = cachedFontSize;
+    }
+    return true;
   }
 
   const previousInlineSize = node.style.fontSize;
@@ -159,10 +198,10 @@ export function fitSidebarLabel(node, minFontSizePx) {
   const currentWidth = node.scrollWidth;
   if (currentWidth <= node.clientWidth) {
     node.style.fontSize = "";
+    rememberSidebarLabelFit(cacheKey, "");
     return true;
   }
 
-  const minSize = Math.max(12, Number(minFontSizePx) || 12);
   let low = minSize;
   let high = computedSize;
   let best = minSize;
@@ -178,7 +217,9 @@ export function fitSidebarLabel(node, minFontSizePx) {
     }
   }
 
-  node.style.fontSize = `${best}px`;
+  const resolvedFontSize = `${best}px`;
+  node.style.fontSize = resolvedFontSize;
+  rememberSidebarLabelFit(cacheKey, resolvedFontSize);
   return true;
 }
 

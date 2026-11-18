@@ -125,7 +125,11 @@ export function createDiscoverScreenMethods03() {
             this.requestRender();
           },
           onChanged: () => {
-            void this.refreshWatchedTitleIds().then(() => this.requestRender());
+            void this.refreshWatchedTitleIds().then(() => {
+              if (Router.getCurrent() === "discover" && !this.updateRenderedWatchedBadges()) {
+                this.requestRender();
+              }
+            });
           }
         });
       }

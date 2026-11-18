@@ -236,8 +236,36 @@ export function createPlayerScreenMethods29() {
       }
 
       if (!this.controlsVisible || this.isExternalFrameMode()) {
-        root.style.removeProperty("--player-action-controls-open-bottom");
+        if (this.lastActionOverlayBottomPx !== null || this.lastActionOverlayMeasureKey) {
+          root.style.removeProperty("--player-action-controls-open-bottom");
+        }
         this.lastActionOverlayBottomPx = null;
+        this.lastActionOverlayMeasureKey = "";
+        this.lastActionOverlayRoot = null;
+        return;
+      }
+
+      const viewportWidth = Math.max(0, Math.round(Number(globalThis.window?.innerWidth || root.clientWidth || 0)));
+      const viewportHeight = Math.max(0, Math.round(Number(globalThis.window?.innerHeight || root.clientHeight || 0)));
+      const badgesVisible = Boolean(this.uiRefs?.playbackBadges && !this.uiRefs.playbackBadges.hidden);
+      const chapterVisible = Boolean(this.uiRefs?.chapterTitle && !this.uiRefs.chapterTitle.classList?.contains?.("hidden"));
+      const progressHidden = Boolean(this.uiRefs?.progressShell?.classList?.contains?.("hidden"));
+      const progressFocused = Boolean(this.uiRefs?.progressShell?.classList?.contains?.("focused"));
+      const measureKey = [
+        this.renderedControlSignature || "",
+        badgesVisible ? 1 : 0,
+        chapterVisible ? 1 : 0,
+        progressHidden ? 1 : 0,
+        progressFocused ? 1 : 0,
+        viewportWidth,
+        viewportHeight
+      ].join("|");
+      if (
+        this.lastActionOverlayRoot === root &&
+        this.lastActionOverlayMeasureKey === measureKey &&
+        Number.isFinite(this.lastActionOverlayBottomPx) &&
+        this.lastActionOverlayBottomPx > 0
+      ) {
         return;
       }
 
@@ -245,6 +273,8 @@ export function createPlayerScreenMethods29() {
       if (!Number.isFinite(measuredBottom) || measuredBottom <= 0) {
         return;
       }
+      this.lastActionOverlayRoot = root;
+      this.lastActionOverlayMeasureKey = measureKey;
       if (Math.abs(Number(this.lastActionOverlayBottomPx || 0) - measuredBottom) < 1) {
         return;
       }

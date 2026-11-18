@@ -45,21 +45,37 @@ export function createHomeScreenMethods11() {
         const focusedHero = this.getNodeHeroSource(this.getCurrentFocusedNode());
         return buildHeroIdentity(focusedHero) === heroIdentity;
       };
-      const commitHero = async (resolvedHero, { merge = false } = {}) => {
-        if (deferCommit) {
+      const isRapidHorizontalScroll = Boolean(deferCommit && Date.now() - Number(this.lastRapidHorizontalNavAt || 0) < 600);
+      if (isRapidHorizontalScroll) {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 120);
+        });
+        if (!canCommitHero()) {
+          return;
+        }
+      }
+      let settledMdbImdbRating = undefined;
+      let hasCommittedHero = false;
+      const commitHero = async (resolvedHero, { merge = false, skipPreload = false } = {}) => {
+        if (deferCommit && !skipPreload) {
           const display = buildModernHeroPresentation(resolvedHero);
           await Promise.all([preloadImageSource(display?.backdrop), preloadImageSource(display?.logo)]);
         }
         if (!canCommitHero()) {
           return false;
         }
-        this.heroItem = resolvedHero;
+        const heroToCommit =
+          settledMdbImdbRating != null && resolvedHero && resolvedHero.imdbRating !== settledMdbImdbRating
+            ? { ...resolvedHero, imdbRating: settledMdbImdbRating }
+            : resolvedHero;
+        hasCommittedHero = true;
+        this.heroItem = heroToCommit;
         const matchedIndex = (this.heroCandidates || []).findIndex((item) => String(item?.id || "") === itemId);
         if (matchedIndex >= 0) {
           this.heroIndex = matchedIndex;
         }
         if (merge) {
-          this.mergeHeroIntoCatalogState(itemId, resolvedHero);
+          this.mergeHeroIntoCatalogState(itemId, heroToCommit);
         }
         this.applyHeroToDom();
         return true;
@@ -71,6 +87,23 @@ export function createHomeScreenMethods11() {
         3500,
         null
       ).catch(() => null);
+      void mdbImdbRatingPromise.then((mdbImdbRating) => {
+        settledMdbImdbRating = mdbImdbRating != null ? Number(mdbImdbRating) : null;
+        if (settledMdbImdbRating == null || !hasCommittedHero || !canCommitHero()) {
+          return;
+        }
+        const currentHero = deferCommit && String(this.heroItem?.id || "") !== itemId ? hero : this.heroItem;
+        if (!currentHero || Number(currentHero.imdbRating) === settledMdbImdbRating) {
+          return;
+        }
+        return commitHero(
+          {
+            ...currentHero,
+            imdbRating: settledMdbImdbRating
+          },
+          { merge: true, skipPreload: true }
+        );
+      });
       let metadataPromise = null;
       let latestMetadataResult = null;
       let latestTmdbEnrichment = null;
@@ -78,17 +111,13 @@ export function createHomeScreenMethods11() {
         if (!canCommitHero()) {
           return false;
         }
-        const mdbImdbRating = await mdbImdbRatingPromise;
-        if (!canCommitHero()) {
-          return false;
-        }
         const fallbackHero = {
           ...(deferCommit ? hero : this.heroItem),
           heroMetaEnriched: false,
           heroMetaEnriching: false,
-          ...(mdbImdbRating != null ? { imdbRating: Number(mdbImdbRating) } : {})
+          ...(settledMdbImdbRating != null ? { imdbRating: settledMdbImdbRating } : {})
         };
-        await commitHero(fallbackHero, { merge: mdbImdbRating != null });
+        await commitHero(fallbackHero, { merge: settledMdbImdbRating != null });
         return true;
       };
       const commitMetadataResult = async (result, { late = false, tmdbEnrichment = null } = {}) => {
@@ -97,10 +126,6 @@ export function createHomeScreenMethods11() {
           return false;
         }
         const enrichedImdb = meta ? resolveImdbRating(meta) : null;
-        const mdbImdbRating = await mdbImdbRatingPromise;
-        if (!canCommitHero()) {
-          return false;
-        }
         const settings = TmdbSettingsStore.get();
         const sourceHero =
           (late || tmdbEnrichment) && String(this.heroItem?.id || "") === itemId ? this.heroItem : deferCommit ? hero : this.heroItem;
@@ -128,7 +153,11 @@ export function createHomeScreenMethods11() {
           ...sourceHero,
           heroMetaEnriched: Boolean(meta || tmdbEnrichment),
           heroMetaEnriching: false,
-          ...(mdbImdbRating != null ? { imdbRating: Number(mdbImdbRating) } : enrichedImdb != null ? { imdbRating: enrichedImdb } : {}),
+          ...(settledMdbImdbRating != null
+            ? { imdbRating: settledMdbImdbRating }
+            : enrichedImdb != null
+              ? { imdbRating: enrichedImdb }
+              : {}),
           ...(meta ? runtimePatch : {}),
           ...(meta?.released ? { released: meta.released } : {}),
           ...(meta?.releaseInfo ? { releaseInfo: meta.releaseInfo } : {}),
@@ -282,7 +311,7 @@ export function createHomeScreenMethods11() {
       // Preserve data-src so the asset can be loaded again on the next focus.
       gifNode.removeAttribute("src");
     },
-    syncFocusedCollectionCardState() {
+    syncFocusedCollectionCardState({ deferHydration = false } = {}) {
       const focused = this.getCurrentFocusedNode();
       const focusedCollection = focused?.classList?.contains("home-collection-card") ? focused : null;
       if (
@@ -291,13 +320,17 @@ export function createHomeScreenMethods11() {
         this.activeCollectionFocusGifNode.isConnected
       ) {
         this.hydrateCollectionFocusGif(this.activeCollectionFocusGifNode, false);
-      }
-      if (focusedCollection) {
-        this.hydrateCollectionFocusGif(focusedCollection, true);
-        this.activeCollectionFocusGifNode = focusedCollection;
-      } else {
         this.activeCollectionFocusGifNode = null;
       }
+      if (!focusedCollection) {
+        this.activeCollectionFocusGifNode = null;
+        return;
+      }
+      if (deferHydration) {
+        return;
+      }
+      this.hydrateCollectionFocusGif(focusedCollection, true);
+      this.activeCollectionFocusGifNode = focusedCollection;
     }
   };
 }

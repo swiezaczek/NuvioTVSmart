@@ -383,7 +383,11 @@ function flexGapFallbackPlugin() {
       rowGap ||= "0";
       columnGap ||= "0";
 
-      const scopedSelectors = rule.selectors.map((selector) => `html.no-flex-gap ${selector}`);
+      const scopedSelectors = rule.selectors.map((selector) =>
+        /^html(?=[.#[:\s]|$)/i.test(selector)
+          ? selector.replace(/^html\b/i, "html.no-flex-gap")
+          : `html.no-flex-gap ${selector}`
+      );
       const isColumnDirection = flexDirection.includes("column");
       const wraps = flexWrap.includes("wrap") && !flexWrap.includes("nowrap");
       const childFallback = postcss.rule({
@@ -437,6 +441,7 @@ async function buildCSS() {
 
   const remoteImports = [];
   const seenRemoteImports = new Set();
+  const seenSupportsRootBlocks = new Set();
   const bodies = [];
 
   const remoteImportPattern =
@@ -474,7 +479,17 @@ async function buildCSS() {
         to: outPath
       });
 
-      bodies.push(result.css);
+      const dedupedCss = result.css.replace(
+        /@supports\s*\([^)]+\)[^{]*\{:root\{[^}]+\}\}/g,
+        (block) => {
+          if (seenSupportsRootBlocks.has(block)) {
+            return "";
+          }
+          seenSupportsRootBlocks.add(block);
+          return block;
+        }
+      );
+      bodies.push(dedupedCss);
     }
   }
 

@@ -38,6 +38,8 @@ export function createHomeScreenMethods13() {
       }
       this.clearTrailerLayer(container);
       if (source.kind === "youtube" && source.embedUrl) {
+        this.activeHomeTrailerLayers ||= new Set();
+        this.activeHomeTrailerLayers.add(container);
         const frame = document.createElement("iframe");
         frame.className = "home-inline-trailer-frame";
         frame.dataset.trailerSrc = source.embedUrl;
@@ -131,6 +133,8 @@ export function createHomeScreenMethods13() {
         return;
       }
       if (source.kind === "video" && source.url) {
+        this.activeHomeTrailerLayers ||= new Set();
+        this.activeHomeTrailerLayers.add(container);
         const shouldMute = source.muted !== false;
         const video = document.createElement("video");
         video.className = "home-inline-trailer-video";

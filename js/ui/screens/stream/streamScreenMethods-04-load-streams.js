@@ -277,21 +277,32 @@ export function createStreamScreenMethods04() {
         if (this.streams.length && !preserveExistingResults && this.focusState?.zone === "card") {
           const visibleStreams = this.getFilteredStreams();
           const maxCardIndex = Math.max(0, visibleStreams.length - 1);
-          let initialIndex = clamp(Number(this.focusState?.row ?? this.focusState?.index ?? 0), 0, maxCardIndex);
-          const preferred = String(this.params?.preferredStreamId || "").trim();
-          if (preferred) {
-            const prefIdx = visibleStreams.findIndex((s) => String(s?.id || "") === preferred);
-            if (prefIdx >= 0) {
-              initialIndex = prefIdx;
+          if (!this.streamUserMovedFocus) {
+            let initialIndex = clamp(Number(this.focusState?.row ?? this.focusState?.index ?? 0), 0, maxCardIndex);
+            const preferred = String(this.params?.preferredStreamId || "").trim();
+            if (preferred) {
+              const prefIdx = visibleStreams.findIndex((s) => String(s?.id || "") === preferred);
+              if (prefIdx >= 0) {
+                initialIndex = prefIdx;
+              }
             }
+            const rowIndex = clamp(initialIndex, 0, this.streams.length - 1);
+            this.focusState = {
+              zone: "card",
+              index: clamp(initialIndex, 0, maxCardIndex),
+              row: rowIndex,
+              action: String(this.focusState?.action || "play")
+            };
+          } else {
+            const clampedRow = clamp(Number(this.focusState?.row ?? this.focusState?.index ?? 0), 0, maxCardIndex);
+            this.focusState = {
+              ...this.focusState,
+              zone: "card",
+              index: clampedRow,
+              row: clampedRow,
+              action: String(this.focusState?.action || "play")
+            };
           }
-          const rowIndex = clamp(initialIndex, 0, this.streams.length - 1);
-          this.focusState = {
-            zone: "card",
-            index: clamp(initialIndex, 0, maxCardIndex),
-            row: rowIndex,
-            action: String(this.focusState?.action || "play")
-          };
         } else if (!this.streams.length) {
           this.focusState = { zone: "filter", index: 1 };
         }
