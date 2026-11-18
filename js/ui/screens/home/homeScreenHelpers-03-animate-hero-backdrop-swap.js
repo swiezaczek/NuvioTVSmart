@@ -266,14 +266,15 @@ export function animateHeroBackdropSwap(
       }
     }
 
+    backdrop.classList.remove("placeholder");
+    backdrop.setAttribute("src", normalizedSrc);
+    backdrop.setAttribute("alt", normalizedAlt);
     runHeroImageEnterAnimation(backdrop, "home-hero-backdrop-transition-enter", {
       durationMs,
       isCurrent: () => Number(backdrop.heroBackdropTransitionToken || 0) === token,
       onFinalize: finalize,
-      ghost
+      ghost,
+      waitForDecode: true
     });
-    backdrop.classList.remove("placeholder");
-    backdrop.setAttribute("src", normalizedSrc);
-    backdrop.setAttribute("alt", normalizedAlt);
   });
 }

@@ -351,26 +351,41 @@ export function prepareHeroImageEnter(image, enterClass, { deferTransitionRestor
 export function runHeroImageEnterAnimation(
   image,
   enterClass,
-  { durationMs = 400, isCurrent = () => true, onFinalize = null, ghost = null } = {}
+  { durationMs = 400, isCurrent = () => true, onFinalize = null, ghost = null, waitForDecode = false } = {}
 ) {
   // Commit the initial opacity: 0 frame cleanly across rAF before restoring
   // transitions and triggering .is-visible, avoiding synchronous layout reflows.
   prepareHeroImageEnter(image, enterClass, { deferTransitionRestore: true });
-  requestAnimationFrame(() => {
-    if (!isCurrent()) {
-      restoreHeroImageEnterTransition(image);
-      return;
-    }
-    restoreHeroImageEnterTransition(image);
+  const reveal = () => {
     requestAnimationFrame(() => {
       if (!isCurrent()) {
+        restoreHeroImageEnterTransition(image);
         return;
       }
-      image.classList.add("is-visible");
-      ghost?.classList?.add("is-fading-out");
-      setTimeout(() => {
-        onFinalize?.();
-      }, durationMs);
+      restoreHeroImageEnterTransition(image);
+      requestAnimationFrame(() => {
+        if (!isCurrent()) {
+          return;
+        }
+        image.classList.add("is-visible");
+        ghost?.classList?.add("is-fading-out");
+        setTimeout(() => {
+          onFinalize?.();
+        }, durationMs);
+      });
     });
-  });
+  };
+  if (waitForDecode && typeof image?.decode === "function") {
+    Promise.resolve(image.decode())
+      .catch(() => {})
+      .then(() => {
+        if (!isCurrent()) {
+          restoreHeroImageEnterTransition(image);
+          return;
+        }
+        reveal();
+      });
+    return;
+  }
+  reveal();
 }

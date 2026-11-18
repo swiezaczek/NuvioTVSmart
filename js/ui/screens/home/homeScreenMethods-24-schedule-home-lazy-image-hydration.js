@@ -528,10 +528,11 @@ export function createHomeScreenMethods24() {
         return;
       }
 
+      const maxPerFrame = this.isTvRuntime?.() ? 2 : HOME_LEGACY_LAZY_HYDRATION_MAX_PER_FRAME;
       const drain = () => {
         this.homeLazyImageCommitRaf = 0;
         let assigned = 0;
-        while (pending.length && assigned < HOME_LEGACY_LAZY_HYDRATION_MAX_PER_FRAME) {
+        while (pending.length && assigned < maxPerFrame) {
           const { image, src, priority } = pending.shift();
           if (!(image instanceof HTMLImageElement) || !image.isConnected) {
             continue;
