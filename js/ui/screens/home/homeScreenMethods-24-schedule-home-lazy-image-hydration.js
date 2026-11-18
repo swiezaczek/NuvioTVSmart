@@ -50,6 +50,13 @@ export function createHomeScreenMethods24() {
         return;
       }
       const anchorRow = anchorNode instanceof HTMLElement ? anchorNode.closest(HOME_LAZY_IMAGE_ROW_SELECTOR) : null;
+      const anchorTrack = anchorRow?.querySelector?.(".home-track") || null;
+      const anchorTrackScrollLeft = Number(anchorTrack?.scrollLeft || 0);
+      const prevTrackScrollLeft = Number(this.lastHomeLazyImageHydrationTrackScrollLeft ?? anchorTrackScrollLeft);
+      const rowScrolledHorizontally =
+        anchorRow instanceof HTMLElement &&
+        anchorRow === this.lastHomeLazyImageHydrationAnchorRow &&
+        Math.abs(anchorTrackScrollLeft - prevTrackScrollLeft) >= 80;
       const anchorImagePending = Boolean(
         anchorNode?.querySelector?.(".content-poster[data-src], .home-poster-landscape-logo[data-src], .home-continue-bg[data-src]")
       );
@@ -74,12 +81,11 @@ export function createHomeScreenMethods24() {
         !this.homeLazyImageHydrationRaf &&
         !includeNeighborRows &&
         !viewportChanged &&
-        !(this.shouldUseBoundedHomeImageHydration() && anchorImagePending)
+        !rowScrolledHorizontally &&
+        !(this.shouldUseBoundedHomeImageHydration() && (anchorImagePending || Boolean(anchorRow.querySelector?.("[data-src]"))))
       ) {
         // Avoid scheduling another animation-frame callback until the DOM,
-        // viewport, or focused image changes. Smart-TV bounded hydration may
-        // leave a later horizontal target pending, so that target is allowed to
-        // request a second pass.
+        // viewport, or focused row scroll changes.
         return;
       }
       if (anchorNode instanceof HTMLElement) {
@@ -193,6 +199,7 @@ export function createHomeScreenMethods24() {
         return;
       }
       this.lastHomeLazyImageHydrationAnchorRow = anchorRow;
+      this.lastHomeLazyImageHydrationTrackScrollLeft = Number(anchorRow?.querySelector?.(".home-track")?.scrollLeft || 0);
       const imageRows =
         refreshIndex || !Array.isArray(this.homeLazyImageHydrationIndex)
           ? this.buildHomeLazyImageHydrationIndex()
@@ -217,11 +224,15 @@ export function createHomeScreenMethods24() {
       const constrained = this.isPerformanceConstrained();
       // Android prefetches the visible window plus a small row/card neighborhood.
       // Keep the browser's DOM-mounted rows from turning every vertical focus
-      // move into a burst of eager image requests.
-      const verticalMargin = useBoundedTvHydration ? 480 : constrained ? 720 : 1200;
-      const horizontalMargin = useBoundedTvHydration ? 320 : constrained ? 520 : 1000;
+      // move into a burst of eager image requests, while modern non-constrained
+      // TVs hydrate 2-3 incoming horizontal cards ahead so scrolled rows never
+      // expose blank placeholders under focus.
+      const verticalMargin = useBoundedTvHydration ? (constrained ? 480 : 680) : constrained ? 720 : 1200;
+      const horizontalMargin = useBoundedTvHydration ? (constrained ? 320 : 560) : constrained ? 520 : 1000;
       const focusedRow = Boolean(anchorRow && anchorRow === anchorNode?.closest?.(HOME_LAZY_IMAGE_ROW_SELECTOR));
-      const focusedRowMargin = focusedRow ? Math.max(96, Math.round(Number(anchorNode?.offsetWidth || 0) * 0.65)) : horizontalMargin;
+      const focusedRowMargin = focusedRow
+        ? Math.max(constrained ? 96 : 560, Math.round(Number(anchorNode?.offsetWidth || 0) * (constrained ? 0.65 : 2.5)))
+        : horizontalMargin;
       const pendingLoads = [];
       imageRows.forEach((entry) => {
         const { row } = entry;

@@ -71,7 +71,8 @@ test("WebCodecs pre-buffers initial frames before reveal, animates canvas, and c
     document: globalThis.document,
     devicePixelRatio: globalThis.devicePixelRatio,
     requestAnimationFrame: globalThis.requestAnimationFrame,
-    cancelAnimationFrame: globalThis.cancelAnimationFrame
+    cancelAnimationFrame: globalThis.cancelAnimationFrame,
+    performance: globalThis.performance
   };
 
   let createdBitmaps = 0;
@@ -79,8 +80,10 @@ test("WebCodecs pre-buffers initial frames before reveal, animates canvas, and c
   let closedDecoders = 0;
   const drawnFrames = [];
   let rafQueue = [];
+  let fakeNow = 1000;
 
   try {
+    globalThis.performance = { now: () => fakeNow };
     globalThis.devicePixelRatio = 1;
     globalThis.requestAnimationFrame = (cb) => {
       rafQueue.push(cb);
@@ -183,7 +186,8 @@ test("WebCodecs pre-buffers initial frames before reveal, animates canvas, and c
     // Advance clock by 40 ms -> draws frame 1
     assert.ok(rafQueue.length > 0);
     const tick = rafQueue.shift();
-    tick((globalThis.performance?.now?.() || Date.now()) + 40);
+    fakeNow = 1040;
+    tick(fakeNow);
     assert.ok(drawnFrames.includes(1));
 
     collectionFocusGifPlayer.deactivate(node);
