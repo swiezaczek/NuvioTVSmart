@@ -25,6 +25,39 @@ function parserError(code, message) {
   return error;
 }
 
+function bufferAlloc(size) {
+  if (typeof Buffer.alloc === "function") {
+    return Buffer.alloc(size);
+  }
+  var buffer = new Buffer(size);
+  buffer.fill(0);
+  return buffer;
+}
+
+function destroyStream(stream) {
+  if (stream && typeof stream.destroy === "function") {
+    stream.destroy();
+  }
+}
+
+function destroyRequest(request) {
+  if (!request) return;
+  if (typeof request.destroy === "function") {
+    request.destroy();
+    return;
+  }
+  if (typeof request.abort === "function") {
+    try {
+      request.abort();
+    } catch (_) {}
+  }
+  if (request.socket && typeof request.socket.destroy === "function") {
+    try {
+      request.socket.destroy();
+    } catch (_) {}
+  }
+}
+
 function isFiniteNumber(value) {
   return typeof value === "number" && isFinite(value);
 }
@@ -210,7 +243,10 @@ function requestRange(targetUrl, start, end, redirectCount) {
           totalBytes += chunk.length;
           if (totalBytes > MAX_SOURCE_BYTES) {
             aborted = true;
-            response.destroy();
+            destroyStream(response);
+            if (typeof response.destroy !== "function") {
+              destroyRequest(request);
+            }
             reject(parserError("SOURCE_TOO_LARGE", "TX3G source response exceeds safety limit"));
             return;
           }
@@ -624,7 +660,7 @@ function decodeTx3gSample(sample) {
   }
   var text = sample.slice(2, 2 + textLength);
   if (text.length >= 2 && text[0] === 0xfe && text[1] === 0xff) {
-    var swapped = Buffer.alloc(text.length - 2);
+    var swapped = bufferAlloc(text.length - 2);
     for (var index = 2; index + 1 < text.length; index += 2) {
       swapped[index - 2] = text[index + 1];
       swapped[index - 1] = text[index];

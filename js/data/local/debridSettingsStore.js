@@ -582,7 +582,8 @@ function normalizeDebridSettings(value = {}) {
 
 const store = createProfileScopedStore({
   key: KEY,
-  normalize: normalizeDebridSettings
+  normalize: normalizeDebridSettings,
+  seedFromPrimary: false
 });
 const settingsListeners = new Set();
 

@@ -18,7 +18,8 @@ function normalizeAnimeSkipSettings(value = {}) {
 
 const store = createProfileScopedStore({
   key: KEY,
-  normalize: normalizeAnimeSkipSettings
+  normalize: normalizeAnimeSkipSettings,
+  seedFromPrimary: false
 });
 
 function queueProviderCredentialPush(profileId) {
