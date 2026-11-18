@@ -303,8 +303,17 @@ function watchTvFramePace() {
   if (!profile.isTvRuntime || profile.isPerformanceConstrained) {
     return;
   }
+  let onKeyDown = null;
+  const detachListener = () => {
+    if (onKeyDown) {
+      document.removeEventListener("keydown", onKeyDown, true);
+      onKeyDown = null;
+    }
+  };
   const monitor = createFramePaceMonitor({
+    shouldSample: () => Router.getCurrent() !== "player",
     onSlow: (lostMs) => {
+      detachListener();
       storeMeasuredTvTier({ tier: "constrained", appVersion: APP_VERSION, lostMs });
       resetTvRuntimePerformanceProfile();
       applyPerformanceMode();
@@ -313,7 +322,43 @@ function watchTvFramePace() {
   });
   // Readable from the remote inspector when a set's tier is in question.
   globalThis.__NUVIO_FRAME_PACE__ = monitor;
-  document.addEventListener("keydown", () => monitor.noteKey(), true);
+  onKeyDown = () => {
+    if (Router.getCurrent() === "player") {
+      return;
+    }
+    monitor.noteKey();
+  };
+  document.addEventListener("keydown", onKeyDown, true);
+}
+
+function scheduleAfterFirstHomePaint(task, { delayMs = 0, idleTimeoutMs = 1500, fallbackMs } = {}) {
+  runAfterFirstHomePaint(
+    () => {
+      const invoke = () => {
+        try {
+          task();
+        } catch (error) {
+          console.warn("Deferred startup task failed", error);
+        }
+      };
+      const scheduleIdle = () => {
+        if (typeof globalThis.requestIdleCallback === "function") {
+          globalThis.requestIdleCallback(invoke, {
+            timeout: Math.max(250, Number(idleTimeoutMs) || 1500)
+          });
+          return;
+        }
+        invoke();
+      };
+      const normalizedDelay = Math.max(0, Number(delayMs) || 0);
+      if (normalizedDelay > 0) {
+        setTimeout(scheduleIdle, normalizedDelay);
+      } else {
+        scheduleIdle();
+      }
+    },
+    fallbackMs === undefined ? undefined : { fallbackMs }
+  );
 }
 
 function isAddonRemoteMode() {
@@ -426,26 +471,37 @@ async function enterWithLastProfile({ restoreWebOsRoute = false } = {}) {
     // Neither the member access refresh nor the badge prerender is needed for
     // the first Home paint; on a single-core TV they competed with the catalog
     // rows for the main thread and the network.
-    runAfterFirstHomePaint(() => {
-      void MemberAccessRepository.getAccess().catch((error) => {
-        console.warn("Profile member access refresh failed", error);
-      });
-      void preloadStreamBadgeImages().catch((error) => {
-        console.warn("Stream badge image prerender failed", error);
-      });
-    });
+    scheduleAfterFirstHomePaint(
+      () => {
+        void MemberAccessRepository.getAccess().catch((error) => {
+          console.warn("Profile member access refresh failed", error);
+        });
+      },
+      { delayMs: 150, idleTimeoutMs: 1500 }
+    );
+    scheduleAfterFirstHomePaint(
+      () => {
+        void preloadStreamBadgeImages().catch((error) => {
+          console.warn("Stream badge image prerender failed", error);
+        });
+      },
+      { delayMs: 750, idleTimeoutMs: 2000 }
+    );
   }
   const experienceRoute = activeProfile ? await resolveExperienceRoute(activeProfile.id) : "home";
   // The startup sync fans out to about ten remote surfaces. Home paints from
   // its local cache first and refreshes when the pull completes, so starting
   // the pull after that paint keeps the first screen responsive.
-  runAfterFirstHomePaint(() => {
-    void StartupSyncService.requestSyncNow({
-      notifyPullCompleted: ["home", "plugins"].includes(experienceRoute)
-    }).catch((error) => {
-      console.warn("Profile background sync failed", error);
-    });
-  });
+  scheduleAfterFirstHomePaint(
+    () => {
+      void StartupSyncService.requestSyncNow({
+        notifyPullCompleted: ["home", "plugins"].includes(experienceRoute)
+      }).catch((error) => {
+        console.warn("Profile background sync failed", error);
+      });
+    },
+    { delayMs: 350, idleTimeoutMs: 1500 }
+  );
   const storedResumeRoute =
     restoreWebOsRoute && typeof Router.consumeWebOsResumeRoute === "function"
       ? Router.consumeWebOsResumeRoute()
@@ -806,9 +862,12 @@ async function bootstrapApp() {
   if (!getTvRuntimePerformanceProfile().isPerformanceConstrained) {
     warmStreamingLibs({ delayMs: 1400 });
   }
-  runAfterFirstHomePaint(() => {
-    void checkForAppUpdateOnStartup();
-  });
+  scheduleAfterFirstHomePaint(
+    () => {
+      void checkForAppUpdateOnStartup();
+    },
+    { delayMs: 1200, idleTimeoutMs: 2500 }
+  );
 
   markBootStage("Restoring session");
   DeviceSessionRegistration.start();
@@ -891,7 +950,7 @@ async function bootstrapApp() {
   markBootStage("Checking authentication");
   await AuthManager.bootstrap();
   // Party toasts and the party availability request can wait for Home.
-  runAfterFirstHomePaint(() => installPartyEffects());
+  scheduleAfterFirstHomePaint(() => installPartyEffects(), { delayMs: 950, idleTimeoutMs: 2000 });
 }
 
 async function bootstrapAddonRemoteMode() {

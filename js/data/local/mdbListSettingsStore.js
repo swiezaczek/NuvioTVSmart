@@ -70,7 +70,8 @@ function normalizeMdbListSettings(value = {}) {
 
 const store = createProfileScopedStore({
   key: KEY,
-  normalize: normalizeMdbListSettings
+  normalize: normalizeMdbListSettings,
+  seedFromPrimary: false
 });
 
 function queueProviderCredentialPush(profileId) {

@@ -1,4 +1,4 @@
-var URL = require("url").URL;
+var urlModule = require("url");
 var http = require("http");
 var https = require("https");
 var net = require("net");
@@ -86,7 +86,145 @@ var PGS_COMPOSITION_STATE_EPOCH_START = 0x80;
 var PGS_COMPOSITION_STATE_ACQUISITION_POINT = 0x40;
 var PGS_TIMESTAMP_WRAP = 0x100000000;
 
-var MPEG_PACK_HEADER = Buffer.from([
+function bufferAlloc(size) {
+  if (typeof Buffer.alloc === "function") {
+    return Buffer.alloc(size);
+  }
+  var buf = new Buffer(size);
+  buf.fill(0);
+  return buf;
+}
+
+function bufferFrom(value, encoding) {
+  if (typeof Buffer.from === "function") {
+    return encoding !== undefined ? Buffer.from(value, encoding) : Buffer.from(value);
+  }
+  if (typeof value === "string") {
+    return new Buffer(value, encoding || "utf8");
+  }
+  if (Buffer.isBuffer(value) || Array.isArray(value)) {
+    return new Buffer(value);
+  }
+  if (value && typeof value.length === "number") {
+    return new Buffer(Array.prototype.slice.call(value));
+  }
+  return new Buffer(0);
+}
+
+function padRight(value, width, fillChar) {
+  var text = String(value);
+  var ch = fillChar || "0";
+  while (text.length < width) text += ch;
+  return text;
+}
+
+function uniqueSortedNumbers(values) {
+  var seen = Object.create(null);
+  var output = [];
+  for (var index = 0; index < values.length; index += 1) {
+    var value = values[index];
+    var key = String(value);
+    if (!seen[key]) {
+      seen[key] = true;
+      output.push(value);
+    }
+  }
+  return output.sort(function (a, b) {
+    return a - b;
+  });
+}
+
+function uniqueStrings(values) {
+  var seen = Object.create(null);
+  var output = [];
+  for (var index = 0; index < values.length; index += 1) {
+    var value = values[index];
+    var key = String(value);
+    if (!seen[key]) {
+      seen[key] = true;
+      output.push(value);
+    }
+  }
+  return output;
+}
+
+function mapKeys(map) {
+  var keys = [];
+  map.forEach(function (_value, key) {
+    keys.push(key);
+  });
+  return keys;
+}
+
+function destroyRequest(req, error) {
+  if (!req) return;
+  if (typeof req._nuvioCancel === "function") {
+    req._nuvioCancel(error);
+  }
+  if (typeof req.destroy === "function") {
+    req.destroy(error);
+    return;
+  }
+  if (typeof req.abort === "function") {
+    try {
+      req.abort();
+    } catch (_) {}
+  }
+  if (req.socket && typeof req.socket.destroy === "function") {
+    try {
+      req.socket.destroy();
+    } catch (_) {}
+  }
+}
+
+function parseHttpUrl(value, base) {
+  var text = String(value || "").trim();
+  if (!text) return null;
+  var URLClass = urlModule.URL;
+  if (typeof URLClass === "function") {
+    try {
+      var parsed = base === undefined ? new URLClass(text) : new URLClass(text, String(base));
+      return {
+        protocol: String(parsed.protocol || "").toLowerCase(),
+        hostname: String(parsed.hostname || "").replace(/^\[|\]$/g, ""),
+        port: String(parsed.port || ""),
+        path: String(parsed.pathname || "/") + String(parsed.search || ""),
+        auth:
+          parsed.username || parsed.password
+            ? decodeURIComponent(parsed.username || "") +
+              ":" +
+              decodeURIComponent(parsed.password || "")
+            : "",
+        href: parsed.href
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+  var resolved = base !== undefined ? urlModule.resolve(String(base), text) : text;
+  var legacy = urlModule.parse(resolved);
+  if (!legacy || !legacy.protocol || !legacy.hostname) {
+    return null;
+  }
+  var protocol = String(legacy.protocol || "").toLowerCase();
+  var port = legacy.port ? String(legacy.port) : "";
+  var hostname = String(legacy.hostname || "").replace(/^\[|\]$/g, "");
+  var host =
+    (hostname.indexOf(":") >= 0 ? "[" + hostname + "]" : hostname) + (port ? ":" + port : "");
+  var pathname = legacy.pathname || "/";
+  var search = legacy.search || "";
+  var hash = legacy.hash || "";
+  return {
+    protocol: protocol,
+    hostname: hostname,
+    port: port,
+    path: legacy.path || pathname + search,
+    auth: legacy.auth || "",
+    href: protocol + "//" + (legacy.auth ? legacy.auth + "@" : "") + host + pathname + search + hash
+  };
+}
+
+var MPEG_PACK_HEADER = bufferFrom([
   0x00, 0x00, 0x01, 0xba, 0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x00, 0x00, 0x03, 0xf8
 ]);
 
@@ -110,11 +248,8 @@ function bitmapSubtitleError(code, message, details) {
 }
 
 function normalizeMediaUrl(value) {
-  var text = String(value || "").trim();
-  var parsed;
-  try {
-    parsed = new URL(text);
-  } catch (_) {
+  var parsed = parseHttpUrl(value);
+  if (!parsed) {
     throw bitmapSubtitleError("INVALID_URL", "Bitmap subtitle source URL is invalid");
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
@@ -210,113 +345,142 @@ function requestRange(url, start, end, maxBytes, redirects, requestContext) {
       reject(bitmapSubtitleError("REQUEST_SUPERSEDED", "Bitmap subtitle request was superseded"));
       return;
     }
-    var parsed;
-    try {
-      parsed = new URL(url);
-    } catch (_) {
+    var parsed = parseHttpUrl(url);
+    if (!parsed || (parsed.protocol !== "http:" && parsed.protocol !== "https:")) {
       reject(bitmapSubtitleError("INVALID_URL", "Invalid bitmap subtitle range URL"));
       return;
     }
 
     var transport = parsed.protocol === "https:" ? https : http;
-    var req = transport.request(
-      parsed,
-      {
-        method: "GET",
-        // Node 20 can abandon a viable IPv4 connection after 250 ms, then
-        // fail on unroutable IPv6. Keep dual-stack selection, but allow the
-        // measured slow handshakes without changing process-wide defaults.
-        autoSelectFamilyAttemptTimeout:
-          typeof net.getDefaultAutoSelectFamilyAttemptTimeout === "function"
-            ? Math.max(
-                MIN_ADDRESS_ATTEMPT_TIMEOUT_MS,
-                net.getDefaultAutoSelectFamilyAttemptTimeout()
-              )
-            : undefined,
-        headers: {
-          Range: "bytes=" + start + "-" + end,
-          "Accept-Encoding": "identity",
-          "User-Agent": "NuvioTV/bitmap-subtitles"
-        }
-      },
-      function (res) {
-        var statusCode = Number(res.statusCode || 0);
-        if (statusCode >= 300 && statusCode < 400 && res.headers.location) {
-          res.resume();
-          if (requestContext) requestContext.requests.delete(req);
-          if (redirectCount >= MAX_REDIRECTS) {
-            reject(
-              bitmapSubtitleError(
-                "TOO_MANY_REDIRECTS",
-                "Bitmap subtitle source redirected too many times"
-              )
-            );
-            return;
-          }
-          var redirected = new URL(res.headers.location, parsed).href;
-          requestRange(redirected, start, end, maxBytes, redirectCount + 1, requestContext).then(
-            resolve,
-            reject
-          );
-          return;
-        }
+    var requestOptions = {
+      protocol: parsed.protocol,
+      hostname: parsed.hostname,
+      port: parsed.port || undefined,
+      path: parsed.path || "/",
+      method: "GET",
+      headers: {
+        Range: "bytes=" + start + "-" + end,
+        "Accept-Encoding": "identity",
+        "User-Agent": "NuvioTV/bitmap-subtitles"
+      }
+    };
+    if (parsed.auth) {
+      requestOptions.auth = parsed.auth;
+    }
+    // Node 20 can abandon a viable IPv4 connection after 250 ms, then
+    // fail on unroutable IPv6. Keep dual-stack selection, but allow the
+    // measured slow handshakes without changing process-wide defaults.
+    if (typeof net.getDefaultAutoSelectFamilyAttemptTimeout === "function") {
+      requestOptions.autoSelectFamilyAttemptTimeout = Math.max(
+        MIN_ADDRESS_ATTEMPT_TIMEOUT_MS,
+        net.getDefaultAutoSelectFamilyAttemptTimeout()
+      );
+    }
 
-        if (statusCode !== 206 && !(statusCode === 200 && start === 0)) {
-          res.resume();
-          if (requestContext) requestContext.requests.delete(req);
-          reject(
+    var settled = false;
+    var req = null;
+    function settleResolve(value) {
+      if (settled) return;
+      settled = true;
+      if (requestContext && req) requestContext.requests.delete(req);
+      resolve(value);
+    }
+    function settleReject(error) {
+      if (settled) return;
+      settled = true;
+      if (requestContext && req) requestContext.requests.delete(req);
+      reject(error);
+    }
+
+    req = transport.request(requestOptions, function (res) {
+      var statusCode = Number(res.statusCode || 0);
+      if (statusCode >= 300 && statusCode < 400 && res.headers.location) {
+        res.resume();
+        if (requestContext) requestContext.requests.delete(req);
+        if (redirectCount >= MAX_REDIRECTS) {
+          settleReject(
             bitmapSubtitleError(
-              "RANGE_UNAVAILABLE",
-              "Bitmap subtitle source did not honor HTTP Range",
-              { statusCode: statusCode }
+              "TOO_MANY_REDIRECTS",
+              "Bitmap subtitle source redirected too many times"
             )
           );
           return;
         }
-
-        var chunks = [];
-        var received = 0;
-        res.on("data", function (chunk) {
-          received += chunk.length;
-          if (received > maxBytes) {
-            req.destroy(
-              bitmapSubtitleError(
-                "RANGE_TOO_LARGE",
-                "Bitmap subtitle range exceeded its safety limit"
-              )
-            );
-            return;
-          }
-          chunks.push(chunk);
-        });
-        res.on("end", function () {
-          var totalSize = null;
-          var contentRange = String(res.headers["content-range"] || "");
-          var rangeMatch = contentRange.match(/bytes\s+\d+-\d+\/(\d+|\*)/i);
-          if (rangeMatch && rangeMatch[1] !== "*") {
-            totalSize = Number(rangeMatch[1]);
-          } else if (statusCode === 200) {
-            totalSize = Number(res.headers["content-length"] || 0) || null;
-          }
-          if (requestContext) requestContext.requests.delete(req);
-          resolve({
-            buffer: Buffer.concat(chunks),
-            totalSize: totalSize,
-            finalUrl: parsed.href,
-            statusCode: statusCode
-          });
-        });
+        var redirected = parseHttpUrl(res.headers.location, parsed.href);
+        if (!redirected || (redirected.protocol !== "http:" && redirected.protocol !== "https:")) {
+          settleReject(bitmapSubtitleError("INVALID_URL", "Invalid bitmap subtitle redirect URL"));
+          return;
+        }
+        requestRange(redirected.href, start, end, maxBytes, redirectCount + 1, requestContext).then(
+          settleResolve,
+          settleReject
+        );
+        return;
       }
-    );
 
+      if (statusCode !== 206 && !(statusCode === 200 && start === 0)) {
+        res.resume();
+        settleReject(
+          bitmapSubtitleError(
+            "RANGE_UNAVAILABLE",
+            "Bitmap subtitle source did not honor HTTP Range",
+            {
+              statusCode: statusCode
+            }
+          )
+        );
+        return;
+      }
+
+      var chunks = [];
+      var received = 0;
+      res.on("data", function (chunk) {
+        if (settled) return;
+        received += chunk.length;
+        if (received > maxBytes) {
+          destroyRequest(
+            req,
+            bitmapSubtitleError(
+              "RANGE_TOO_LARGE",
+              "Bitmap subtitle range exceeded its safety limit"
+            )
+          );
+          return;
+        }
+        chunks.push(chunk);
+      });
+      res.on("error", function (error) {
+        settleReject(error);
+      });
+      res.on("end", function () {
+        var totalSize = null;
+        var contentRange = String(res.headers["content-range"] || "");
+        var rangeMatch = contentRange.match(/bytes\s+\d+-\d+\/(\d+|\*)/i);
+        if (rangeMatch && rangeMatch[1] !== "*") {
+          totalSize = Number(rangeMatch[1]);
+        } else if (statusCode === 200) {
+          totalSize = Number(res.headers["content-length"] || 0) || null;
+        }
+        settleResolve({
+          buffer: Buffer.concat(chunks),
+          totalSize: totalSize,
+          finalUrl: parsed.href,
+          statusCode: statusCode
+        });
+      });
+    });
+
+    req._nuvioCancel = settleReject;
     if (requestContext) requestContext.requests.add(req);
 
     req.setTimeout(REQUEST_TIMEOUT_MS, function () {
-      req.destroy(bitmapSubtitleError("RANGE_TIMEOUT", "Bitmap subtitle range request timed out"));
+      destroyRequest(
+        req,
+        bitmapSubtitleError("RANGE_TIMEOUT", "Bitmap subtitle range request timed out")
+      );
     });
     req.on("error", function (error) {
-      if (requestContext) requestContext.requests.delete(req);
-      reject(error);
+      settleReject(error);
     });
     req.end();
   });
@@ -425,15 +589,15 @@ function readBinaryId(data, element) {
 
 function parseCompression(data, trackEntry) {
   var encodings = findChild(data, trackEntry, ID_CONTENT_ENCODINGS);
-  if (!encodings) return { type: "none", settings: Buffer.alloc(0) };
+  if (!encodings) return { type: "none", settings: bufferAlloc(0) };
   var encoding = findChild(data, encodings, ID_CONTENT_ENCODING);
   var compression = encoding ? findChild(data, encoding, ID_CONTENT_COMPRESSION) : null;
-  if (!compression) return { type: "none", settings: Buffer.alloc(0) };
+  if (!compression) return { type: "none", settings: bufferAlloc(0) };
   var algo = readUnsigned(data, findChild(data, compression, ID_CONTENT_COMP_ALGO));
   var settingsElement = findChild(data, compression, ID_CONTENT_COMP_SETTINGS);
   var settings = settingsElement
-    ? Buffer.from(data.slice(settingsElement.dataStart, settingsElement.dataEnd))
-    : Buffer.alloc(0);
+    ? bufferFrom(data.slice(settingsElement.dataStart, settingsElement.dataEnd))
+    : bufferAlloc(0);
   if (algo == null || algo === 0) return { type: "zlib", settings: settings };
   if (algo === 3) return { type: "header", settings: settings };
   return { type: "unsupported", algorithm: algo, settings: settings };
@@ -455,8 +619,8 @@ function parseTracks(data, tracksElement) {
           readString(data, findChild(data, entry, ID_LANGUAGE)),
         name: readString(data, findChild(data, entry, ID_NAME)),
         codecPrivate: codecPrivate
-          ? Buffer.from(data.slice(codecPrivate.dataStart, codecPrivate.dataEnd))
-          : Buffer.alloc(0),
+          ? bufferFrom(data.slice(codecPrivate.dataStart, codecPrivate.dataEnd))
+          : bufferAlloc(0),
         compression: parseCompression(data, entry)
       };
     });
@@ -562,64 +726,76 @@ function parseCues(data, timecodeScaleNs) {
   return cues;
 }
 
-async function loadMetadata(mediaUrl) {
+function loadMetadata(mediaUrl) {
   var cached = getCached(metadataCache, mediaUrl);
-  if (cached) return cached;
+  if (cached) return Promise.resolve(cached);
   if (metadataRequests.has(mediaUrl)) return metadataRequests.get(mediaUrl);
 
-  var request = (async function () {
-    var head = await requestRange(mediaUrl, 0, HEADER_PROBE_BYTES - 1, HEADER_PROBE_BYTES);
-    if (!head.totalSize)
-      throw bitmapSubtitleError("SIZE_UNKNOWN", "Bitmap subtitle source size is unknown");
-    var metadata = parseHeader(head.buffer, head.totalSize);
-    var cuesProbeEnd = Math.min(metadata.totalSize - 1, metadata.cuesOffset + CUES_PROBE_BYTES - 1);
-    var cuesProbe = await requestRange(
-      mediaUrl,
-      metadata.cuesOffset,
-      cuesProbeEnd,
-      CUES_PROBE_BYTES
-    );
-    var cuesHeader = readElement(cuesProbe.buffer, 0, cuesProbe.buffer.length, true);
-    if (!cuesHeader || cuesHeader.id !== ID_CUES || cuesHeader.totalSize == null) {
-      throw bitmapSubtitleError("INVALID_CUES", "Matroska Cues size could not be determined");
-    }
-    if (cuesHeader.totalSize > MAX_CUES_BYTES) {
-      throw bitmapSubtitleError(
-        "CUES_TOO_LARGE",
-        "Matroska Cues exceed the supported safety limit"
+  var request = requestRange(mediaUrl, 0, HEADER_PROBE_BYTES - 1, HEADER_PROBE_BYTES)
+    .then(function (head) {
+      if (!head.totalSize) {
+        throw bitmapSubtitleError("SIZE_UNKNOWN", "Bitmap subtitle source size is unknown");
+      }
+      var metadata = parseHeader(head.buffer, head.totalSize);
+      var cuesProbeEnd = Math.min(
+        metadata.totalSize - 1,
+        metadata.cuesOffset + CUES_PROBE_BYTES - 1
       );
-    }
-    var cuesBuffer = cuesProbe.buffer;
-    if (cuesBuffer.length < cuesHeader.totalSize) {
-      cuesBuffer = (
-        await requestRange(
-          mediaUrl,
-          metadata.cuesOffset,
-          metadata.cuesOffset + cuesHeader.totalSize - 1,
-          MAX_CUES_BYTES
-        )
-      ).buffer;
-    }
-    metadata.cues = parseCues(cuesBuffer, metadata.timecodeScaleNs);
-    metadata.clusterPositions = Array.from(
-      new Set(
-        metadata.cues.map(function (cue) {
-          return cue.clusterPosition;
-        })
-      )
-    ).sort(function (a, b) {
-      return a - b;
-    });
-    setCached(metadataCache, mediaUrl, metadata, METADATA_CACHE_TTL_MS, MAX_METADATA_CACHE_ENTRIES);
-    return metadata;
-  })();
+      return requestRange(mediaUrl, metadata.cuesOffset, cuesProbeEnd, CUES_PROBE_BYTES).then(
+        function (cuesProbe) {
+          var cuesHeader = readElement(cuesProbe.buffer, 0, cuesProbe.buffer.length, true);
+          if (!cuesHeader || cuesHeader.id !== ID_CUES || cuesHeader.totalSize == null) {
+            throw bitmapSubtitleError("INVALID_CUES", "Matroska Cues size could not be determined");
+          }
+          if (cuesHeader.totalSize > MAX_CUES_BYTES) {
+            throw bitmapSubtitleError(
+              "CUES_TOO_LARGE",
+              "Matroska Cues exceed the supported safety limit"
+            );
+          }
+          var cuesPromise =
+            cuesProbe.buffer.length < cuesHeader.totalSize
+              ? requestRange(
+                  mediaUrl,
+                  metadata.cuesOffset,
+                  metadata.cuesOffset + cuesHeader.totalSize - 1,
+                  MAX_CUES_BYTES
+                ).then(function (fullCues) {
+                  return fullCues.buffer;
+                })
+              : Promise.resolve(cuesProbe.buffer);
+          return cuesPromise.then(function (cuesBuffer) {
+            metadata.cues = parseCues(cuesBuffer, metadata.timecodeScaleNs);
+            metadata.clusterPositions = uniqueSortedNumbers(
+              metadata.cues.map(function (cue) {
+                return cue.clusterPosition;
+              })
+            );
+            setCached(
+              metadataCache,
+              mediaUrl,
+              metadata,
+              METADATA_CACHE_TTL_MS,
+              MAX_METADATA_CACHE_ENTRIES
+            );
+            return metadata;
+          });
+        }
+      );
+    })
+    .then(
+      function (metadata) {
+        metadataRequests.delete(mediaUrl);
+        return metadata;
+      },
+      function (error) {
+        metadataRequests.delete(mediaUrl);
+        throw error;
+      }
+    );
 
   metadataRequests.set(mediaUrl, request);
-  try {
-    return await request;
-  } finally {
-    metadataRequests.delete(mediaUrl);
-  }
+  return request;
 }
 
 function decodeBlockPayload(payload, compression) {
@@ -758,15 +934,11 @@ function selectClusterPositions(metadata, trackNumber, startMs, endMs) {
   });
   if (previous && startMs - previous.timeMs <= 30000) selected.unshift(previous);
   if (!selected.length) return [];
-  return Array.from(
-    new Set(
-      selected.map(function (cue) {
-        return cue.clusterPosition;
-      })
-    )
-  ).sort(function (a, b) {
-    return a - b;
-  });
+  return uniqueSortedNumbers(
+    selected.map(function (cue) {
+      return cue.clusterPosition;
+    })
+  );
 }
 
 function getTrackCues(metadata, trackNumber) {
@@ -883,34 +1055,27 @@ function buildClusterRanges(metadata, positions) {
   });
 }
 
-async function loadClusterFrames(mediaUrl, metadata, track, positions, requestContext) {
-  var clusterRanges = buildClusterRanges(
-    metadata,
-    Array.from(new Set(positions)).sort(function (left, right) {
-      return left - right;
-    })
-  );
-  var clusterFrames = await mapWithConcurrency(
-    clusterRanges,
-    MAX_CONCURRENT_CLUSTER_REQUESTS,
-    async function (range) {
-      var response = await requestClusterRange(
-        mediaUrl,
-        range.absoluteStart,
-        range.clusterSize,
-        requestContext
-      );
+function loadClusterFrames(mediaUrl, metadata, track, positions, requestContext) {
+  var clusterRanges = buildClusterRanges(metadata, uniqueSortedNumbers(positions));
+  return mapWithConcurrency(clusterRanges, MAX_CONCURRENT_CLUSTER_REQUESTS, function (range) {
+    return requestClusterRange(
+      mediaUrl,
+      range.absoluteStart,
+      range.clusterSize,
+      requestContext
+    ).then(function (response) {
       return parseCluster(response.buffer, track, metadata.timecodeScaleNs).map(function (frame) {
         return Object.assign(frame, { clusterPosition: range.clusterPosition });
       });
-    }
-  );
-  var frames = [];
-  clusterFrames.forEach(function (entries) {
-    frames.push.apply(frames, entries);
+    });
+  }).then(function (clusterFrames) {
+    var frames = [];
+    clusterFrames.forEach(function (entries) {
+      frames.push.apply(frames, entries);
+    });
+    frames.sort(compareFrames);
+    return frames;
   });
-  frames.sort(compareFrames);
-  return frames;
 }
 
 function invalidCuePosition(message, details) {
@@ -1006,128 +1171,135 @@ function parseCuedBlock(data, element, track, cue, timecodeScaleNs) {
   };
 }
 
-async function loadCuedBlockFrame(mediaUrl, metadata, track, cue, requestContext) {
+function loadCuedBlockFrame(mediaUrl, metadata, track, cue, requestContext) {
   if (cue.relativePosition == null || cue.relativePosition < 0) {
-    throw invalidCuePosition("Cue has no usable CueRelativePosition", {
-      clusterPosition: cue.clusterPosition
-    });
+    return Promise.reject(
+      invalidCuePosition("Cue has no usable CueRelativePosition", {
+        clusterPosition: cue.clusterPosition
+      })
+    );
   }
   var clusterEnd = metadata.segmentDataStart + nextClusterPosition(metadata, cue.clusterPosition);
   var probeStart = metadata.segmentDataStart + cue.clusterPosition + cue.relativePosition;
   var availableBytes = clusterEnd - probeStart;
   if (availableBytes <= 0) {
-    throw invalidCuePosition("CueRelativePosition points outside its Cluster", {
-      clusterPosition: cue.clusterPosition,
-      relativePosition: cue.relativePosition
-    });
+    return Promise.reject(
+      invalidCuePosition("CueRelativePosition points outside its Cluster", {
+        clusterPosition: cue.clusterPosition,
+        relativePosition: cue.relativePosition
+      })
+    );
   }
   var probeBytes = Math.min(CUED_BLOCK_PROBE_BYTES + MAX_CLUSTER_HEADER_BYTES, availableBytes);
-  var response = await requestRange(
+  return requestRange(
     mediaUrl,
     probeStart,
     probeStart + probeBytes - 1,
     CUED_BLOCK_PROBE_BYTES + MAX_CLUSTER_HEADER_BYTES,
     0,
     requestContext
-  );
-  var element = findCuedBlockElement(response.buffer, track);
-  var absoluteStart = element ? probeStart + element.start : probeStart;
-  var elementAvailableBytes = clusterEnd - absoluteStart;
-  if (
-    !element ||
-    element.totalSize > MAX_CUED_BLOCK_ELEMENT_BYTES ||
-    element.totalSize > elementAvailableBytes
-  ) {
-    throw invalidCuePosition("CueRelativePosition referenced an invalid block element", {
-      clusterPosition: cue.clusterPosition,
-      relativePosition: cue.relativePosition
-    });
-  }
-  var blockData = response.buffer.slice(element.start);
-  if (blockData.length < element.totalSize) {
-    blockData = (
-      await requestRange(
+  ).then(function (response) {
+    var element = findCuedBlockElement(response.buffer, track);
+    var absoluteStart = element ? probeStart + element.start : probeStart;
+    var elementAvailableBytes = clusterEnd - absoluteStart;
+    if (
+      !element ||
+      element.totalSize > MAX_CUED_BLOCK_ELEMENT_BYTES ||
+      element.totalSize > elementAvailableBytes
+    ) {
+      throw invalidCuePosition("CueRelativePosition referenced an invalid block element", {
+        clusterPosition: cue.clusterPosition,
+        relativePosition: cue.relativePosition
+      });
+    }
+    var blockData = response.buffer.slice(element.start);
+    var blockPromise;
+    if (blockData.length < element.totalSize) {
+      blockPromise = requestRange(
         mediaUrl,
         absoluteStart,
         absoluteStart + element.totalSize - 1,
         MAX_CUED_BLOCK_ELEMENT_BYTES,
         0,
         requestContext
-      )
-    ).buffer;
-    element = readElement(blockData, 0, blockData.length, false);
-  } else {
-    blockData = blockData.slice(0, element.totalSize);
-    element = readElement(blockData, 0, blockData.length, false);
-  }
-  if (!element) {
-    throw invalidCuePosition("Cued subtitle block is truncated", {
-      clusterPosition: cue.clusterPosition,
-      relativePosition: cue.relativePosition
+      ).then(function (fullResponse) {
+        return fullResponse.buffer;
+      });
+    } else {
+      blockPromise = Promise.resolve(blockData.slice(0, element.totalSize));
+    }
+    return blockPromise.then(function (resolvedBlockData) {
+      var parsedElement = readElement(resolvedBlockData, 0, resolvedBlockData.length, false);
+      if (!parsedElement) {
+        throw invalidCuePosition("Cued subtitle block is truncated", {
+          clusterPosition: cue.clusterPosition,
+          relativePosition: cue.relativePosition
+        });
+      }
+      return parseCuedBlock(resolvedBlockData, parsedElement, track, cue, metadata.timecodeScaleNs);
     });
-  }
-  return parseCuedBlock(blockData, element, track, cue, metadata.timecodeScaleNs);
+  });
 }
 
-async function loadCueFrames(mediaUrl, metadata, track, cues, requestContext) {
+function loadCueFrames(mediaUrl, metadata, track, cues, requestContext) {
   var directCues = [];
   var fallbackPositions = [];
   cues.forEach(function (cue) {
     if (cue.relativePosition == null) fallbackPositions.push(cue.clusterPosition);
     else directCues.push(cue);
   });
-  var directResults = await mapWithConcurrency(
-    directCues,
-    MAX_CONCURRENT_CUED_BLOCK_REQUESTS,
-    async function (cue) {
-      if (requestContext && requestContext.cancelled) {
-        throw bitmapSubtitleError("REQUEST_SUPERSEDED", "Bitmap subtitle request was superseded");
-      }
-      var cacheKey = cuedFrameCacheKey(mediaUrl, track, cue);
-      var cachedFrame = getCachedCuedFrame(cacheKey);
-      if (cachedFrame) return { frame: cachedFrame };
-      try {
-        var frame = await loadCuedBlockFrame(mediaUrl, metadata, track, cue, requestContext);
+  return mapWithConcurrency(directCues, MAX_CONCURRENT_CUED_BLOCK_REQUESTS, function (cue) {
+    if (requestContext && requestContext.cancelled) {
+      return Promise.reject(
+        bitmapSubtitleError("REQUEST_SUPERSEDED", "Bitmap subtitle request was superseded")
+      );
+    }
+    var cacheKey = cuedFrameCacheKey(mediaUrl, track, cue);
+    var cachedFrame = getCachedCuedFrame(cacheKey);
+    if (cachedFrame) return Promise.resolve({ frame: cachedFrame });
+    return loadCuedBlockFrame(mediaUrl, metadata, track, cue, requestContext).then(
+      function (frame) {
         setCachedCuedFrame(cacheKey, frame);
         if (requestContext && requestContext.cancelled) {
           throw bitmapSubtitleError("REQUEST_SUPERSEDED", "Bitmap subtitle request was superseded");
         }
-        return {
-          frame: frame
-        };
-      } catch (error) {
+        return { frame: frame };
+      },
+      function (error) {
         if (error && error.code === "INVALID_CUE_POSITION") {
           return { fallbackClusterPosition: cue.clusterPosition };
         }
         throw error;
       }
+    );
+  }).then(function (directResults) {
+    var frames = [];
+    directResults.forEach(function (result) {
+      if (result.frame) frames.push(result.frame);
+      if (result.fallbackClusterPosition != null) {
+        fallbackPositions.push(result.fallbackClusterPosition);
+      }
+    });
+    if (!fallbackPositions.length) {
+      frames.sort(compareFrames);
+      return frames;
     }
-  );
-  var frames = [];
-  directResults.forEach(function (result) {
-    if (result.frame) frames.push(result.frame);
-    if (result.fallbackClusterPosition != null) {
-      fallbackPositions.push(result.fallbackClusterPosition);
-    }
-  });
-  if (fallbackPositions.length) {
     var fallbackClusters = new Set(fallbackPositions);
     frames = frames.filter(function (frame) {
       return !fallbackClusters.has(frame.clusterPosition);
     });
-    frames.push.apply(
-      frames,
-      await loadClusterFrames(
-        mediaUrl,
-        metadata,
-        track,
-        Array.from(fallbackClusters),
-        requestContext
-      )
-    );
-  }
-  frames.sort(compareFrames);
-  return frames;
+    return loadClusterFrames(
+      mediaUrl,
+      metadata,
+      track,
+      uniqueSortedNumbers(fallbackPositions),
+      requestContext
+    ).then(function (clusterFrames) {
+      frames.push.apply(frames, clusterFrames);
+      frames.sort(compareFrames);
+      return frames;
+    });
+  });
 }
 
 function compareFrames(left, right) {
@@ -1241,9 +1413,7 @@ function parseAssTimestampMs(value) {
     .trim()
     .match(/^(\d+):(\d{1,2}):(\d{1,2})[.:](\d{1,3})$/);
   if (!match) return NaN;
-  var fraction = String(match[4] || "0")
-    .slice(0, 3)
-    .padEnd(3, "0");
+  var fraction = padRight(String(match[4] || "0").slice(0, 3), 3, "0");
   return (
     Number(match[1]) * 3600000 +
     Number(match[2]) * 60000 +
@@ -1264,14 +1434,14 @@ function textAfterCommaCount(value, commaCount) {
 }
 
 function decodeTextSubtitlePayload(payload) {
-  var bytes = Buffer.from(payload || []);
+  var bytes = bufferFrom(payload || []);
   var text;
   if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
     text = bytes.slice(3).toString("utf8");
   } else if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
     text = bytes.slice(2).toString("utf16le");
   } else if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
-    var swapped = Buffer.alloc(bytes.length - 2);
+    var swapped = bufferAlloc(bytes.length - 2);
     for (var index = 2; index + 1 < bytes.length; index += 2) {
       swapped[index - 2] = bytes[index + 1];
       swapped[index - 1] = bytes[index];
@@ -1426,7 +1596,7 @@ function buildDefaultAssHeader() {
 }
 
 function normalizeAssHeader(codecPrivate) {
-  var header = Buffer.from(codecPrivate || [])
+  var header = bufferFrom(codecPrivate || [])
     .slice(0, MAX_TEXT_CODEC_PRIVATE_BYTES)
     .toString("utf8")
     .replace(/\0/g, "")
@@ -1550,23 +1720,32 @@ function buildAssSubtitleBody(track, frames) {
   return normalizeAssHeader(track && track.codecPrivate) + events.join("\n") + "\n";
 }
 
-async function mapWithConcurrency(items, concurrency, iteratee) {
+function mapWithConcurrency(items, concurrency, iteratee) {
   var results = new Array(items.length);
   var nextIndex = 0;
-  async function worker() {
-    while (nextIndex < items.length) {
-      var index = nextIndex;
-      nextIndex += 1;
-      results[index] = await iteratee(items[index], index);
+  function worker() {
+    if (nextIndex >= items.length) {
+      return Promise.resolve();
     }
+    var index = nextIndex;
+    nextIndex += 1;
+    return Promise.resolve()
+      .then(function () {
+        return iteratee(items[index], index);
+      })
+      .then(function (result) {
+        results[index] = result;
+        return worker();
+      });
   }
   var workers = [];
   var workerCount = Math.min(Math.max(1, concurrency), items.length);
   for (var index = 0; index < workerCount; index += 1) {
     workers.push(worker());
   }
-  await Promise.all(workers);
-  return results;
+  return Promise.all(workers).then(function () {
+    return results;
+  });
 }
 
 function requestClusterRange(mediaUrl, absoluteStart, clusterSize, requestContext) {
@@ -1672,7 +1851,7 @@ function appendPgsSupSegment(chunks, timestampNs, segmentData) {
   if (!Number.isFinite(pts) || pts < 0) {
     throw bitmapSubtitleError("INVALID_TIMESTAMP", "PGS timestamp is outside its valid range");
   }
-  var header = Buffer.alloc(10);
+  var header = bufferAlloc(10);
   header.writeUInt16BE(0x5047, 0);
   header.writeUInt32BE(pts >>> 0, 2);
   header.writeUInt32BE(0, 6);
@@ -1699,10 +1878,12 @@ function serializePgsFrames(frames) {
   };
 }
 
-async function findPgsContext(mediaUrl, metadata, track, startMs, endMs, requestContext) {
+function findPgsContext(mediaUrl, metadata, track, startMs, endMs, requestContext) {
   var trackCues = getTrackCues(metadata, track.number);
   if (!trackCues.length) {
-    throw bitmapSubtitleError("TRACK_CUES_NOT_FOUND", "PGS track has no seekable cue entries");
+    return Promise.reject(
+      bitmapSubtitleError("TRACK_CUES_NOT_FOUND", "PGS track has no seekable cue entries")
+    );
   }
   var cueIndex = -1;
   for (var index = 0; index < trackCues.length; index += 1) {
@@ -1712,65 +1893,76 @@ async function findPgsContext(mediaUrl, metadata, track, startMs, endMs, request
 
   var scannedCues = 0;
   var earliestAllowedMs = Math.max(0, startMs - PGS_MAX_SYNC_LOOKBACK_MS);
-  while (
-    cueIndex >= 0 &&
-    trackCues[cueIndex].timeMs >= earliestAllowedMs &&
-    scannedCues < PGS_MAX_SYNC_SCAN_CUES
-  ) {
+
+  function scanNextBatch() {
+    if (!(
+      cueIndex >= 0 &&
+      trackCues[cueIndex].timeMs >= earliestAllowedMs &&
+      scannedCues < PGS_MAX_SYNC_SCAN_CUES
+    )) {
+      return Promise.resolve(null);
+    }
     var batchStart = Math.max(0, cueIndex - PGS_SYNC_SCAN_BATCH_CUES + 1);
     var batch = trackCues.slice(batchStart, cueIndex + 1).filter(function (cue) {
       return cue.timeMs >= earliestAllowedMs || cue.timeMs === 0;
     });
-    if (!batch.length) break;
-    var frames = await loadCueFrames(mediaUrl, metadata, track, batch, requestContext);
-    var syncFrame = findLatestPgsSyncFrame(frames, startMs);
-    if (syncFrame) {
-      return {
-        timestampMs: syncFrame.timestampMs,
-        clusterPosition: syncFrame.clusterPosition,
-        trackCues: trackCues,
-        syncType: getPgsSyncType(syncFrame),
-        prefetchedFrames: frames
-      };
+    if (!batch.length) {
+      return Promise.resolve(null);
     }
-    scannedCues += batch.length;
-    if (batchStart === 0) break;
-    cueIndex = batchStart - 1;
+    return loadCueFrames(mediaUrl, metadata, track, batch, requestContext).then(function (frames) {
+      var syncFrame = findLatestPgsSyncFrame(frames, startMs);
+      if (syncFrame) {
+        return {
+          timestampMs: syncFrame.timestampMs,
+          clusterPosition: syncFrame.clusterPosition,
+          trackCues: trackCues,
+          syncType: getPgsSyncType(syncFrame),
+          prefetchedFrames: frames
+        };
+      }
+      scannedCues += batch.length;
+      if (batchStart === 0) {
+        return null;
+      }
+      cueIndex = batchStart - 1;
+      return scanNextBatch();
+    });
   }
 
-  var requestedCues = trackCues.filter(function (cue) {
-    return cue.timeMs >= startMs && cue.timeMs <= endMs;
+  return scanNextBatch().then(function (found) {
+    if (found) return found;
+
+    var requestedCues = trackCues.filter(function (cue) {
+      return cue.timeMs >= startMs && cue.timeMs <= endMs;
+    });
+    if (!requestedCues.length) {
+      return { empty: true, trackCues: trackCues, syncType: "empty" };
+    }
+    return loadCueFrames(mediaUrl, metadata, track, requestedCues, requestContext).then(
+      function (requestedFrames) {
+        var futureSyncFrame = findFirstPgsSyncFrame(requestedFrames, startMs, endMs);
+        if (futureSyncFrame) {
+          return {
+            timestampMs: futureSyncFrame.timestampMs,
+            clusterPosition: futureSyncFrame.clusterPosition,
+            trackCues: trackCues,
+            syncType: getPgsSyncType(futureSyncFrame),
+            prefetchedFrames: requestedFrames
+          };
+        }
+        throw bitmapSubtitleError(
+          "PGS_SYNC_NOT_FOUND",
+          "PGS epoch or acquisition point was not found within the bounded seek context",
+          { startMs: startMs, lookbackMs: PGS_MAX_SYNC_LOOKBACK_MS, scannedCues: scannedCues }
+        );
+      }
+    );
   });
-  if (!requestedCues.length) {
-    return { empty: true, trackCues: trackCues, syncType: "empty" };
-  }
-  var requestedFrames = await loadCueFrames(
-    mediaUrl,
-    metadata,
-    track,
-    requestedCues,
-    requestContext
-  );
-  var futureSyncFrame = findFirstPgsSyncFrame(requestedFrames, startMs, endMs);
-  if (futureSyncFrame) {
-    return {
-      timestampMs: futureSyncFrame.timestampMs,
-      clusterPosition: futureSyncFrame.clusterPosition,
-      trackCues: trackCues,
-      syncType: getPgsSyncType(futureSyncFrame),
-      prefetchedFrames: requestedFrames
-    };
-  }
-  throw bitmapSubtitleError(
-    "PGS_SYNC_NOT_FOUND",
-    "PGS epoch or acquisition point was not found within the bounded seek context",
-    { startMs: startMs, lookbackMs: PGS_MAX_SYNC_LOOKBACK_MS, scannedCues: scannedCues }
-  );
 }
 
 function encodePts(timestampMs) {
   var pts = (timestampMs * 90) % 8589934592;
-  return Buffer.from([
+  return bufferFrom([
     ((Math.floor(pts / 1073741824) & 0x07) << 1) | 0x21,
     Math.floor(pts / 4194304) & 0xff,
     ((Math.floor(pts / 32768) & 0x7f) << 1) | 0x01,
@@ -1786,15 +1978,15 @@ function appendPesPacket(chunks, timestampMs, payload) {
   do {
     var payloadChunk = payload.slice(payloadOffset, payloadOffset + maxPayloadBytes);
     var pesLength = payloadChunk.length + 9;
-    var header = Buffer.alloc(6);
+    var header = bufferAlloc(6);
     header.writeUInt32BE(0x000001bd, 0);
     header.writeUInt16BE(pesLength, 4);
     var packetChunks = [
       MPEG_PACK_HEADER,
       header,
-      Buffer.from([0x80, 0x80, 0x05]),
+      bufferFrom([0x80, 0x80, 0x05]),
       encodePts(timestampMs),
-      Buffer.from([0x20]),
+      bufferFrom([0x20]),
       payloadChunk
     ];
     chunks.push.apply(chunks, packetChunks);
@@ -1986,80 +2178,92 @@ function buildPgsWindowPayload(frames) {
   };
 }
 
-async function buildWindow(mediaUrl, trackNumber, startSeconds, endSeconds, requestContext) {
-  var metadata = await loadMetadata(mediaUrl);
-  var track = metadata.tracks.find(function (entry) {
-    return entry.number === trackNumber && isBitmapSubtitleTrack(entry);
-  });
-  if (!track) {
-    throw bitmapSubtitleError("TRACK_NOT_FOUND", "Requested bitmap subtitle track was not found");
-  }
-  var format = getBitmapSubtitleFormat(track);
-  var startMs = Math.max(0, Math.floor(startSeconds * 1000));
-  var endMs = Math.max(startMs + 1000, Math.floor(endSeconds * 1000));
-  var contextStartMs = Math.max(0, startMs - 30000);
-  var contextType = format === "pgs" ? null : "vobsub";
-  var positions;
-  var pgsCues = null;
-  var prefetchedFrames = null;
-  if (format === "pgs") {
-    var context = await findPgsContext(mediaUrl, metadata, track, startMs, endMs, requestContext);
-    contextType = context.syncType;
-    if (context.empty) {
-      contextStartMs = startMs;
-      positions = [];
-    } else {
-      contextStartMs = context.timestampMs;
-      prefetchedFrames = context.prefetchedFrames || null;
-      pgsCues = context.trackCues.filter(function (cue) {
-        return cue.timeMs >= contextStartMs && cue.timeMs <= endMs;
-      });
-      if (
-        !pgsCues.some(function (cue) {
-          return cue.clusterPosition === context.clusterPosition;
-        })
-      ) {
-        var contextCue = context.trackCues.find(function (cue) {
-          return cue.clusterPosition === context.clusterPosition;
-        });
-        if (contextCue) pgsCues.unshift(contextCue);
-      }
-    }
-  } else {
-    positions = selectClusterPositions(metadata, trackNumber, startMs, endMs);
-  }
-  var loadedFrames;
-  if (format === "pgs") {
-    var prefetchedKeys = new Set(
-      (prefetchedFrames || []).map(function (frame) {
-        return cuePositionKey(frame);
-      })
-    );
-    var remainingCues = (pgsCues || []).filter(function (cue) {
-      return !prefetchedKeys.has(cuePositionKey(cue));
+function buildWindow(mediaUrl, trackNumber, startSeconds, endSeconds, requestContext) {
+  return loadMetadata(mediaUrl).then(function (metadata) {
+    var track = metadata.tracks.find(function (entry) {
+      return entry.number === trackNumber && isBitmapSubtitleTrack(entry);
     });
-    loadedFrames = (prefetchedFrames || []).concat(
-      await loadCueFrames(mediaUrl, metadata, track, remainingCues, requestContext)
-    );
-    loadedFrames.sort(compareFrames);
-  } else {
-    loadedFrames = await loadClusterFrames(mediaUrl, metadata, track, positions, requestContext);
-  }
-  var frames = uniqueFramesInRange(loadedFrames, contextStartMs, endMs);
-  var payload =
-    format === "pgs" ? buildPgsWindowPayload(frames) : buildVobSubWindowPayload(track, frames);
-  return Object.assign(payload, {
-    trackNumber: trackNumber,
-    language: track.language || "",
-    name: track.name || "",
-    windowStartSeconds: startMs / 1000,
-    windowEndSeconds: endMs / 1000,
-    contextStartSeconds: contextStartMs / 1000,
-    contextType: contextType
+    if (!track) {
+      throw bitmapSubtitleError("TRACK_NOT_FOUND", "Requested bitmap subtitle track was not found");
+    }
+    var format = getBitmapSubtitleFormat(track);
+    var startMs = Math.max(0, Math.floor(startSeconds * 1000));
+    var endMs = Math.max(startMs + 1000, Math.floor(endSeconds * 1000));
+    var contextStartMs = Math.max(0, startMs - 30000);
+    var contextType = format === "pgs" ? null : "vobsub";
+
+    var framesPromise;
+    if (format === "pgs") {
+      framesPromise = findPgsContext(
+        mediaUrl,
+        metadata,
+        track,
+        startMs,
+        endMs,
+        requestContext
+      ).then(function (context) {
+        contextType = context.syncType;
+        var pgsCues = null;
+        var prefetchedFrames = null;
+        if (context.empty) {
+          contextStartMs = startMs;
+          pgsCues = [];
+        } else {
+          contextStartMs = context.timestampMs;
+          prefetchedFrames = context.prefetchedFrames || null;
+          pgsCues = context.trackCues.filter(function (cue) {
+            return cue.timeMs >= contextStartMs && cue.timeMs <= endMs;
+          });
+          if (
+            !pgsCues.some(function (cue) {
+              return cue.clusterPosition === context.clusterPosition;
+            })
+          ) {
+            var contextCue = context.trackCues.find(function (cue) {
+              return cue.clusterPosition === context.clusterPosition;
+            });
+            if (contextCue) pgsCues.unshift(contextCue);
+          }
+        }
+        var prefetchedKeys = new Set(
+          (prefetchedFrames || []).map(function (frame) {
+            return cuePositionKey(frame);
+          })
+        );
+        var remainingCues = (pgsCues || []).filter(function (cue) {
+          return !prefetchedKeys.has(cuePositionKey(cue));
+        });
+        return loadCueFrames(mediaUrl, metadata, track, remainingCues, requestContext).then(
+          function (remainingFrames) {
+            var loadedFrames = (prefetchedFrames || []).concat(remainingFrames);
+            loadedFrames.sort(compareFrames);
+            return loadedFrames;
+          }
+        );
+      });
+    } else {
+      var positions = selectClusterPositions(metadata, trackNumber, startMs, endMs);
+      framesPromise = loadClusterFrames(mediaUrl, metadata, track, positions, requestContext);
+    }
+
+    return framesPromise.then(function (loadedFrames) {
+      var frames = uniqueFramesInRange(loadedFrames, contextStartMs, endMs);
+      var payload =
+        format === "pgs" ? buildPgsWindowPayload(frames) : buildVobSubWindowPayload(track, frames);
+      return Object.assign(payload, {
+        trackNumber: trackNumber,
+        language: track.language || "",
+        name: track.name || "",
+        windowStartSeconds: startMs / 1000,
+        windowEndSeconds: endMs / 1000,
+        contextStartSeconds: contextStartMs / 1000,
+        contextType: contextType
+      });
+    });
   });
 }
 
-async function buildTextWindow(
+function buildTextWindow(
   mediaUrl,
   trackNumber,
   trackOrdinal,
@@ -2068,158 +2272,183 @@ async function buildTextWindow(
   includeAssBody,
   requestContext
 ) {
-  var metadata = await loadMetadata(mediaUrl);
-  var track = findTextSubtitleTrack(metadata, trackNumber, trackOrdinal);
-  if (!track) {
-    throw bitmapSubtitleError(
-      "TRACK_NOT_FOUND",
-      "Requested embedded text subtitle track was not found"
+  return loadMetadata(mediaUrl).then(function (metadata) {
+    var track = findTextSubtitleTrack(metadata, trackNumber, trackOrdinal);
+    if (!track) {
+      throw bitmapSubtitleError(
+        "TRACK_NOT_FOUND",
+        "Requested embedded text subtitle track was not found"
+      );
+    }
+    var startMs = Math.max(0, Math.floor(startSeconds * 1000));
+    var endMs = Math.max(startMs + 1000, Math.floor(endSeconds * 1000));
+    var resolvedTrackNumber = track.number;
+    var cues = selectTextSubtitleCues(metadata, resolvedTrackNumber, startMs, endMs);
+    return loadCueFrames(mediaUrl, metadata, track, cues, requestContext).then(
+      function (loadedFrames) {
+        var frames = selectTextFramesInRange(loadedFrames, startMs, endMs);
+        var payload = buildTextSubtitleWindowPayload(track, frames, startMs, endMs, {
+          includeAssBody: includeAssBody
+        });
+        return Object.assign(payload, {
+          trackNumber: resolvedTrackNumber,
+          codecId: track.codecId || "",
+          language: track.language || "",
+          name: track.name || "",
+          windowStartSeconds: startMs / 1000,
+          windowEndSeconds: endMs / 1000,
+          contextStartSeconds: Math.max(0, startMs - 30000) / 1000
+        });
+      }
     );
-  }
-  var startMs = Math.max(0, Math.floor(startSeconds * 1000));
-  var endMs = Math.max(startMs + 1000, Math.floor(endSeconds * 1000));
-  var resolvedTrackNumber = track.number;
-  var cues = selectTextSubtitleCues(metadata, resolvedTrackNumber, startMs, endMs);
-  var loadedFrames = await loadCueFrames(mediaUrl, metadata, track, cues, requestContext);
-  var frames = selectTextFramesInRange(loadedFrames, startMs, endMs);
-  var payload = buildTextSubtitleWindowPayload(track, frames, startMs, endMs, {
-    includeAssBody: includeAssBody
-  });
-  return Object.assign(payload, {
-    trackNumber: resolvedTrackNumber,
-    codecId: track.codecId || "",
-    language: track.language || "",
-    name: track.name || "",
-    windowStartSeconds: startMs / 1000,
-    windowEndSeconds: endMs / 1000,
-    contextStartSeconds: Math.max(0, startMs - 30000) / 1000
   });
 }
 
-async function getEmbeddedTextSubtitleWindow(options) {
-  var mediaUrl = normalizeMediaUrl(options && options.url);
-  var trackNumber = Math.trunc(Number(options && options.trackNumber));
-  var trackOrdinal = Math.trunc(Number(options && options.trackOrdinal));
-  var startSeconds = Math.max(0, Number(options && options.startSeconds) || 0);
-  var includeAssBody = Boolean(options && options.includeAssBody);
-  var requestedEnd = Number(options && options.endSeconds);
-  var endSeconds = Number.isFinite(requestedEnd)
-    ? Math.min(startSeconds + 180, Math.max(startSeconds + 1, requestedEnd))
-    : startSeconds + 120;
-  if (
-    (!Number.isFinite(trackNumber) || trackNumber <= 0) &&
-    (!Number.isFinite(trackOrdinal) || trackOrdinal < 0)
-  ) {
-    throw bitmapSubtitleError(
-      "INVALID_TRACK",
-      "Embedded text subtitle track number or ordinal is invalid"
-    );
-  }
-  var normalizedWindow = normalizeWindowRange(startSeconds, endSeconds);
-  var bucketStart = normalizedWindow.startSeconds;
-  var bucketEnd = normalizedWindow.endSeconds;
-  var trackKey =
-    Number.isFinite(trackNumber) && trackNumber > 0
-      ? "number:" + trackNumber
-      : "ordinal:" + trackOrdinal;
-  var activeKey = mediaUrl + "::" + trackKey;
-  var cacheKey =
-    mediaUrl +
-    "::" +
-    trackKey +
-    "::" +
-    bucketStart +
-    "::" +
-    bucketEnd +
-    "::ass=" +
-    (includeAssBody ? "1" : "0");
-  var cached = getCached(textWindowCache, cacheKey);
-  if (cached) {
+function getEmbeddedTextSubtitleWindow(options) {
+  return Promise.resolve().then(function () {
+    var mediaUrl = normalizeMediaUrl(options && options.url);
+    var trackNumber = Math.trunc(Number(options && options.trackNumber));
+    var trackOrdinal = Math.trunc(Number(options && options.trackOrdinal));
+    var startSeconds = Math.max(0, Number(options && options.startSeconds) || 0);
+    var includeAssBody = Boolean(options && options.includeAssBody);
+    var requestedEnd = Number(options && options.endSeconds);
+    var endSeconds = Number.isFinite(requestedEnd)
+      ? Math.min(startSeconds + 180, Math.max(startSeconds + 1, requestedEnd))
+      : startSeconds + 120;
+    if (
+      (!Number.isFinite(trackNumber) || trackNumber <= 0) &&
+      (!Number.isFinite(trackOrdinal) || trackOrdinal < 0)
+    ) {
+      throw bitmapSubtitleError(
+        "INVALID_TRACK",
+        "Embedded text subtitle track number or ordinal is invalid"
+      );
+    }
+    var normalizedWindow = normalizeWindowRange(startSeconds, endSeconds);
+    var bucketStart = normalizedWindow.startSeconds;
+    var bucketEnd = normalizedWindow.endSeconds;
+    var trackKey =
+      Number.isFinite(trackNumber) && trackNumber > 0
+        ? "number:" + trackNumber
+        : "ordinal:" + trackOrdinal;
+    var activeKey = mediaUrl + "::" + trackKey;
+    var cacheKey =
+      mediaUrl +
+      "::" +
+      trackKey +
+      "::" +
+      bucketStart +
+      "::" +
+      bucketEnd +
+      "::ass=" +
+      (includeAssBody ? "1" : "0");
+    var cached = getCached(textWindowCache, cacheKey);
+    if (cached) {
+      cancelActiveTextWindowRequest(activeKey);
+      return cached;
+    }
+    if (textWindowRequests.has(cacheKey)) return textWindowRequests.get(cacheKey);
     cancelActiveTextWindowRequest(activeKey);
-    return cached;
-  }
-  if (textWindowRequests.has(cacheKey)) return textWindowRequests.get(cacheKey);
-  cancelActiveTextWindowRequest(activeKey);
-  var requestContext = { cancelled: false, requests: new Set(), cacheKey: cacheKey };
-  activeTextWindowRequests.set(activeKey, requestContext);
-  var request = buildTextWindow(
-    mediaUrl,
-    trackNumber,
-    trackOrdinal,
-    bucketStart,
-    bucketEnd,
-    includeAssBody,
-    requestContext
-  );
-  textWindowRequests.set(cacheKey, request);
-  try {
-    var result = await request;
-    setCached(textWindowCache, cacheKey, result, WINDOW_CACHE_TTL_MS, MAX_WINDOW_CACHE_ENTRIES);
-    return result;
-  } finally {
-    if (textWindowRequests.get(cacheKey) === request) textWindowRequests.delete(cacheKey);
-    if (activeTextWindowRequests.get(activeKey) === requestContext) {
-      activeTextWindowRequests.delete(activeKey);
-    }
-  }
-}
-
-async function getEmbeddedTextSubtitleTimeline(options) {
-  var mediaUrl = normalizeMediaUrl(options && options.url);
-  var metadata = await loadMetadata(mediaUrl);
-  var track = selectTimelineTextTrack(
-    metadata,
-    options && options.trackNumber,
-    options && options.trackOrdinal
-  );
-  if (!track) {
-    throw bitmapSubtitleError(
-      "TRACK_NOT_FOUND",
-      "No usable embedded text subtitle track was found"
+    var requestContext = { cancelled: false, requests: new Set(), cacheKey: cacheKey };
+    activeTextWindowRequests.set(activeKey, requestContext);
+    var request = buildTextWindow(
+      mediaUrl,
+      trackNumber,
+      trackOrdinal,
+      bucketStart,
+      bucketEnd,
+      includeAssBody,
+      requestContext
     );
-  }
-  return Object.assign(buildTextSubtitleTimelinePayload(metadata, track), {
-    returnValue: true
+    textWindowRequests.set(cacheKey, request);
+    function cleanup() {
+      if (textWindowRequests.get(cacheKey) === request) textWindowRequests.delete(cacheKey);
+      if (activeTextWindowRequests.get(activeKey) === requestContext) {
+        activeTextWindowRequests.delete(activeKey);
+      }
+    }
+    return request.then(
+      function (result) {
+        cleanup();
+        setCached(textWindowCache, cacheKey, result, WINDOW_CACHE_TTL_MS, MAX_WINDOW_CACHE_ENTRIES);
+        return result;
+      },
+      function (error) {
+        cleanup();
+        throw error;
+      }
+    );
   });
 }
 
-async function getBitmapSubtitleWindow(options) {
-  var mediaUrl = normalizeMediaUrl(options && options.url);
-  var trackNumber = Math.trunc(Number(options && options.trackNumber));
-  var startSeconds = Math.max(0, Number(options && options.startSeconds) || 0);
-  var requestedEnd = Number(options && options.endSeconds);
-  var endSeconds = Number.isFinite(requestedEnd)
-    ? Math.min(startSeconds + 180, Math.max(startSeconds + 1, requestedEnd))
-    : startSeconds + 120;
-  if (!Number.isFinite(trackNumber) || trackNumber <= 0) {
-    throw bitmapSubtitleError("INVALID_TRACK", "Bitmap subtitle track number is invalid");
-  }
-  var normalizedWindow = normalizeWindowRange(startSeconds, endSeconds);
-  var bucketStart = normalizedWindow.startSeconds;
-  var bucketEnd = normalizedWindow.endSeconds;
-  var cacheKey = mediaUrl + "::" + trackNumber + "::" + bucketStart + "::" + bucketEnd;
-  var activeKey = mediaUrl + "::" + trackNumber;
-  var cached = getCached(windowCache, cacheKey);
-  if (cached) {
-    cancelActivePgsWindowRequest(activeKey);
-    return cached;
-  }
-  if (windowRequests.has(cacheKey)) return windowRequests.get(cacheKey);
-  cancelActivePgsWindowRequest(activeKey);
-  var requestContext = { cancelled: false, requests: new Set() };
-  activePgsWindowRequests.set(activeKey, requestContext);
-  var request = buildWindow(mediaUrl, trackNumber, bucketStart, bucketEnd, requestContext);
-  windowRequests.set(cacheKey, request);
-  try {
-    var result = await request;
-    setCached(windowCache, cacheKey, result, WINDOW_CACHE_TTL_MS, MAX_WINDOW_CACHE_ENTRIES);
-    return result;
-  } finally {
-    windowRequests.delete(cacheKey);
-    if (activePgsWindowRequests.get(activeKey) === requestContext) {
-      activePgsWindowRequests.delete(activeKey);
+function getEmbeddedTextSubtitleTimeline(options) {
+  return Promise.resolve().then(function () {
+    var mediaUrl = normalizeMediaUrl(options && options.url);
+    return loadMetadata(mediaUrl).then(function (metadata) {
+      var track = selectTimelineTextTrack(
+        metadata,
+        options && options.trackNumber,
+        options && options.trackOrdinal
+      );
+      if (!track) {
+        throw bitmapSubtitleError(
+          "TRACK_NOT_FOUND",
+          "No usable embedded text subtitle track was found"
+        );
+      }
+      return Object.assign(buildTextSubtitleTimelinePayload(metadata, track), {
+        returnValue: true
+      });
+    });
+  });
+}
+
+function getBitmapSubtitleWindow(options) {
+  return Promise.resolve().then(function () {
+    var mediaUrl = normalizeMediaUrl(options && options.url);
+    var trackNumber = Math.trunc(Number(options && options.trackNumber));
+    var startSeconds = Math.max(0, Number(options && options.startSeconds) || 0);
+    var requestedEnd = Number(options && options.endSeconds);
+    var endSeconds = Number.isFinite(requestedEnd)
+      ? Math.min(startSeconds + 180, Math.max(startSeconds + 1, requestedEnd))
+      : startSeconds + 120;
+    if (!Number.isFinite(trackNumber) || trackNumber <= 0) {
+      throw bitmapSubtitleError("INVALID_TRACK", "Bitmap subtitle track number is invalid");
     }
-  }
+    var normalizedWindow = normalizeWindowRange(startSeconds, endSeconds);
+    var bucketStart = normalizedWindow.startSeconds;
+    var bucketEnd = normalizedWindow.endSeconds;
+    var cacheKey = mediaUrl + "::" + trackNumber + "::" + bucketStart + "::" + bucketEnd;
+    var activeKey = mediaUrl + "::" + trackNumber;
+    var cached = getCached(windowCache, cacheKey);
+    if (cached) {
+      cancelActivePgsWindowRequest(activeKey);
+      return cached;
+    }
+    if (windowRequests.has(cacheKey)) return windowRequests.get(cacheKey);
+    cancelActivePgsWindowRequest(activeKey);
+    var requestContext = { cancelled: false, requests: new Set() };
+    activePgsWindowRequests.set(activeKey, requestContext);
+    var request = buildWindow(mediaUrl, trackNumber, bucketStart, bucketEnd, requestContext);
+    windowRequests.set(cacheKey, request);
+    function cleanup() {
+      if (windowRequests.get(cacheKey) === request) windowRequests.delete(cacheKey);
+      if (activePgsWindowRequests.get(activeKey) === requestContext) {
+        activePgsWindowRequests.delete(activeKey);
+      }
+    }
+    return request.then(
+      function (result) {
+        cleanup();
+        setCached(windowCache, cacheKey, result, WINDOW_CACHE_TTL_MS, MAX_WINDOW_CACHE_ENTRIES);
+        return result;
+      },
+      function (error) {
+        cleanup();
+        throw error;
+      }
+    );
+  });
 }
 
 function normalizeWindowRange(startSeconds, endSeconds) {
@@ -2253,31 +2482,33 @@ function cancelActiveTextWindowRequest(activeKey) {
 function cancelRequestContext(requestContext) {
   requestContext.cancelled = true;
   requestContext.requests.forEach(function (activeRequest) {
-    activeRequest.destroy(
+    destroyRequest(
+      activeRequest,
       bitmapSubtitleError("REQUEST_SUPERSEDED", "Bitmap subtitle request was superseded")
     );
   });
   requestContext.requests.clear();
 }
 
-async function prepareBitmapSubtitleSource(options) {
-  var mediaUrl = normalizeMediaUrl(options && options.url);
-  var metadata = await loadMetadata(mediaUrl);
-  var bitmapTracks = metadata.tracks.filter(function (track) {
-    return isBitmapSubtitleTrack(track);
+function prepareBitmapSubtitleSource(options) {
+  return Promise.resolve().then(function () {
+    var mediaUrl = normalizeMediaUrl(options && options.url);
+    return loadMetadata(mediaUrl).then(function (metadata) {
+      var bitmapTracks = metadata.tracks.filter(function (track) {
+        return isBitmapSubtitleTrack(track);
+      });
+      return {
+        prepared: true,
+        bitmapTrackCount: bitmapTracks.length,
+        bitmapFormats: uniqueStrings(
+          bitmapTracks.map(function (track) {
+            return getBitmapSubtitleFormat(track);
+          })
+        ),
+        cueCount: metadata.cues.length
+      };
+    });
   });
-  return {
-    prepared: true,
-    bitmapTrackCount: bitmapTracks.length,
-    bitmapFormats: Array.from(
-      new Set(
-        bitmapTracks.map(function (track) {
-          return getBitmapSubtitleFormat(track);
-        })
-      )
-    ),
-    cueCount: metadata.cues.length
-  };
 }
 
 function clearBitmapSubtitleCaches() {
@@ -2290,10 +2521,10 @@ function clearBitmapSubtitleCaches() {
   cuedFrameCache.clear();
   cuedFrameCacheBytes = 0;
   clusterRangeRequests.clear();
-  Array.from(activeTextWindowRequests.keys()).forEach(function (activeKey) {
+  mapKeys(activeTextWindowRequests).forEach(function (activeKey) {
     cancelActiveTextWindowRequest(activeKey);
   });
-  Array.from(activePgsWindowRequests.keys()).forEach(function (activeKey) {
+  mapKeys(activePgsWindowRequests).forEach(function (activeKey) {
     cancelActivePgsWindowRequest(activeKey);
   });
 }
