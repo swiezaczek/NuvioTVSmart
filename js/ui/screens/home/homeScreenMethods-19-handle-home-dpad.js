@@ -178,7 +178,7 @@ export function createHomeScreenMethods19() {
           if (this.isMainNode(target)) {
             this.lastMainFocus = target;
           }
-          this.syncFocusedCollectionCardState({ deferHydration: true });
+          this.syncFocusedCollectionCardState();
           this.scheduleModernHeroUpdate(target);
           this.scheduleFocusedPosterFlow(target);
         };
@@ -225,7 +225,7 @@ export function createHomeScreenMethods19() {
           if (this.isMainNode(target)) {
             this.lastMainFocus = target;
           }
-          this.syncFocusedCollectionCardState({ deferHydration: true });
+          this.syncFocusedCollectionCardState();
           this.scheduleModernHeroUpdate(target);
           this.scheduleFocusedPosterFlow(target);
         };

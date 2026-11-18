@@ -70,7 +70,6 @@ export function createHomeScreenMethods30() {
       if (this.activeCollectionFocusGifNode) {
         this.hydrateCollectionFocusGif?.(this.activeCollectionFocusGifNode, false);
       }
-      internals.collectionFocusGifPlayer?.teardown?.();
       this.activeCollectionFocusGifNode = null;
       this.clearFocusedPosterFlowState();
       this.collapseFocusedPoster();

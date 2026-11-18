@@ -12,59 +12,20 @@ export function createHomeScreenMethods15() {
   } = internals;
 
   return {
-    scheduleFocusedPosterFlow(node, { deferUntilVerticalSettle = false, repeat = false } = {}) {
-      if (this.isCollectionFolderNode(node)) {
-        this.cancelFocusedPosterFlow();
-        this.clearFocusedPosterFlowState();
-        if (this.layoutMode === "modern") {
-          this.collapseFocusedPoster(this.expandedPosterNode, {
-            instant: true,
-            preserveHeroMedia: this.shouldPreserveCollectionHeroMedia(node)
-          });
-        }
-        if (
-          this.activeCollectionFocusGifNode &&
-          this.activeCollectionFocusGifNode !== node &&
-          this.activeCollectionFocusGifNode.isConnected
-        ) {
-          this.hydrateCollectionFocusGif(this.activeCollectionFocusGifNode, false);
-          this.activeCollectionFocusGifNode = null;
-        }
-        if (this.activeCollectionFocusGifNode === node && node.classList?.contains("is-focus-gif-active")) {
-          return;
-        }
-        const flowToken = Number(this.focusedPosterFlowToken || 0) + 1;
-        this.focusedPosterFlowToken = flowToken;
-        const dwellMs = repeat ? 100 : 0;
-        const startCollectionDwell = () => {
-          this.collectionFocusGifSettleTimer = null;
-          if (
-            Number(this.focusedPosterFlowToken || 0) !== flowToken ||
-            this.getCurrentFocusedNode() !== node ||
-            !node?.isConnected ||
-            !node.classList.contains("focused")
-          ) {
-            return;
-          }
-          if (deferUntilVerticalSettle && this.isModernVerticalScrollActive()) {
-            this.collectionFocusGifSettleTimer = setTimeout(startCollectionDwell, MODERN_HOME_CONSTANTS.verticalScrollSettlePollMs);
-            return;
-          }
-          this.activateFocusedPosterFlow(node, flowToken, { dwellMs }).catch((error) => {
-            console.warn("Collection focus GIF flow failed", error);
-          });
-        };
-        if (deferUntilVerticalSettle && this.isModernVerticalScrollActive()) {
-          this.collectionFocusGifSettleTimer = setTimeout(startCollectionDwell, MODERN_HOME_CONSTANTS.verticalScrollSettlePollMs);
-        } else {
-          startCollectionDwell();
-        }
-        return;
-      }
+    scheduleFocusedPosterFlow(node, { deferUntilVerticalSettle = false } = {}) {
       if (this.layoutMode !== "modern") {
         return;
       }
       this.cancelFocusedPosterFlow();
+      if (this.isCollectionFolderNode(node)) {
+        this.clearFocusedPosterFlowState();
+        this.collapseFocusedPoster(this.expandedPosterNode, {
+          instant: true,
+          preserveHeroMedia: this.shouldPreserveCollectionHeroMedia(node)
+        });
+        this.hydrateCollectionFocusGif(node, true);
+        return;
+      }
       const prefs = this.layoutPrefs || {};
       const { shouldExpand, shouldPreviewTrailer, trailerTarget } = this.getFocusedPosterFlowConfig(prefs);
       const shouldRun = Boolean(shouldExpand || shouldPreviewTrailer);

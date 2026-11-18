@@ -187,11 +187,7 @@ import {
   uniqueNonEmptyValues
 } from "./homeUtils.js";
 
-import {
-  preloadImageSource,
-  restoreHeroImageEnterTransition,
-  runHeroImageEnterAnimation
-} from "./homeScreenHelpers-02-extract-release-date-text.js";
+import { preloadImageSource, prepareHeroImageEnter } from "./homeScreenHelpers-02-extract-release-date-text.js";
 
 export function animateHeroLogoSwap(logoNode, nextSrc, nextAlt = "", durationMs = HOME_MODERN_HERO_BACKDROP_CROSSFADE_MS, options = {}) {
   if (!(logoNode instanceof HTMLImageElement)) {
@@ -213,7 +209,6 @@ export function animateHeroLogoSwap(logoNode, nextSrc, nextAlt = "", durationMs 
     if (Number(logoNode.heroLogoTransitionToken || 0) !== token) {
       return;
     }
-    restoreHeroImageEnterTransition(logoNode);
     logoNode.classList.remove("home-hero-logo-transition-enter", "is-visible");
     clearGhosts();
   };
@@ -230,6 +225,31 @@ export function animateHeroLogoSwap(logoNode, nextSrc, nextAlt = "", durationMs 
     return;
   }
 
+  if (transitionMode === "single-layer") {
+    preloadImageSource(normalizedSrc).then((loaded) => {
+      if (Number(logoNode.heroLogoTransitionToken || 0) !== token) {
+        return;
+      }
+      if (!loaded) {
+        finalize();
+        logoNode.setAttribute("src", normalizedSrc);
+        logoNode.setAttribute("alt", normalizedAlt);
+        return;
+      }
+      prepareHeroImageEnter(logoNode, "home-hero-logo-transition-enter");
+      logoNode.setAttribute("src", normalizedSrc);
+      logoNode.setAttribute("alt", normalizedAlt);
+      requestAnimationFrame(() => {
+        if (Number(logoNode.heroLogoTransitionToken || 0) !== token) {
+          return;
+        }
+        logoNode.classList.add("is-visible");
+        setTimeout(() => finalize(), durationMs);
+      });
+    });
+    return;
+  }
+
   preloadImageSource(normalizedSrc).then((loaded) => {
     if (Number(logoNode.heroLogoTransitionToken || 0) !== token) {
       return;
@@ -243,25 +263,34 @@ export function animateHeroLogoSwap(logoNode, nextSrc, nextAlt = "", durationMs 
     }
 
     clearGhosts();
+    const parent = logoNode.parentElement;
     let ghost = null;
-    if (transitionMode !== "single-layer") {
-      const parent = logoNode.parentElement;
-      if (parent && currentSrc) {
-        ghost = logoNode.cloneNode(false);
-        ghost.classList.remove("home-hero-logo-transition-enter", "is-visible");
-        ghost.classList.add("home-hero-logo-transition-ghost");
-        parent.insertBefore(ghost, logoNode);
-      }
+    if (parent && currentSrc) {
+      ghost = logoNode.cloneNode(false);
+      ghost.classList.remove("home-hero-logo-transition-enter", "is-visible");
+      ghost.classList.add("home-hero-logo-transition-ghost");
+      parent.insertBefore(ghost, logoNode);
     }
 
-    runHeroImageEnterAnimation(logoNode, "home-hero-logo-transition-enter", {
-      durationMs,
-      isCurrent: () => Number(logoNode.heroLogoTransitionToken || 0) === token,
-      onFinalize: finalize,
-      ghost
-    });
+    prepareHeroImageEnter(logoNode, "home-hero-logo-transition-enter");
     logoNode.setAttribute("src", normalizedSrc);
     logoNode.setAttribute("alt", normalizedAlt);
+
+    requestAnimationFrame(() => {
+      if (Number(logoNode.heroLogoTransitionToken || 0) !== token) {
+        return;
+      }
+      requestAnimationFrame(() => {
+        if (Number(logoNode.heroLogoTransitionToken || 0) !== token) {
+          return;
+        }
+        logoNode.classList.add("is-visible");
+        ghost?.classList?.add("is-fading-out");
+        setTimeout(() => {
+          finalize();
+        }, durationMs);
+      });
+    });
   });
 }
 

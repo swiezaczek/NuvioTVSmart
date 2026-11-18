@@ -276,32 +276,22 @@
 }
 
 .home-screen-shell .home-collection-card .content-poster,
-.home-screen-shell .home-collection-card .home-poster-focus-gif,
-.home-screen-shell .home-collection-card .home-poster-focus-gif-canvas {
+.home-screen-shell .home-collection-card .home-poster-focus-gif {
   object-fit: fill;
 }
 
-.home-screen-shell .home-poster-focus-gif,
-.home-screen-shell .home-poster-focus-gif-canvas {
+.home-screen-shell .home-poster-focus-gif {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  border-radius: inherit;
-  contain: layout paint;
   opacity: 0;
   pointer-events: none;
   transition: opacity 200ms ease;
 }
 
-.home-screen-shell .home-collection-card.is-focus-gif-canvas-mode .home-poster-focus-gif {
-  display: none;
-}
-
-.home-screen-shell .home-collection-card.is-focus-gif-active .home-poster-focus-gif,
-.home-screen-shell .home-collection-card.is-focus-gif-active .home-poster-focus-gif-canvas {
+.home-screen-shell .home-collection-card.is-focus-gif-active .home-poster-focus-gif {
   opacity: 1;
-  transform: translateZ(0);
 }
 
 .home-screen-shell .home-collection-emoji {

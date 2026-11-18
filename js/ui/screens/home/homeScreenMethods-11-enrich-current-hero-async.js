@@ -298,24 +298,12 @@ export function createHomeScreenMethods11() {
       if (!(gifNode instanceof HTMLImageElement)) {
         return;
       }
-      const player = internals?.collectionFocusGifPlayer || null;
       if (active) {
         const src = String(gifNode.dataset.src || gifNode.getAttribute("src") || "").trim();
-        if (!src) {
-          return;
-        }
-        if (player) {
-          player.activate({ screen: this, node, gifNode, src });
-          return;
-        }
-        if (!gifNode.getAttribute("src")) {
+        if (src && !gifNode.getAttribute("src")) {
           gifNode.setAttribute("src", src);
         }
         node.classList.add("is-focus-gif-active");
-        return;
-      }
-      if (player) {
-        player.deactivate(node);
         return;
       }
       node.classList.remove("is-focus-gif-active");
@@ -324,7 +312,7 @@ export function createHomeScreenMethods11() {
       // Preserve data-src so the asset can be loaded again on the next focus.
       gifNode.removeAttribute("src");
     },
-    syncFocusedCollectionCardState({ deferHydration = false } = {}) {
+    syncFocusedCollectionCardState() {
       const focused = this.getCurrentFocusedNode();
       const focusedCollection = focused?.classList?.contains("home-collection-card") ? focused : null;
       if (
@@ -333,17 +321,13 @@ export function createHomeScreenMethods11() {
         this.activeCollectionFocusGifNode.isConnected
       ) {
         this.hydrateCollectionFocusGif(this.activeCollectionFocusGifNode, false);
+      }
+      if (focusedCollection) {
+        this.hydrateCollectionFocusGif(focusedCollection, true);
+        this.activeCollectionFocusGifNode = focusedCollection;
+      } else {
         this.activeCollectionFocusGifNode = null;
       }
-      if (!focusedCollection) {
-        this.activeCollectionFocusGifNode = null;
-        return;
-      }
-      if (deferHydration) {
-        return;
-      }
-      this.hydrateCollectionFocusGif(focusedCollection, true);
-      this.activeCollectionFocusGifNode = focusedCollection;
     }
   };
 }
