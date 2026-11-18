@@ -189,6 +189,7 @@ export function createPlayerScreenMethods43() {
         this.bitmapSubtitleDecoder = null;
         this.bitmapSubtitleTrack = null;
         this.bitmapSubtitleScratchCanvas = null;
+        this.bitmapSubtitleScratchImageData = null;
       }
     },
     markEmbeddedBitmapSubtitleUnsupported(track, reason = Environment.isTizen() ? "tizen-bitmap-runtime" : "webos-bitmap-runtime") {

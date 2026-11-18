@@ -170,10 +170,17 @@ export function createPlayerScreenMethods73() {
 
         if (this.aspectToastTimer) {
           clearTimeout(this.aspectToastTimer);
+          this.aspectToastTimer = null;
+        }
+        if (this.sourceStartupTimeoutTimer) {
           clearTimeout(this.sourceStartupTimeoutTimer);
           this.sourceStartupTimeoutTimer = null;
-          this.sourceFallbackInFlight = false;
-          this.aspectToastTimer = null;
+        }
+        this.sourceFallbackInFlight = false;
+        if (this.audioGainNode) {
+          try {
+            this.audioGainNode.gain.value = 1;
+          } catch (_) {}
         }
 
         if (this.parentalGuideTimer) {

@@ -182,6 +182,8 @@ export function createPlayerScreenMethods01() {
       this.audioContext = null;
       this.audioGainNode = null;
       this.audioMediaSource = null;
+      this.audioGraphVideo = null;
+      this.syncExistingAudioAmplificationGraph?.();
 
       this.renderPlayerUi();
       this.bindPlayerExitCleanup();
@@ -236,6 +238,7 @@ export function createPlayerScreenMethods01() {
         if (!this.currentEngineFsStream) {
           this.prefetchTizenEmbeddedAudioTracks(initialStreamUrl, sourceCandidate);
         }
+        this.scheduleSourceStartupTimeout?.(initialStreamUrl);
         const playbackStartPromise = this.startPlayerControllerPlayback(
           this.activePlaybackUrl,
           this.buildPlaybackContext(sourceCandidate),

@@ -2,6 +2,8 @@ import { syncHtmlSubtitleClearance } from "./subtitleOverlayClearance.js";
 /* eslint-disable no-unused-vars */
 import * as internals from "./playerScreenContext.js";
 
+const mediaElementAudioGraphs = new WeakMap();
+
 export function createPlayerScreenMethods24() {
   const {
     SubtitleAppearance,
@@ -213,25 +215,65 @@ export function createPlayerScreenMethods24() {
         persistAudioAmplification: Boolean(this.persistAudioAmplification)
       });
     },
+    syncExistingAudioAmplificationGraph() {
+      const video = PlayerController.video;
+      const cached = video ? mediaElementAudioGraphs.get(video) : null;
+      if (cached && cached.audioContext?.state !== "closed") {
+        this.audioContext = cached.audioContext;
+        this.audioMediaSource = cached.audioMediaSource;
+        this.audioGainNode = cached.audioGainNode;
+        this.audioGraphVideo = video;
+        return true;
+      }
+      this.audioContext = null;
+      this.audioGainNode = null;
+      this.audioMediaSource = null;
+      this.audioGraphVideo = null;
+      return false;
+    },
     ensureAudioAmplificationGraph() {
       const video = PlayerController.video;
       if (!supportsTvWebAudioAmplification()) {
         this.audioAmplificationAvailable = false;
         return false;
       }
-      if (!video || this.audioGainNode) {
-        return Boolean(this.audioGainNode);
+      if (!video) {
+        return false;
+      }
+      const cached = mediaElementAudioGraphs.get(video);
+      if (cached && cached.audioContext?.state !== "closed") {
+        this.audioContext = cached.audioContext;
+        this.audioMediaSource = cached.audioMediaSource;
+        this.audioGainNode = cached.audioGainNode;
+        this.audioGraphVideo = video;
+        this.audioAmplificationAvailable = true;
+        return true;
+      }
+      if (this.audioGainNode && this.audioGraphVideo === video && this.audioContext?.state !== "closed") {
+        return true;
       }
       const AudioContextCtor = globalThis.AudioContext || globalThis.webkitAudioContext;
       if (typeof AudioContextCtor !== "function") {
         return false;
       }
       try {
-        this.audioContext = this.audioContext || new AudioContextCtor();
-        this.audioMediaSource = this.audioMediaSource || this.audioContext.createMediaElementSource(video);
-        this.audioGainNode = this.audioGainNode || this.audioContext.createGain();
-        this.audioMediaSource.connect(this.audioGainNode);
-        this.audioGainNode.connect(this.audioContext.destination);
+        const audioContext =
+          this.audioContext && this.audioContext.state !== "closed" && (!this.audioGraphVideo || this.audioGraphVideo === video)
+            ? this.audioContext
+            : new AudioContextCtor();
+        const audioMediaSource =
+          this.audioMediaSource && (!this.audioGraphVideo || this.audioGraphVideo === video)
+            ? this.audioMediaSource
+            : audioContext.createMediaElementSource(video);
+        const audioGainNode =
+          this.audioGainNode && (!this.audioGraphVideo || this.audioGraphVideo === video) ? this.audioGainNode : audioContext.createGain();
+        audioMediaSource.connect(audioGainNode);
+        audioGainNode.connect(audioContext.destination);
+        mediaElementAudioGraphs.set(video, { audioContext, audioMediaSource, audioGainNode });
+        this.audioContext = audioContext;
+        this.audioMediaSource = audioMediaSource;
+        this.audioGainNode = audioGainNode;
+        this.audioGraphVideo = video;
         this.audioAmplificationAvailable = true;
         return true;
       } catch (_) {
@@ -243,8 +285,14 @@ export function createPlayerScreenMethods24() {
       if (Number(this.audioAmplificationDb || 0) <= 0) {
         this.audioAmplificationAvailable =
           supportsTvWebAudioAmplification() && typeof (globalThis.AudioContext || globalThis.webkitAudioContext) === "function";
+        if (!this.audioGainNode) {
+          this.syncExistingAudioAmplificationGraph();
+        }
         if (this.audioGainNode) {
           try {
+            if (this.audioContext?.state === "suspended") {
+              void this.audioContext.resume().catch(() => {});
+            }
             this.audioGainNode.gain.value = 1;
           } catch (_) {
             // Best effort.

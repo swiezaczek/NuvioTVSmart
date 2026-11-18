@@ -146,13 +146,17 @@ export function createPlayerScreenMethods45() {
       if (!force && renderKey === this.bitmapSubtitleLastFrameKey && canvas.classList.contains("hidden") !== hasRenderableCompositions) {
         return hasRenderableCompositions;
       }
-      canvas.width = viewportWidth;
-      canvas.height = viewportHeight;
+      if (canvas.width !== viewportWidth) {
+        canvas.width = viewportWidth;
+      }
+      if (canvas.height !== viewportHeight) {
+        canvas.height = viewportHeight;
+      }
       const context = canvas.getContext("2d");
       if (!context) {
         return false;
       }
-      context.clearRect(0, 0, viewportWidth, viewportHeight);
+      context.clearRect(0, 0, canvas.width, canvas.height);
       if (!hasRenderableCompositions) {
         canvas.classList.add("hidden");
         canvas.setAttribute("aria-hidden", "true");
@@ -172,9 +176,20 @@ export function createPlayerScreenMethods45() {
         if (!composition?.width || !composition?.height || composition.rgba?.length !== composition.width * composition.height * 4) {
           return;
         }
-        scratch.width = composition.width;
-        scratch.height = composition.height;
-        const imageData = scratchContext.createImageData(composition.width, composition.height);
+        if (scratch.width !== composition.width) {
+          scratch.width = composition.width;
+        }
+        if (scratch.height !== composition.height) {
+          scratch.height = composition.height;
+        }
+        const imageData =
+          this.bitmapSubtitleScratchImageData &&
+          this.bitmapSubtitleScratchImageData.width === composition.width &&
+          this.bitmapSubtitleScratchImageData.height === composition.height &&
+          this.bitmapSubtitleScratchImageData.data?.length === composition.rgba.length
+            ? this.bitmapSubtitleScratchImageData
+            : scratchContext.createImageData(composition.width, composition.height);
+        this.bitmapSubtitleScratchImageData = imageData;
         if (brightnessFactor < 1) {
           scaleRgbaBrightness(composition.rgba, brightnessFactor, imageData.data);
         } else {

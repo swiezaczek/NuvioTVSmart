@@ -183,11 +183,16 @@ export function createPlayerScreenMethods32() {
       // (pendingPreviewSeekPosition ?: position) and redraws it on every step.
       // The UI tick runs once a second, so a held seek must redraw here too or
       // the bar and time trail the preview.
+      const uiRefs = this.uiRefs || {};
+      const uiState = this.lastUiTickState || (this.lastUiTickState = {});
+      const isSeeking = this.seekPreviewSeconds != null;
+      if (uiState.isSeeking !== isSeeking) {
+        uiRefs.root?.classList?.toggle?.("is-seeking", isSeeking);
+        uiState.isSeeking = isSeeking;
+      }
       if (this.isLivePlayback()) {
         return;
       }
-      const uiRefs = this.uiRefs || {};
-      const uiState = this.lastUiTickState || (this.lastUiTickState = {});
       const duration = this.getPlaybackDisplayDurationSeconds();
       const position = this.seekPreviewSeconds != null ? Number(this.seekPreviewSeconds) : this.getPlaybackDisplayCurrentSeconds();
       const progress = duration > 0 ? clamp(position / duration, 0, 1) : 0;
