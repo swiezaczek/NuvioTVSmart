@@ -21,8 +21,9 @@ export function createDiscoverScreenMethods06() {
   } = internals;
 
   return {
-    bindCardEvents() {
-      this.container?.querySelectorAll(".seeall-card.focusable").forEach((node) => {
+    bindCardEvents(nodes = null) {
+      const cardNodes = nodes || this.container?.querySelectorAll(".seeall-card.focusable") || [];
+      cardNodes.forEach((node) => {
         if (node.__boundDiscoverCardHandlers) return;
         node.__boundDiscoverCardHandlers = true;
         node.addEventListener("focus", () => {
@@ -38,6 +39,12 @@ export function createDiscoverScreenMethods06() {
       });
     },
     bindShellEvents() {
+      if (typeof window !== "undefined" && typeof window.addEventListener === "function" && !this._discoverResizeHandler) {
+        this._discoverResizeHandler = () => {
+          this.invalidateNavRowCache?.();
+        };
+        window.addEventListener("resize", this._discoverResizeHandler, { passive: true });
+      }
       const scroller = this.getContentScroller();
       if (!scroller || scroller.__discoverScrollBound) {
         return;
@@ -348,6 +355,13 @@ export function createDiscoverScreenMethods06() {
       this.posterOptionsController?.destroy?.({ restoreFocus: false });
       this.posterOptionsController = null;
       this.pendingPosterOptionsFocusKey = "";
+      if (this._discoverResizeHandler && typeof window !== "undefined" && typeof window.removeEventListener === "function") {
+        window.removeEventListener("resize", this._discoverResizeHandler);
+        this._discoverResizeHandler = null;
+      }
+      this._discoverRenderedGridState = null;
+      this._discoverLoadingRendered = null;
+      this._discoverNavRowCache = null;
       this.suppressHoldMenuEnterUntilKeyUp = false;
       ScreenUtils.hide(this.container);
     }

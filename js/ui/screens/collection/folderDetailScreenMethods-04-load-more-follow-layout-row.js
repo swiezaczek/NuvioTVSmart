@@ -22,7 +22,17 @@ export function createFolderDetailScreenMethods04() {
       const rowData = rowIndex >= 0 ? this.rows[rowIndex] : null;
       const tabIndex = Number(rowData?.folderTabIndex ?? -1);
       const tab = this.tabs?.[tabIndex] || null;
-      if (!rowData || !tab || tab.isAllTab || tab.loading || !tab.hasMore) {
+      if (
+        !rowData ||
+        !tab ||
+        tab.isAllTab ||
+        tab.loading ||
+        !tab.hasMore ||
+        tab.error ||
+        rowData?.result?.status === "error" ||
+        this._trackPaginationInFlight?.has(rowKey) ||
+        this._trackPaginationFailed?.has(rowKey)
+      ) {
         return;
       }
       this._trackPaginationInFlight = this._trackPaginationInFlight || new Set();
@@ -58,6 +68,7 @@ export function createFolderDetailScreenMethods04() {
           loading: false,
           error: ""
         };
+        this._trackPaginationFailed?.delete?.(rowKey);
         this.rebuildAllTab();
         if (rowData?.result?.data) {
           rowData.result.data.items = merged;
@@ -101,6 +112,8 @@ export function createFolderDetailScreenMethods04() {
         if (token !== this.folderLoadToken || Router.getCurrent() !== "folderDetail") {
           return;
         }
+        this._trackPaginationFailed = this._trackPaginationFailed || new Set();
+        this._trackPaginationFailed.add(rowKey);
         this.tabs[tabIndex] = {
           ...this.tabs[tabIndex],
           loading: false,

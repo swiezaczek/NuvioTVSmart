@@ -206,6 +206,7 @@ export function createDiscoverScreenMethods05() {
     },
     render() {
       this.cancelScheduledRender();
+      this.invalidateNavRowCache?.();
       this.layoutPrefs = LayoutPreferences.get();
       const showRootSidebar = this.isSidebarRootRoute();
       const openPicker = this.openPicker || null;
@@ -224,7 +225,8 @@ export function createDiscoverScreenMethods05() {
 
       const selectedCatalog = this.getSelectedCatalog();
       const contextLabel = this.getDiscoverContextLabel(selectedCatalog);
-      const cards = this.renderDiscoverCards(selectedCatalog);
+      const renderItems = this.getDiscoverRenderItems();
+      const cards = this.renderDiscoverCards(selectedCatalog, renderItems);
 
       const enterClass = ScreenUtils.routeEnterClass(this, this.discoverRouteEnterPending, " nuvio-route-slide-enter");
       this.discoverRouteEnterPending = false;
@@ -261,6 +263,21 @@ export function createDiscoverScreenMethods05() {
           </div>
         `;
 
+      const mountedGrid = this.container?.querySelector?.("#discoverGridMount") || null;
+      this._discoverRenderedGridState =
+        mountedGrid && renderItems.length > 0
+          ? {
+              gridNode: mountedGrid,
+              requestToken: this.discoverRequestToken,
+              catalogKey: String(selectedCatalog?.key || ""),
+              genre: String(this.selectedGenre || "Default"),
+              posterLabelsEnabled: this.layoutPrefs?.posterLabelsEnabled !== false,
+              renderedCount: renderItems.length,
+              firstItem: renderItems[0],
+              lastItem: renderItems[renderItems.length - 1]
+            }
+          : null;
+      this._discoverLoadingRendered = Boolean(this.loading);
       this.restoreLoadedDiscoverPosters(loadedPosters);
       ScreenUtils.indexFocusables(this.container);
       this.buildNavigationModel();
@@ -346,6 +363,8 @@ export function createDiscoverScreenMethods05() {
       }
       const viewport = scroller.getBoundingClientRect();
       const margin = DISCOVER_POSTER_PREFETCH_MARGIN_PX;
+      const toHydrate = [];
+      const toClear = [];
       this.container?.querySelectorAll(".seeall-card-poster-image[data-src]").forEach((image) => {
         if (!(image instanceof HTMLImageElement) || !image.isConnected) {
           return;
@@ -361,9 +380,15 @@ export function createDiscoverScreenMethods05() {
         }
         const src = String(image.dataset.src || "").trim();
         if (!src) {
-          image.removeAttribute("data-src");
+          toClear.push(image);
           return;
         }
+        toHydrate.push({ image, src });
+      });
+      toClear.forEach((image) => {
+        image.removeAttribute("data-src");
+      });
+      toHydrate.forEach(({ image, src }) => {
         // The app owns the visible-image decision. Do not delegate it to native
         // lazy loading, which can delay posters inside the TV scroll container.
         image.loading = "eager";

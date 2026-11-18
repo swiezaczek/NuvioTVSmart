@@ -51,9 +51,9 @@ export function createStreamScreenMethods07() {
         }
       }
     },
-    ensureListItemVisible(listNode, target) {
+    getNextListScrollTop(listNode, target) {
       if (!listNode || !target) {
-        return;
+        return null;
       }
       const viewTop = this.getListScrollTop(listNode);
       let itemTop = Number(target.offsetTop || 0);
@@ -68,14 +68,22 @@ export function createStreamScreenMethods07() {
       }
       const viewHeight = Number(listNode.clientHeight || 0);
       if (!viewHeight) {
-        return;
+        return null;
       }
       const viewBottom = viewTop + viewHeight;
       const pad = 16;
       if (itemBottom > viewBottom - pad) {
-        this.setListScrollTop(listNode, itemBottom - viewHeight + pad);
-      } else if (itemTop < viewTop + pad) {
-        this.setListScrollTop(listNode, itemTop - pad);
+        return itemBottom - viewHeight + pad;
+      }
+      if (itemTop < viewTop + pad) {
+        return itemTop - pad;
+      }
+      return null;
+    },
+    ensureListItemVisible(listNode, target) {
+      const nextScrollTop = this.getNextListScrollTop(listNode, target);
+      if (nextScrollTop != null) {
+        this.setListScrollTop(listNode, nextScrollTop);
       }
     },
     scheduleFocusedListItemVisibilityCheck(listNode, target) {

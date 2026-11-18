@@ -19,7 +19,8 @@ export function stopStreamBadgeMarquee(card) {
   });
 }
 
-export function startStreamBadgeMarquee(card) {
+export function measureStreamBadgeMarquee(card) {
+  const measurements = [];
   badgeRowsOf(card).forEach((row) => {
     if (activeRows.has(row) || row.scrollWidth <= row.clientWidth + 1) return;
     const badges = Array.from(row.children);
@@ -28,6 +29,19 @@ export function startStreamBadgeMarquee(card) {
     const last = badges[badges.length - 1].getBoundingClientRect();
     const distance = last.right - first.left + MARQUEE_SPACING_PX;
     const flexGap = parseFloat(getComputedStyle(row).columnGap) || 0;
+    measurements.push({ row, badges, distance, flexGap });
+  });
+  return measurements;
+}
+
+export function applyStreamBadgeMarquee(measurements = []) {
+  if (!Array.isArray(measurements) || !measurements.length) {
+    return;
+  }
+  measurements.forEach(({ row, badges, distance, flexGap }) => {
+    if (!row || activeRows.has(row) || !badges?.length || typeof badges[0].animate !== "function") {
+      return;
+    }
     const clones = badges.map((badge, index) => {
       const clone = badge.cloneNode(true);
       clone.setAttribute("data-badge-marquee-clone", "");
@@ -51,4 +65,8 @@ export function startStreamBadgeMarquee(card) {
       )
     );
   });
+}
+
+export function startStreamBadgeMarquee(card) {
+  applyStreamBadgeMarquee(measureStreamBadgeMarquee(card));
 }

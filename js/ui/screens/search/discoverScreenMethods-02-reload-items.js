@@ -10,6 +10,8 @@ export function createDiscoverScreenMethods02() {
       // Like Android cancelling discoverJob on reset: a filter change must
       // discard responses still in flight for the previous selection.
       this.discoverRequestToken = (this.discoverRequestToken || 0) + 1;
+      this._discoverRenderedGridState = null;
+      this.invalidateNavRowCache?.();
       this.captureViewState();
       this.nextSkip = 0;
       this.hasMore = true;
@@ -100,9 +102,9 @@ export function createDiscoverScreenMethods02() {
       if (result.status !== "success") {
         this.loading = false;
         this.hasMore = false;
-        this.preserveViewportOnNextRender = false;
+        this.preserveViewportOnNextRender = Boolean(preserveViewport && this.items.length > 0);
         this.suppressInitialLoadingRenders = false;
-        if (partialRender) {
+        if (partialRender || preserveViewport) {
           this.updateRenderedDiscoverResults();
         } else {
           this.requestRender();
@@ -140,14 +142,16 @@ export function createDiscoverScreenMethods02() {
         this.lastFocusedDiscoverItemId = String(this.items[0].id);
       }
       this.pendingRestoreFocus = Boolean(restoreFocusToGrid);
-      this.preserveViewportOnNextRender = Boolean(preserveViewport && addedCount > 0);
+      this.preserveViewportOnNextRender = Boolean(preserveViewport && (addedCount > 0 || !this.hasMore));
       this.suppressInitialLoadingRenders = false;
       void this.refreshWatchedTitleIds(this.items).then(() => {
-        if (token === this.loadToken && Router.getCurrent() === "discover") {
-          this.requestRender();
+        if (token === this.loadToken && requestToken === this.discoverRequestToken && Router.getCurrent() === "discover") {
+          if (!this.updateRenderedWatchedBadges()) {
+            this.requestRender();
+          }
         }
       });
-      if (partialRender) {
+      if (partialRender || preserveViewport) {
         this.updateRenderedDiscoverResults();
       } else {
         this.requestRender();
@@ -276,24 +280,76 @@ export function createDiscoverScreenMethods02() {
       }
       const selectedCatalog = this.getSelectedCatalog();
       const subtitleNode = this.container.querySelector("#discoverContextLabel");
-      if (subtitleNode instanceof HTMLElement) {
-        subtitleNode.textContent = this.getDiscoverContextLabel(selectedCatalog);
+      const nextContextLabel = this.getDiscoverContextLabel(selectedCatalog);
+      if (subtitleNode instanceof HTMLElement && subtitleNode.textContent !== nextContextLabel) {
+        subtitleNode.textContent = nextContextLabel;
       }
       const gridNode = this.container.querySelector("#discoverGridMount");
-      if (gridNode instanceof HTMLElement) {
+      const renderItems = this.getDiscoverRenderItems();
+      const state = this._discoverRenderedGridState;
+      const catalogKey = String(selectedCatalog?.key || "");
+      const genre = String(this.selectedGenre || "Default");
+      const posterLabelsEnabled = this.layoutPrefs?.posterLabelsEnabled !== false;
+      const canAppendToGrid = Boolean(
+        gridNode instanceof HTMLElement &&
+        state &&
+        state.gridNode === gridNode &&
+        state.requestToken === this.discoverRequestToken &&
+        state.catalogKey === catalogKey &&
+        state.genre === genre &&
+        state.posterLabelsEnabled === posterLabelsEnabled &&
+        state.renderedCount > 0 &&
+        gridNode.children.length === state.renderedCount &&
+        renderItems.length >= state.renderedCount &&
+        renderItems[0] === state.firstItem &&
+        renderItems[state.renderedCount - 1] === state.lastItem
+      );
+
+      if (canAppendToGrid) {
+        const previousCount = state.renderedCount;
+        if (renderItems.length > previousCount) {
+          const appendedMarkup = renderItems
+            .slice(previousCount)
+            .map((item, offset) => this.renderDiscoverCard(item, previousCount + offset, selectedCatalog))
+            .join("");
+          gridNode.insertAdjacentHTML("beforeend", appendedMarkup);
+          const appendedNodes = Array.from(gridNode.children).slice(previousCount);
+          state.renderedCount = renderItems.length;
+          state.lastItem = renderItems[renderItems.length - 1];
+          ScreenUtils.indexFocusables(this.container);
+          this.buildNavigationModel();
+          this.bindCardEvents(appendedNodes);
+          this.scheduleDiscoverPosterHydration();
+        }
+      } else if (gridNode instanceof HTMLElement) {
         const loadedPosters = this.captureLoadedDiscoverPosters();
-        gridNode.innerHTML = this.renderDiscoverCards(selectedCatalog);
+        gridNode.innerHTML = this.renderDiscoverCards(selectedCatalog, renderItems);
         this.restoreLoadedDiscoverPosters(loadedPosters);
-      }
-      const loadingNode = this.container.querySelector("#discoverLoadingMount");
-      if (loadingNode instanceof HTMLElement) {
-        loadingNode.innerHTML = this.renderDiscoverLoadingMarkup();
+        this._discoverRenderedGridState =
+          renderItems.length > 0
+            ? {
+                gridNode,
+                requestToken: this.discoverRequestToken,
+                catalogKey,
+                genre,
+                posterLabelsEnabled,
+                renderedCount: renderItems.length,
+                firstItem: renderItems[0],
+                lastItem: renderItems[renderItems.length - 1]
+              }
+            : null;
+        this.invalidateNavRowCache?.();
+        ScreenUtils.indexFocusables(this.container);
+        this.buildNavigationModel();
+        this.bindCardEvents();
+        this.scheduleDiscoverPosterHydration();
       }
 
-      ScreenUtils.indexFocusables(this.container);
-      this.buildNavigationModel();
-      this.bindCardEvents();
-      this.scheduleDiscoverPosterHydration();
+      const loadingNode = this.container.querySelector("#discoverLoadingMount");
+      if (loadingNode instanceof HTMLElement && this._discoverLoadingRendered !== Boolean(this.loading)) {
+        loadingNode.innerHTML = this.renderDiscoverLoadingMarkup();
+        this._discoverLoadingRendered = Boolean(this.loading);
+      }
 
       if (this.isSidebarRootRoute() && this.focusZone === "sidebar") {
         this.focusSidebarNode();
@@ -304,6 +360,13 @@ export function createDiscoverScreenMethods02() {
       if (focusedFilter instanceof HTMLElement) {
         focusWithoutAutoScroll(focusedFilter);
         this.scrollContentToTop();
+        return;
+      }
+
+      if (canAppendToGrid && this.preserveViewportOnNextRender && this.container.querySelector(".focusable.focused")) {
+        this.pendingRestoreFocus = false;
+        this.preserveViewportOnNextRender = false;
+        this.syncOpenPickerScroll();
         return;
       }
 

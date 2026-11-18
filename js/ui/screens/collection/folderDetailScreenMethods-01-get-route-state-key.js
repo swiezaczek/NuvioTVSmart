@@ -162,6 +162,8 @@ export function createFolderDetailScreenMethods01() {
       this.tabs = [];
       this.sourceTabs = [];
       this._trackPaginationInFlight = new Set();
+      this._trackPaginationFailed = new Set();
+      this._folderNavRowCache = null;
       this.folderLoadToken = (this.folderLoadToken || 0) + 1;
       const folderLoadToken = this.folderLoadToken;
       const preferredHomeLayout = String(this.layoutPrefs?.homeLayout || "classic").toLowerCase();

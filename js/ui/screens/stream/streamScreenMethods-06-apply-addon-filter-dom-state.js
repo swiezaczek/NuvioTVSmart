@@ -1,7 +1,7 @@
 /* eslint-disable no-unused-vars */
 import * as internals from "./streamScreen.js";
 import { focusWithoutScroll } from "../../navigation/focusWithoutScroll.js";
-import { startStreamBadgeMarquee, stopStreamBadgeMarquee } from "./streamBadgeMarquee.js";
+import { applyStreamBadgeMarquee, measureStreamBadgeMarquee, stopStreamBadgeMarquee } from "./streamBadgeMarquee.js";
 
 export function createStreamScreenMethods06() {
   const { ScreenUtils, Environment, isStreamEmptyStateVisible, clamp } = internals;
@@ -169,16 +169,15 @@ export function createStreamScreenMethods06() {
         this.focusedElement && this.container?.contains(this.focusedElement)
           ? this.focusedElement
           : this.container?.querySelector(".focusable.focused");
-      if (previous && previous !== target) {
-        previous.classList.remove("focused");
-        stopStreamBadgeMarquee(previous.closest(".stream-route-card-row"));
-      }
-      target.classList.add("focused");
-      this.focusedElement = target;
-      startStreamBadgeMarquee(target.closest(".stream-route-card-row"));
-      focusWithoutScroll(target);
+      const targetRow = target.closest?.(".stream-route-card-row") || null;
+      const previousRow = previous && previous !== target ? previous.closest?.(".stream-route-card-row") || null : null;
 
-      const chipTrack = target.closest(".stream-route-chip-track");
+      // Batch all layout reads (marquee scrollWidth/clientWidth/rects, chip
+      // track bounds, and list viewport scroll target) before mutating classes,
+      // scroll offsets, or marquee clones.
+      const marqueeMeasurements = typeof measureStreamBadgeMarquee === "function" ? measureStreamBadgeMarquee(targetRow) : [];
+      const chipTrack = target.closest?.(".stream-route-chip-track") || null;
+      let nextChipScrollLeft = null;
       if (chipTrack) {
         const left = target.offsetLeft;
         const right = left + target.offsetWidth;
@@ -186,17 +185,41 @@ export function createStreamScreenMethods06() {
         const viewRight = viewLeft + chipTrack.clientWidth;
         const pad = 24;
         if (right > viewRight - pad) {
-          chipTrack.scrollLeft = Math.max(0, right - chipTrack.clientWidth + pad);
+          nextChipScrollLeft = Math.max(0, right - chipTrack.clientWidth + pad);
         } else if (left < viewLeft + pad) {
-          chipTrack.scrollLeft = Math.max(0, left - pad);
+          nextChipScrollLeft = Math.max(0, left - pad);
         }
       }
+      const listNode = target.closest?.(".stream-route-list") || null;
+      const hasListScrollReader = typeof this.getNextListScrollTop === "function";
+      const nextListScrollTop = listNode && ensureVisible && hasListScrollReader ? this.getNextListScrollTop(listNode, target) : null;
 
-      const listNode = target.closest(".stream-route-list");
+      if (previous && previous !== target) {
+        previous.classList.remove("focused");
+        stopStreamBadgeMarquee?.(previousRow);
+      }
+      target.classList.add("focused");
+      this.focusedElement = target;
+      focusWithoutScroll(target);
+
+      if (chipTrack && nextChipScrollLeft != null) {
+        chipTrack.scrollLeft = nextChipScrollLeft;
+      }
+
       if (listNode && ensureVisible) {
-        this.ensureListItemVisible(listNode, target);
+        if (hasListScrollReader) {
+          if (nextListScrollTop != null) {
+            this.setListScrollTop(listNode, nextListScrollTop);
+          }
+        } else {
+          this.ensureListItemVisible(listNode, target);
+        }
         this.listScrollTop = this.getListScrollTop(listNode);
         this.scheduleFocusedListItemVisibilityCheck(listNode, target);
+      }
+
+      if (typeof applyStreamBadgeMarquee === "function" && marqueeMeasurements.length) {
+        applyStreamBadgeMarquee(marqueeMeasurements);
       }
       return true;
     },

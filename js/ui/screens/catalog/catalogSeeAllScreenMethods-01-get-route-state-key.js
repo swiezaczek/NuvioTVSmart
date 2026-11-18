@@ -84,7 +84,11 @@ export function createCatalogSeeAllScreenMethods01() {
       this.watchedTitleIds = buildWatchedTitleIdSet(projectedItems);
     },
     updateRenderedWatchedBadges() {
-      const cards = this.container?.querySelectorAll(".seeall-card.focusable") || [];
+      const grid = this.container?.querySelector?.(".seeall-grid");
+      if (!grid) {
+        return false;
+      }
+      const cards = grid.querySelectorAll(".seeall-card.focusable") || [];
       cards.forEach((card) => {
         const itemIndex = Number(card.dataset?.itemIndex);
         const item = Number.isInteger(itemIndex) ? this.items?.[itemIndex] : null;
@@ -100,6 +104,7 @@ export function createCatalogSeeAllScreenMethods01() {
           badge.remove();
         }
       });
+      return true;
     },
     async mount(params = {}, navigationContext = {}) {
       this.container = document.getElementById("catalogSeeAll");
@@ -126,6 +131,8 @@ export function createCatalogSeeAllScreenMethods01() {
       this.lastFocusedKey = this.items[0]?.id ? `item:${this.items[0].id}` : null;
       this.pendingRestoreFocus = false;
       this.preserveViewportOnNextRender = false;
+      this._catalogRenderedGridState = null;
+      this._catalogNavRowCache = null;
       this.savedScrollTop = 0;
       this.loadToken = (this.loadToken || 0) + 1;
       this.posterOptionsController = null;
@@ -158,12 +165,10 @@ export function createCatalogSeeAllScreenMethods01() {
           await this.loadNextPage();
           return;
         }
-        // Watched badges are cosmetic. Do not replace a grid that the user has
-        // already focused while the local watched snapshot was being read.
-        if (!this.container?.querySelector(".seeall-card.focusable.focused")) {
+        // Watched badges are cosmetic. Patch existing cards in-place instead
+        // of tearing down the mounted grid and decoded poster images.
+        if (!this.updateRenderedWatchedBadges()) {
           this.render();
-        } else {
-          this.updateRenderedWatchedBadges();
         }
       })().catch((error) => {
         if (routeLoadToken === this.loadToken && Router.getCurrent() === "catalogSeeAll") {
@@ -211,8 +216,10 @@ export function createCatalogSeeAllScreenMethods01() {
       if (result.status !== "success") {
         this.loading = false;
         this.hasMore = false;
-        this.preserveViewportOnNextRender = false;
-        this.render();
+        this.preserveViewportOnNextRender = Boolean(preserveViewport && this.items.length > 0);
+        if (!this.appendRenderedCatalogItems()) {
+          this.render();
+        }
         return;
       }
       const rawIncoming = Array.isArray(result?.data?.items) ? result.data.items : [];
@@ -224,7 +231,7 @@ export function createCatalogSeeAllScreenMethods01() {
       this.hasMore = merged.hasMore;
       this.loading = false;
       this.pendingRestoreFocus = true;
-      this.preserveViewportOnNextRender = Boolean(preserveViewport && addedCount > 0);
+      this.preserveViewportOnNextRender = Boolean(preserveViewport && (addedCount > 0 || !this.hasMore));
       void this.refreshWatchedTitleIds(this.items).then(() => {
         if (token === this.loadToken && Router.getCurrent() === "catalogSeeAll") {
           // Watched state is cosmetic. Updating only the badge avoids rebuilding
@@ -233,7 +240,9 @@ export function createCatalogSeeAllScreenMethods01() {
           this.updateRenderedWatchedBadges();
         }
       });
-      this.render();
+      if (!this.appendRenderedCatalogItems()) {
+        this.render();
+      }
     },
     captureViewState() {
       const shell = this.container?.querySelector(".seeall-shell");
@@ -279,13 +288,31 @@ export function createCatalogSeeAllScreenMethods01() {
       const remaining = shell.scrollHeight - (shell.scrollTop + shell.clientHeight);
       return remaining <= 640;
     },
+    invalidateNavRowCache() {
+      this._catalogNavRowCache = null;
+    },
     buildNavigationModel() {
+      const grid = this.container?.querySelector?.(".seeall-grid") || null;
       const cards = Array.from(this.container?.querySelectorAll(".seeall-card.focusable") || []);
-      const rows = groupNodesByOffsetTop(cards);
+      const cache = this._catalogNavRowCache || (this._catalogNavRowCache = {});
+      const previousRows = cache.rows;
+      const rows = groupNodesByOffsetTop(cards, {
+        cache,
+        containerClientWidth: Number(grid?.clientWidth || this.container?.clientWidth || 0)
+      });
+      if (this.navModel?.rows === rows && rows === previousRows) {
+        return;
+      }
       rows.forEach((rowNodes, rowIndex) => {
         rowNodes.forEach((node, colIndex) => {
-          node.dataset.navRow = String(rowIndex);
-          node.dataset.navCol = String(colIndex);
+          const r = String(rowIndex);
+          const c = String(colIndex);
+          if (node.dataset.navRow !== r) {
+            node.dataset.navRow = r;
+          }
+          if (node.dataset.navCol !== c) {
+            node.dataset.navCol = c;
+          }
         });
       });
       this.navModel = { rows };
@@ -345,7 +372,9 @@ export function createCatalogSeeAllScreenMethods01() {
         this.loadNextPage({ preserveViewport: true });
       }
       if (this.maybeExpandRenderedItems(target.dataset.itemIndex)) {
-        this.render();
+        if (!this.appendRenderedCatalogItems()) {
+          this.render();
+        }
       }
       return true;
     }

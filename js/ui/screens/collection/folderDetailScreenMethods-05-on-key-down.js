@@ -67,15 +67,33 @@ export function createFolderDetailScreenMethods05() {
         event?.preventDefault?.();
         const row = Number(current.dataset.navRow || 0);
         const col = Number(current.dataset.navCol || 0);
+        const resolveRowsModeTab = (trackNode) => {
+          const rowsForView = (this.tabs || []).filter((tab) => !tab.isAllTab);
+          const rowKey = String(trackNode?.dataset?.rowKey || "");
+          const tracks = Array.from(this.container?.querySelectorAll?.(".folder-row-track") || []);
+          const trackIndex = trackNode ? tracks.indexOf(trackNode) : -1;
+          const targetTab =
+            (rowKey ? rowsForView.find((tab) => String(tab?.key || "") === rowKey) : null) ||
+            (trackIndex >= 0 ? rowsForView[trackIndex] : null) ||
+            null;
+          const tabIndex = targetTab ? this.tabs.indexOf(targetTab) : -1;
+          return { tab: targetTab, tabIndex };
+        };
         if (code === 37 || code === 39) {
           const rowNodes = this.navModel.rows[row] || [];
           this.focusNode(rowNodes[Math.max(0, Math.min(rowNodes.length - 1, col + (code === 39 ? 1 : -1)))] || current);
+          if (code === 39 && this.viewMode !== "TABBED_GRID" && col + 1 >= rowNodes.length - 4) {
+            const { tab: currentRow, tabIndex } = resolveRowsModeTab(current.closest?.(".folder-row-track") || null);
+            if (tabIndex >= 0 && currentRow?.hasMore && !currentRow.loading && !currentRow.error) {
+              await this.loadTab(tabIndex, { append: true });
+            }
+          }
           return;
         }
         const nextRowNodes = this.navModel.rows[row + (code === 40 ? 1 : -1)] || null;
         if (nextRowNodes?.length) {
           this.focusNode(nextRowNodes[Math.max(0, Math.min(nextRowNodes.length - 1, col))] || nextRowNodes[0]);
-        } else if (code !== 40 || this.viewMode !== "TABBED_GRID") {
+        } else if (code !== 40) {
           return;
         }
         // Prefetch only within two rows of the loaded grid's end. A Down press
@@ -101,13 +119,15 @@ export function createFolderDetailScreenMethods05() {
           } else if (this.tabs[selectedTabIndex]?.hasMore && !this.tabs[selectedTabIndex]?.loading) {
             await this.loadTab(selectedTabIndex, { append: true });
           }
-        } else if (this.viewMode !== "TABBED_GRID" && code === 40) {
-          const currentTrack = current.closest(".folder-row-track");
-          const currentRowIndex = Array.from(this.container?.querySelectorAll(".folder-row-track") || []).indexOf(currentTrack);
-          const rowsForView = this.tabs.filter((tab) => !tab.isAllTab);
-          const currentRow = rowsForView[currentRowIndex] || null;
-          if (currentRow?.hasMore && !currentRow.loading) {
-            await this.loadTab(currentRowIndex, { append: true });
+        } else if (this.viewMode !== "TABBED_GRID" && code === 40 && (!nextRowNodes?.length || row + 1 >= this.navModel.rows.length - 2)) {
+          const { tab: currentRow, tabIndex } = resolveRowsModeTab(current.closest?.(".folder-row-track") || null);
+          if (
+            tabIndex >= 0 &&
+            currentRow?.hasMore &&
+            !currentRow.loading &&
+            (!currentRow.error || (!nextRowNodes?.length && !event?.repeat))
+          ) {
+            await this.loadTab(tabIndex, { append: true });
           }
         }
       }
@@ -137,6 +157,12 @@ export function createFolderDetailScreenMethods05() {
     cleanup() {
       this.folderLoadToken = (this.folderLoadToken || 0) + 1;
       this._trackPaginationInFlight?.clear?.();
+      this._trackPaginationFailed?.clear?.();
+      this._folderNavRowCache = null;
+      if (this._folderResizeHandler && typeof window !== "undefined" && typeof window.removeEventListener === "function") {
+        window.removeEventListener("resize", this._folderResizeHandler);
+        this._folderResizeHandler = null;
+      }
       this.cancelScheduledRender();
       if (this.useHomeFollowLayout) {
         HomeScreen.cancelModernCameraFollow.call(this, { stopAnimations: true });
