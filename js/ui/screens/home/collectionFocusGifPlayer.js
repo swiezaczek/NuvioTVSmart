@@ -1,13 +1,19 @@
 const MAX_RAW_CACHE_ENTRIES = 12;
 const MAX_RAW_CACHE_BYTES = 4 * 1024 * 1024;
 const MAX_SINGLE_RAW_FILE_BYTES = 2 * 1024 * 1024;
-const MAX_ACTIVE_BITMAP_BYTES = 28 * 1024 * 1024;
-const LOOKAHEAD_BUFFER_FRAMES = 22;
-const INITIAL_PREBUFFER_CAP = 20;
-const NEIGHBOR_PREFETCH_DELAY_MS = 220;
+const MAX_ACTIVE_BITMAP_BYTES = 36 * 1024 * 1024;
+const LOOKAHEAD_BUFFER_FRAMES = 28;
+const INITIAL_PREBUFFER_CAP = 30;
+const NEIGHBOR_PREFETCH_DELAY_MS = 900;
 const MAX_NEIGHBOR_PREFETCH_ITEMS = 3;
 const DEFAULT_FRAME_DURATION_MS = 40;
 const MIN_FRAME_DURATION_MS = 16;
+
+function yieldToRenderer() {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
 
 const rawByteCache = new Map();
 let rawCacheTotalBytes = 0;
@@ -153,10 +159,11 @@ function getTargetCanvasDimensions(node, gifNode, sourceWidth, sourceHeight) {
   if (!(cssW > 0) || !(cssH > 0)) {
     return { width: safeSrcW, height: safeSrcH };
   }
-  const dpr = Math.min(2, Math.max(1, Number(globalThis.devicePixelRatio || 1)));
+  // Keep decoded frames at 1x CSS card dimensions on 4K TVs (2x DPR would
+  // allocate up to 4x more pixels per frame and push loops over RAM budget).
   return {
-    width: Math.max(1, Math.min(safeSrcW, Math.round(cssW * dpr))),
-    height: Math.max(1, Math.min(safeSrcH, Math.round(cssH * dpr)))
+    width: Math.max(1, Math.min(safeSrcW, Math.round(cssW))),
+    height: Math.max(1, Math.min(safeSrcH, Math.round(cssH)))
   };
 }
 
@@ -562,12 +569,17 @@ export const collectionFocusGifPlayer = {
             return;
           }
           decodingActive = true;
+          let decodedInBurst = 0;
           try {
             if (cacheAllFrames) {
               while (isStillValid() && session.frames.size < frameCount) {
                 const idx = nextDecodeCursor;
                 nextDecodeCursor = (nextDecodeCursor + 1) % frameCount;
                 await decodeFrameAt(idx);
+                decodedInBurst += 1;
+                if (decodedInBurst % 2 === 0 && isStillValid()) {
+                  await yieldToRenderer();
+                }
               }
               if (session.frames.size >= frameCount && session.decoder) {
                 try {
@@ -589,6 +601,10 @@ export const collectionFocusGifPlayer = {
                   break;
                 }
                 await decodeFrameAt(targetIdx);
+                decodedInBurst += 1;
+                if (decodedInBurst % 2 === 0 && isStillValid()) {
+                  await yieldToRenderer();
+                }
               }
             }
           } catch (_) {
