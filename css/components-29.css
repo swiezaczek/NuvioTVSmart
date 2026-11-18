@@ -363,7 +363,7 @@
 
 .player-html-subtitle-text {
   position: relative;
-  display: inline-block;
+  display: block;
   max-width: 100%;
   z-index: 1;
   isolation: isolate;

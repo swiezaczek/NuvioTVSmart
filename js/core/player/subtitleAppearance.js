@@ -17,7 +17,7 @@ export const SUBTITLE_SHADOW_SIZE_DEFAULT = 2;
 export const SUBTITLE_OUTLINE_SIZE_MIN = 1;
 export const SUBTITLE_OUTLINE_SIZE_MAX = 5;
 export const SUBTITLE_OUTLINE_SIZE_DEFAULT = 2;
-export const SUBTITLE_LINE_SPACING_MIN = 50;
+export const SUBTITLE_LINE_SPACING_MIN = 75;
 export const SUBTITLE_LINE_SPACING_MAX = 150;
 export const SUBTITLE_LINE_SPACING_STEP = 5;
 export const SUBTITLE_LINE_SPACING_DEFAULT = 100;
@@ -95,41 +95,33 @@ export function subtitleDropShadowCss(style = {}) {
 }
 
 /** CSS line-height, flex gap, and vertical line padding for HTML subtitles. */
-export function subtitleLineSpacingMetrics(
-  style = {},
-  { isWebOs = false, blockBackground = false } = {}
-) {
+export function subtitleLineSpacingMetrics(style = {}) {
   const percent = normalizeSubtitleAppearance(style).lineSpacing;
-  const baseLineHeight = isWebOs ? 1.2 : 1.28;
-  const baseGapEm = isWebOs || blockBackground ? 0 : 0.18;
-  const basePaddingBlockEm = isWebOs || blockBackground ? 0 : 0.06;
-
+  const baseLineHeight = 1.15;
   let lineHeight = baseLineHeight;
-  let gapEm = baseGapEm;
-  let paddingBlockEm = basePaddingBlockEm;
+  let gapEm = 0;
 
   if (percent < SUBTITLE_LINE_SPACING_DEFAULT) {
     const t =
-      (percent - SUBTITLE_LINE_SPACING_MIN) /
+      (percent - SUBTITLE_LINE_SPACING_DEFAULT) /
       (SUBTITLE_LINE_SPACING_DEFAULT - SUBTITLE_LINE_SPACING_MIN);
-    const minLineHeight = 1.1;
-    lineHeight = minLineHeight + (baseLineHeight - minLineHeight) * t;
-    gapEm = baseGapEm * t;
-    paddingBlockEm = basePaddingBlockEm * t;
+    // t in [-1, 0): at 75% (t = -1) -> lineHeight 0.95, gap -0.10em (effective pitch 0.85em)
+    lineHeight = baseLineHeight + 0.2 * t;
+    gapEm = 0.1 * t;
   } else if (percent > SUBTITLE_LINE_SPACING_DEFAULT) {
     const t =
       (percent - SUBTITLE_LINE_SPACING_DEFAULT) /
       (SUBTITLE_LINE_SPACING_MAX - SUBTITLE_LINE_SPACING_DEFAULT);
-    const maxLineHeight = 1.9;
-    lineHeight = baseLineHeight + (maxLineHeight - baseLineHeight) * t;
-    gapEm = baseGapEm * (1 + t);
+    // t in (0, 1]: at 150% (t = 1) -> lineHeight 1.55, gap +0.20em (effective pitch 1.75em)
+    lineHeight = baseLineHeight + 0.4 * t;
+    gapEm = 0.2 * t;
   }
 
   const formatNum = (n) => String(Number(n.toFixed(4)));
   return {
     lineHeight: formatNum(lineHeight),
     gap: `${formatNum(gapEm)}em`,
-    paddingBlock: `${formatNum(paddingBlockEm)}em`
+    paddingBlock: "0em"
   };
 }
 

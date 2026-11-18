@@ -36,38 +36,38 @@ test("appearance values are kept in Android's ranges", () => {
   assert.equal(clamped.shadowOpacity, 0);
   assert.equal(clamped.shadowSize, 8);
   assert.equal(clamped.outlineSize, 5);
-  assert.equal(clamped.lineSpacing, 50);
+  assert.equal(clamped.lineSpacing, 75);
   assert.equal(normalizeSubtitleAppearance({ outlineSize: 0 }).outlineSize, 1);
   assert.equal(normalizeSubtitleAppearance({ lineSpacing: 97 }).lineSpacing, 95);
   assert.equal(normalizeSubtitleAppearance({ lineSpacing: 98 }).lineSpacing, 100);
   assert.equal(normalizeSubtitleAppearance({ lineSpacing: 220 }).lineSpacing, 150);
 });
 
-test("line spacing preserves current defaults at 100% and maps 50%-150% cleanly", () => {
+test("line spacing preserves current defaults at 100% and maps 75%-150% cleanly", () => {
   assert.deepEqual(subtitleLineSpacingMetrics({ lineSpacing: 100 }), {
-    lineHeight: "1.28",
-    gap: "0.18em",
-    paddingBlock: "0.06em"
+    lineHeight: "1.15",
+    gap: "0em",
+    paddingBlock: "0em"
   });
   assert.deepEqual(subtitleLineSpacingMetrics({ lineSpacing: 100 }, { isWebOs: true }), {
-    lineHeight: "1.2",
+    lineHeight: "1.15",
     gap: "0em",
     paddingBlock: "0em"
   });
   assert.deepEqual(subtitleLineSpacingMetrics({ lineSpacing: 100 }, { blockBackground: true }), {
-    lineHeight: "1.28",
+    lineHeight: "1.15",
     gap: "0em",
     paddingBlock: "0em"
   });
-  assert.deepEqual(subtitleLineSpacingMetrics({ lineSpacing: 50 }), {
-    lineHeight: "1.1",
-    gap: "0em",
+  assert.deepEqual(subtitleLineSpacingMetrics({ lineSpacing: 75 }), {
+    lineHeight: "0.95",
+    gap: "-0.1em",
     paddingBlock: "0em"
   });
   assert.deepEqual(subtitleLineSpacingMetrics({ lineSpacing: 150 }), {
-    lineHeight: "1.9",
-    gap: "0.36em",
-    paddingBlock: "0.06em"
+    lineHeight: "1.55",
+    gap: "0.2em",
+    paddingBlock: "0em"
   });
 });
 
@@ -140,6 +140,6 @@ test("lineSpacing is disabled for bitmap and native webOS cue renderers, and pre
       escapeHtml: (value) => String(value)
     }
   );
-  assert.match(html, /line-height:1\.776/);
+  assert.match(html, /line-height:1\.63/);
   assert.match(html, /Every story begins with\na little curiosity\./);
 });

@@ -562,7 +562,7 @@
   .player-html-subtitle-default
   .player-html-subtitle-line
   + .player-html-subtitle-line {
-  margin-top: 0;
+  margin-top: var(--player-subtitle-line-gap, 0);
 }
 
 #videoPlayer::cue {

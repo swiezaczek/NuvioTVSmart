@@ -122,9 +122,13 @@ export function buildSubtitleAppearancePreviewHtml(style = {}, { t, escapeHtml }
   const dropShadow = subtitleDropShadowCss(appearance);
   const shadow =
     [outlineShadow, dropShadow === "none" ? "" : dropShadow].filter(Boolean).join(", ") || "none";
+  const spacingMetrics = subtitleLineSpacingMetrics(appearance);
+  const previewLineHeight = String(
+    Number((Number(spacingMetrics.lineHeight) + parseFloat(spacingMetrics.gap)).toFixed(4))
+  );
   const textStyle = [
     `font-size:${Math.round((PREVIEW_BASE_FONT_PX * sizePercent) / 100)}px`,
-    `line-height:${subtitleLineSpacingMetrics(appearance).lineHeight}`,
+    `line-height:${previewLineHeight}`,
     `font-weight:${style.bold ? 700 : 400}`,
     subtitleFontFamilyCss(appearance.fontId)
       ? `font-family:${subtitleFontFamilyCss(appearance.fontId)}`
