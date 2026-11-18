@@ -778,3 +778,228 @@ test("persistHomeCatalogSnapshot defers writes until >1500ms after last Home D-p
   context.persistFn(screen, 1, { force: true, Router: { getCurrent: () => "home" } });
   assert.equal(writes.length, 1, "snapshot writes once >1500ms after last D-pad press");
 });
+
+test("runHeroImageEnterAnimation avoids synchronous offsetWidth reflow and restores transition across rAF", async () => {
+  const rafQueue = [];
+  const context = vm.createContext({
+    console,
+    WeakMap,
+    Map,
+    Set,
+    setTimeout,
+    clearTimeout,
+    requestAnimationFrame: (cb) => {
+      rafQueue.push(cb);
+      return rafQueue.length;
+    },
+    Router: { getCurrent: () => "home" },
+    ScreenUtils: {},
+    addonRepository: {},
+    catalogRepository: {},
+    watchProgressRepository: {},
+    watchedItemsRepository: {},
+    CloudLibraryPlaybackProgressStore: {},
+    CloudLibraryPlaybackSessionStore: {},
+    cloudLibraryRepository: {},
+    watchedItemsShareIdentity: () => false,
+    watchedTitleStateRepository: {},
+    watchedSeriesReconciliationService: {},
+    savedLibraryRepository: {},
+    libraryRepository: {},
+    LibrarySourceMode: {},
+    mapWithConcurrency: async () => [],
+    filterReleasedItems: (x) => x,
+    LayoutPreferences: { get: () => ({}) },
+    showHomeRatings: () => true,
+    continueWatchingUsesEpisodeThumbnails: () => false,
+    continueWatchingImageSources: () => [],
+    ContinueWatchingPreferences: {},
+    HomeCatalogStore: {},
+    CollectionsStore: {},
+    buildCollectionHomeKey: () => "",
+    TmdbService: {},
+    TmdbMetadataService: {},
+    supportsMembershipFor: () => false,
+    TmdbSettingsStore: { get: () => ({}) },
+    metaRepository: {},
+    mdbListRepository: {},
+    ProfileManager: {},
+    StartupSyncService: {},
+    Platform: {},
+    WatchProgressSource: {},
+    watchProgressCompletedThreshold: 0.9,
+    getTvHeroTransitionMode: () => "single-layer",
+    getTvRuntimePerformanceProfile: () => ({}),
+    isFastHorizontalNavigationEnabled: () => true,
+    LocalStore: {},
+    TMDB_API_KEY: "",
+    YOUTUBE_PROXY_URL: "",
+    I18n: { t: (k) => k },
+    localizedGenreLabel: (x) => x,
+    buildWatchedTitleIdSet: () => new Set(),
+    isTitleItemWatched: () => false,
+    renderTitleWatchedBadge: () => "",
+    buildModernRowKey: () => "",
+    MODERN_HOME_CONSTANTS: {},
+    renderModernHomeLayout: () => "",
+    formatHomeRuntimeText: () => "",
+    shouldPreserveHomeRuntimeText: () => false,
+    shouldKeepNextUpForAiringSetting: () => true,
+    buildCatalogDisableKey: () => "",
+    buildCatalogOrderKey: () => "",
+    catalogShouldShowOnHome: () => true,
+    catalogSkipStep: () => 20,
+    catalogSupportsExtra: () => true,
+    activateLegacySidebarAction: () => {},
+    bindRootSidebarEvents: () => {},
+    getLegacySidebarNodes: () => [],
+    getLegacySidebarSelectedNode: () => null,
+    getModernSidebarNodes: () => [],
+    getModernSidebarSelectedNode: () => null,
+    getSidebarProfileState: async () => null,
+    focusWithoutAutoScroll: () => {},
+    renderRootSidebar: () => "",
+    setModernSidebarExpanded: () => {},
+    setModernSidebarPillIconOnly: () => {},
+    setLegacySidebarExpanded: () => {},
+    NuvioDialog: {},
+    renderLoadingIndicator: () => "",
+    CW_DAYS_CAP: 30,
+    CW_DISPLAY_SNAPSHOT_KEY: "k",
+    CW_DISPLAY_SNAPSHOT_MAX_AGE_MS: 0,
+    CW_DISPLAY_SNAPSHOT_MAX_ITEMS: 0,
+    CW_DISPLAY_SNAPSHOT_MAX_SCOPES: 0,
+    CW_ENRICHMENT_CACHE_KEY: "k",
+    CW_ENRICHMENT_CACHE_MAX_AGE_MS: 0,
+    CW_ENTER_DELAY_MS: 0,
+    CW_HOLD_DELAY_MS: 0,
+    CW_MAX_ENRICHMENT_CONCURRENCY: 1,
+    CW_MAX_NEXT_UP_CONCURRENCY: 1,
+    CW_MAX_NEXT_UP_LOOKUPS: 1,
+    CW_MAX_VISIBLE_ITEMS: 10,
+    CW_META_TIMEOUT_MS: 1000,
+    CW_META_TIMEOUT_TV_MS: 1000,
+    CW_NEXT_UP_META_TIMEOUT_MS: 1000,
+    CW_NEXT_UP_NEW_SEASON_UNAIRED_WINDOW_DAYS: 1,
+    CW_PROGRESS_START_THRESHOLD: 0.05,
+    CW_RENDER_BATCH_ITEMS_CONSTRAINED: 4,
+    CW_RENDER_BATCH_ITEMS_DEFAULT: 8,
+    CW_RENDER_BATCH_ITEMS_LEGACY_TV: 4,
+    CW_RENDER_LOAD_AHEAD_ITEMS: 4,
+    HERO_ROTATE_FIRST_DELAY_MS: 1000,
+    HERO_ROTATE_INTERVAL_MS: 1000,
+    HOME_BACKGROUND_RENDER_DELAY_LEGACY_MS: 1000,
+    HOME_BACKGROUND_RENDER_DELAY_MS: 500,
+    HOME_ADDON_MANIFEST_TIMEOUT_MS: 5000,
+    HOME_GRID_COMPACT_ROW_COUNT: 4,
+    HOME_GRID_DEFAULT_ROW_COUNT: 5,
+    HOME_GRID_SAFE_MAX_COLUMNS: 6,
+    HOME_INITIAL_CATALOG_LOAD: 10,
+    HOME_LEGACY_HERO_BACKDROP_CROSSFADE_MS: 300,
+    HOME_LAYOUT_SEQUENCE: [],
+    HOME_LOADING_ROW_ITEMS_CONSTRAINED: 4,
+    HOME_LOADING_ROW_ITEMS_DEFAULT: 6,
+    HOME_LOADING_ROW_ITEMS_LEGACY_TV: 4,
+    HOME_MAX_ITEMS_PER_ROW_CONSTRAINED: 15,
+    HOME_MAX_ITEMS_PER_ROW_CLASSIC: 15,
+    HOME_MAX_ITEMS_PER_ROW_DEFAULT: 25,
+    HOME_MAX_ITEMS_PER_ROW_LEGACY_TV: 15,
+    HOME_MODERN_HERO_BACKDROP_CROSSFADE_MS: 400,
+    HOME_PERF_DEBUG: false,
+    HOME_RETURN_FOCUS_STATE_KEY: "k",
+    HOME_ROW_RETRY_TIMEOUT_MS: 5000,
+    HOME_ROW_TIMEOUT_MS: 5000,
+    HOME_STABLE_GATE_TIMEOUT_MS: 1000,
+    mergeRefreshedHomeRows: (r) => r,
+    findHomeFocusIdentityMatch: () => null,
+    getHomeFocusIdentity: () => "",
+    shouldApplyLateContinueWatchingFocus: () => false,
+    resolveNextUpCandidates: () => [],
+    findAbsoluteEpisodeAnchorIndex: () => -1,
+    shouldSurfaceNextUpForUntrackedSeries: () => false,
+    getContinueWatchingRenderItems: () => [],
+    shouldAppendContinueWatchingItems: () => false,
+    shouldProtectContinueWatchingDisplay: () => false,
+    buildHeroBackdropSources: () => [],
+    buildImageFallbackErrorHandler: () => "",
+    encodeHeroBackdropFallbacks: () => "",
+    escapeAttribute: (x) => x,
+    escapeHtml: (x) => x,
+    firstNonEmpty: (...vals) => vals.find(Boolean) || "",
+    formatContentTypeLabel: () => "",
+    formatCatalogRowTitle: (x) => x,
+    limitTextToWordCount: (x) => x,
+    parseCssPx: () => 0,
+    prettyId: (x) => x,
+    uniqueNonEmptyValues: (x) => x,
+    parseRuntimeMinutes: () => 0,
+    buildHeroDisplayModel: () => ({}),
+    buildModernHeroPresentation: () => ({})
+  });
+  context.globalThis = context;
+  await loadModuleIntoContext("./homeScreenHelpers-02-extract-release-date-text.js", context);
+
+  let offsetWidthReads = 0;
+  const classes = new Set(["is-visible"]);
+  const props = new Map();
+  const makeClassList = (set) => ({
+    add: (cls) => set.add(cls),
+    remove: (...items) => items.forEach((cls) => set.delete(cls)),
+    contains: (cls) => set.has(cls)
+  });
+  const image = {
+    get offsetWidth() {
+      offsetWidthReads += 1;
+      return 1920;
+    },
+    classList: makeClassList(classes),
+    style: {
+      getPropertyValue: (k) => props.get(k)?.value || "",
+      getPropertyPriority: (k) => props.get(k)?.priority || "",
+      setProperty: (k, value, priority = "") => props.set(k, { value, priority }),
+      removeProperty: (k) => props.delete(k)
+    }
+  };
+  const ghostClasses = new Set();
+  const ghost = { classList: makeClassList(ghostClasses) };
+  let finalized = false;
+
+  context.runHeroImageEnterAnimation(image, "home-hero-backdrop-transition-enter", {
+    durationMs: 10,
+    isCurrent: () => true,
+    onFinalize: () => {
+      finalized = true;
+    },
+    ghost
+  });
+
+  assert.equal(offsetWidthReads, 0, "must not flush layout synchronously via offsetWidth");
+  assert.equal(classes.has("is-visible"), false);
+  assert.equal(classes.has("home-hero-backdrop-transition-enter"), true);
+  assert.equal(props.get("transition")?.value, "none");
+
+  assert.equal(rafQueue.length, 1);
+  rafQueue.shift()();
+  assert.equal(props.has("transition"), false, "transition restored on first rAF before reveal");
+  assert.equal(classes.has("is-visible"), false);
+
+  assert.equal(rafQueue.length, 1);
+  rafQueue.shift()();
+  assert.equal(classes.has("is-visible"), true);
+  assert.equal(ghostClasses.has("is-fading-out"), true);
+
+  await new Promise((r) => setTimeout(r, 25));
+  assert.equal(finalized, true);
+  assert.equal(offsetWidthReads, 0);
+
+  // Also verify early cancellation cleanly restores transition.
+  let stale = false;
+  context.runHeroImageEnterAnimation(image, "home-hero-backdrop-transition-enter", {
+    durationMs: 10,
+    isCurrent: () => !stale
+  });
+  assert.equal(props.get("transition")?.value, "none");
+  stale = true;
+  rafQueue.shift()();
+  assert.equal(props.has("transition"), false, "cancelled transition restores inline transition");
+});

@@ -309,19 +309,68 @@ export function preloadHeroAssets(hero, layoutMode = "modern") {
   return Promise.all([preloadImageSource(display?.backdrop), preloadImageSource(display?.logo)]);
 }
 
-export function prepareHeroImageEnter(image, enterClass) {
+const activeHeroEnterRestoreMap = new WeakMap();
+
+export function restoreHeroImageEnterTransition(image) {
+  const restore = activeHeroEnterRestoreMap.get(image);
+  if (typeof restore === "function") {
+    activeHeroEnterRestoreMap.delete(image);
+    restore();
+  }
+}
+
+export function prepareHeroImageEnter(image, enterClass, { deferTransitionRestore = false } = {}) {
   // A reused image is already opaque. Without an immediate reset, changing src
   // flashes the new artwork while CSS starts fading from 1 towards 0; the next
   // animation frame then reverses that fade instead of entering from 0.
+  restoreHeroImageEnterTransition(image);
   const transition = image.style.getPropertyValue("transition");
   const priority = image.style.getPropertyPriority("transition");
+  const restore = () => {
+    if (activeHeroEnterRestoreMap.get(image) === restore) {
+      activeHeroEnterRestoreMap.delete(image);
+    }
+    if (transition) {
+      image.style.setProperty("transition", transition, priority);
+    } else {
+      image.style.removeProperty("transition");
+    }
+  };
   image.style.setProperty("transition", "none", "important");
   image.classList.remove("is-visible");
   image.classList.add(enterClass);
-  void image.offsetWidth;
-  if (transition) {
-    image.style.setProperty("transition", transition, priority);
-  } else {
-    image.style.removeProperty("transition");
+  if (deferTransitionRestore) {
+    activeHeroEnterRestoreMap.set(image, restore);
+    return restore;
   }
+  void image.offsetWidth;
+  restore();
+  return restore;
+}
+
+export function runHeroImageEnterAnimation(
+  image,
+  enterClass,
+  { durationMs = 400, isCurrent = () => true, onFinalize = null, ghost = null } = {}
+) {
+  // Commit the initial opacity: 0 frame cleanly across rAF before restoring
+  // transitions and triggering .is-visible, avoiding synchronous layout reflows.
+  prepareHeroImageEnter(image, enterClass, { deferTransitionRestore: true });
+  requestAnimationFrame(() => {
+    if (!isCurrent()) {
+      restoreHeroImageEnterTransition(image);
+      return;
+    }
+    restoreHeroImageEnterTransition(image);
+    requestAnimationFrame(() => {
+      if (!isCurrent()) {
+        return;
+      }
+      image.classList.add("is-visible");
+      ghost?.classList?.add("is-fading-out");
+      setTimeout(() => {
+        onFinalize?.();
+      }, durationMs);
+    });
+  });
 }

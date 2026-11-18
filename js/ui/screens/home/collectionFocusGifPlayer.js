@@ -4,8 +4,8 @@ const MAX_SINGLE_RAW_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_ACTIVE_BITMAP_BYTES = 36 * 1024 * 1024;
 const LOOKAHEAD_BUFFER_FRAMES = 16;
 const INITIAL_PREBUFFER_CAP = 6;
-const NEIGHBOR_PREFETCH_DELAY_MS = 350;
-const MAX_NEIGHBOR_PREFETCH_ITEMS = 3;
+const NEIGHBOR_PREFETCH_DELAY_MS = 700;
+const MAX_NEIGHBOR_PREFETCH_ITEMS = 2;
 const DEFAULT_FRAME_DURATION_MS = 40;
 const MIN_FRAME_DURATION_MS = 16;
 const TAIL_DECODE_PACE_MS = 12;
@@ -316,6 +316,9 @@ function scheduleAdjacentCollectionGifPrefetch(screen, focusedNode) {
           await fetchRawGifBytes(url, abortController.signal);
         } catch (_) {
           // Best-effort warmup only.
+        }
+        if (!abortController.signal.aborted) {
+          await yieldToRenderer(40);
         }
       }
     })();

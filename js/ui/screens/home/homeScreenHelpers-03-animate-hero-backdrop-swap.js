@@ -187,7 +187,11 @@ import {
   uniqueNonEmptyValues
 } from "./homeUtils.js";
 
-import { preloadImageSource, prepareHeroImageEnter } from "./homeScreenHelpers-02-extract-release-date-text.js";
+import {
+  preloadImageSource,
+  restoreHeroImageEnterTransition,
+  runHeroImageEnterAnimation
+} from "./homeScreenHelpers-02-extract-release-date-text.js";
 
 export function animateHeroBackdropSwap(
   backdrop,
@@ -217,6 +221,7 @@ export function animateHeroBackdropSwap(
     if (Number(backdrop.heroBackdropTransitionToken || 0) !== token) {
       return;
     }
+    restoreHeroImageEnterTransition(backdrop);
     backdrop.classList.remove("home-hero-backdrop-transition-enter", "is-visible");
     clearGhosts();
   };
@@ -236,33 +241,6 @@ export function animateHeroBackdropSwap(
     return;
   }
 
-  if (transitionMode === "single-layer") {
-    preloadImageSource(normalizedSrc).then((loaded) => {
-      if (Number(backdrop.heroBackdropTransitionToken || 0) !== token) {
-        return;
-      }
-      if (!loaded) {
-        finalize();
-        backdrop.setAttribute("src", normalizedSrc);
-        backdrop.setAttribute("alt", normalizedAlt);
-        backdrop.classList.remove("placeholder");
-        return;
-      }
-      prepareHeroImageEnter(backdrop, "home-hero-backdrop-transition-enter");
-      backdrop.classList.remove("placeholder");
-      backdrop.setAttribute("src", normalizedSrc);
-      backdrop.setAttribute("alt", normalizedAlt);
-      requestAnimationFrame(() => {
-        if (Number(backdrop.heroBackdropTransitionToken || 0) !== token) {
-          return;
-        }
-        backdrop.classList.add("is-visible");
-        setTimeout(() => finalize(), durationMs);
-      });
-    });
-    return;
-  }
-
   preloadImageSource(normalizedSrc).then((loaded) => {
     if (Number(backdrop.heroBackdropTransitionToken || 0) !== token) {
       return;
@@ -277,34 +255,25 @@ export function animateHeroBackdropSwap(
     }
 
     clearGhosts();
-    const parent = backdrop.parentElement;
     let ghost = null;
-    if (parent && currentSrc) {
-      ghost = backdrop.cloneNode(false);
-      ghost.classList.remove("home-hero-backdrop-transition-enter", "is-visible");
-      ghost.classList.add("home-hero-backdrop-transition-ghost");
-      parent.insertBefore(ghost, backdrop);
+    if (transitionMode !== "single-layer") {
+      const parent = backdrop.parentElement;
+      if (parent && currentSrc) {
+        ghost = backdrop.cloneNode(false);
+        ghost.classList.remove("home-hero-backdrop-transition-enter", "is-visible");
+        ghost.classList.add("home-hero-backdrop-transition-ghost");
+        parent.insertBefore(ghost, backdrop);
+      }
     }
 
-    prepareHeroImageEnter(backdrop, "home-hero-backdrop-transition-enter");
+    runHeroImageEnterAnimation(backdrop, "home-hero-backdrop-transition-enter", {
+      durationMs,
+      isCurrent: () => Number(backdrop.heroBackdropTransitionToken || 0) === token,
+      onFinalize: finalize,
+      ghost
+    });
     backdrop.classList.remove("placeholder");
     backdrop.setAttribute("src", normalizedSrc);
     backdrop.setAttribute("alt", normalizedAlt);
-
-    requestAnimationFrame(() => {
-      if (Number(backdrop.heroBackdropTransitionToken || 0) !== token) {
-        return;
-      }
-      requestAnimationFrame(() => {
-        if (Number(backdrop.heroBackdropTransitionToken || 0) !== token) {
-          return;
-        }
-        backdrop.classList.add("is-visible");
-        ghost?.classList?.add("is-fading-out");
-        setTimeout(() => {
-          finalize();
-        }, durationMs);
-      });
-    });
   });
 }
