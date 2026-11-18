@@ -142,6 +142,32 @@ test("only successful catalog rows are written, with bounded items and no loadin
   assert.equal(compact[0].result.data.items[0].poster, "https://image.tmdb.org/t/p/w500/0.jpg");
 });
 
+test("compacted rows are detached plain clones without visiting sliced items", () => {
+  let visitedSlicedItem = false;
+  const sourceRow = row("a:movie:top", 65);
+  sourceRow.result.data.nextSkip = 65;
+  sourceRow.result.data.items[0].genres = ["Action"];
+  sourceRow.result.data.items[0].transientFn = () => {};
+  Object.defineProperty(sourceRow.result.data.items, 64, {
+    enumerable: true,
+    get() {
+      visitedSlicedItem = true;
+      return { id: "tt64" };
+    }
+  });
+  const compact = compactHomeCatalogRows([sourceRow]);
+  assert.equal(
+    visitedSlicedItem,
+    false,
+    "items beyond MAX_ITEMS_PER_ROW must never be read or cloned"
+  );
+  sourceRow.result.data.items[0].genres.push("Drama");
+  sourceRow.result.data.nextSkip = 999;
+  assert.deepEqual(compact[0].result.data.items[0].genres, ["Action"]);
+  assert.equal(compact[0].result.data.nextSkip, 65);
+  assert.equal("transientFn" in compact[0].result.data.items[0], false);
+});
+
 test("snapshot freshness rejects another version, missing rows and expired records", () => {
   const now = 1_000_000_000;
   const fresh = { version: 3, savedAt: now - 1000, rows: [row("a")] };

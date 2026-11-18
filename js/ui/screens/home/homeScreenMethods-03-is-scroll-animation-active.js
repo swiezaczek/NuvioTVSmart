@@ -315,9 +315,9 @@ export function createHomeScreenMethods03() {
         return collectionCount > 2 ? HOME_BACKGROUND_RENDER_DELAY_LEGACY_MS + 140 : HOME_BACKGROUND_RENDER_DELAY_LEGACY_MS;
       }
       if (this.isPerformanceConstrained()) {
-        return HOME_BACKGROUND_RENDER_DELAY_MS;
+        return this.hasPaintedInitialHomeContent ? HOME_BACKGROUND_RENDER_DELAY_LEGACY_MS : HOME_BACKGROUND_RENDER_DELAY_MS;
       }
-      return 0;
+      return this.hasPaintedInitialHomeContent ? HOME_BACKGROUND_RENDER_DELAY_LEGACY_MS : 0;
     },
     getDirectionalRepeatThrottleMs(direction = null) {
       // Tizen fast path: the 48ms fast-horizontal gate passes nearly every

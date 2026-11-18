@@ -82,6 +82,7 @@ export function createHomeScreenMethods28() {
         this.pauseActiveTrailerLayersForNavigation();
       }
       if (handledNavigation) {
+        event?.stopPropagation?.();
         return;
       }
       const isHomeHoldTarget = this.isHomeHoldTarget(currentFocusedNode);
@@ -112,7 +113,11 @@ export function createHomeScreenMethods28() {
       }
       const action = current.dataset.action;
       if (String(current.dataset.navZone || "") === "sidebar") {
-        activateLegacySidebarAction(action, "home");
+        event?.preventDefault?.();
+        event?.stopPropagation?.();
+        if (!event?.repeat) {
+          activateLegacySidebarAction(action, "home");
+        }
         return;
       }
       if (action === "openDetail" || action === "openCollectionFolder") this.openDetailFromNode(current);

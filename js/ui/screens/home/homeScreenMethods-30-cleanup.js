@@ -45,6 +45,18 @@ export function createHomeScreenMethods30() {
       this.posterListPicker = null;
       this.persistCurrentFocusState();
       this.homeLoadToken = (this.homeLoadToken || 0) + 1;
+      this.homeDeferredLoadInFlightToken = null;
+      this.cancelHomeRouteReturnSettle?.();
+      if (this.homeDeferredRowsFlushTimer) {
+        clearTimeout(this.homeDeferredRowsFlushTimer);
+        this.homeDeferredRowsFlushTimer = null;
+      }
+      this.homeDeferredRowsFirstQueuedAt = 0;
+      if (this.homeCatalogSnapshotWriteTimer) {
+        clearTimeout(this.homeCatalogSnapshotWriteTimer);
+        this.homeCatalogSnapshotWriteTimer = null;
+      }
+      this.pendingHomeCatalogSnapshotForce = false;
       this.cancelInitialHomeLoadTimeout();
       this._trackPaginationInFlight?.clear();
       this.cancelScheduledRender();
@@ -55,6 +67,10 @@ export function createHomeScreenMethods30() {
       this.heroDescriptionScrollHolding = false;
       this.cancelPendingHeroFocus();
       this.cancelFocusedPosterFlow();
+      if (this.activeCollectionFocusGifNode?.isConnected) {
+        this.hydrateCollectionFocusGif?.(this.activeCollectionFocusGifNode, false);
+      }
+      this.activeCollectionFocusGifNode = null;
       this.clearFocusedPosterFlowState();
       this.collapseFocusedPoster();
       this.clearHomeTrailerLayers();
@@ -156,6 +172,7 @@ export function createHomeScreenMethods30() {
         this.releaseAllHomeLazyImages();
         resetHomeArtworkRescaler();
         this.homeDomPreserved = false;
+        this.hasPaintedInitialHomeContent = false;
         this.container.classList.remove("home-dom-preserved");
         this.container.style.removeProperty("position");
         this.container.style.removeProperty("top");

@@ -192,7 +192,10 @@ export function startHomeContinueWatchingLoad(context) {
         ) {
           this.forceInitialContinueWatchingFocus = true;
         }
-        if (previousLoadingState !== this.continueWatchingLoading || previousDisplaySignature !== immediateDisplaySignature) {
+        if (
+          !this.isInitialHomeLoading &&
+          (previousLoadingState !== this.continueWatchingLoading || previousDisplaySignature !== immediateDisplaySignature)
+        ) {
           this.requestBackgroundRender();
         }
       }

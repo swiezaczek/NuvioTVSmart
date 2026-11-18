@@ -169,6 +169,30 @@ test("a source that cannot be rescaled is not fetched again this session", async
 
   assert.equal(await rescaleHomeArtwork("https://art/not-jpeg.webp", box), null);
   assert.equal(postedJobs(), 0, "the known non-JPEG source must not spin up another job");
+
+  // Extensionless non-JPEG sources still hit the worker once and then negative-cache.
+  const extensionless = rescaleHomeArtwork("https://art/not-jpeg", box);
+  drainFailed({ ok: false, reason: "not jpeg" });
+  assert.equal(await extensionless, null);
+  assert.equal(postedJobs(), 0);
+  assert.equal(await rescaleHomeArtwork("https://art/not-jpeg", box), null);
+  assert.equal(postedJobs(), 0);
+});
+
+test("known non-JPEG extensions fast-skip before creating workers", async () => {
+  reset();
+  const box = { width: 220, height: 338, fit: "cover" };
+  for (const url of [
+    "https://cdn.example/anim.gif",
+    "https://cdn.example/anim.gifv?v=1",
+    "https://cdn.example/cover.webp",
+    "https://cdn.example/logo.png#hash",
+    "https://cdn.example/icon.svg",
+    "https://cdn.example/frame.avif?auto=format"
+  ]) {
+    assert.equal(await rescaleHomeArtwork(url, box), null, `${url} should fast-skip`);
+  }
+  assert.equal(created.length, 0, "non-JPEG extensions must skip before spawning any worker");
 });
 
 test("a transient failure is still retried", async () => {

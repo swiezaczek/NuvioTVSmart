@@ -3,25 +3,51 @@ import * as internals from "./homeScreenContext.js";
 import { getTrailerMountGraceMs } from "../../../platform/tvPerformancePolicy.js";
 
 export function createHomeScreenMethods14() {
-  const { applyTrailerAudioPreferences, getTvRuntimePerformanceProfile } = internals;
+  const { Router, applyTrailerAudioPreferences, getTvRuntimePerformanceProfile } = internals;
 
   return {
     async activateFocusedPosterFlow(node, flowToken = Number(this.focusedPosterFlowToken || 0)) {
-      if (!this.isModernPosterNode(node) || !node.classList.contains("focused")) {
-        return;
-      }
       if (this.isCollectionFolderNode(node)) {
-        this.collapseFocusedPoster(this.expandedPosterNode, {
-          instant: true,
-          preserveHeroMedia: this.shouldPreserveCollectionHeroMedia(node)
-        });
-        await new Promise((resolve) => {
-          setTimeout(resolve, 140);
-        });
-        if (!node.classList.contains("focused") || Number(this.focusedPosterFlowToken || 0) !== Number(flowToken || 0)) {
+        if (!node?.isConnected || !node.classList.contains("focused")) {
           return;
         }
+        if (this.layoutMode === "modern") {
+          this.collapseFocusedPoster(this.expandedPosterNode, {
+            instant: true,
+            preserveHeroMedia: this.shouldPreserveCollectionHeroMedia(node)
+          });
+        }
+        if (this.collectionFocusGifTimer) {
+          clearTimeout(this.collectionFocusGifTimer);
+          this.collectionFocusGifTimer = null;
+        }
+        await new Promise((resolve) => {
+          this.collectionFocusGifTimer = setTimeout(() => {
+            this.collectionFocusGifTimer = null;
+            resolve();
+          }, 140);
+        });
+        if (
+          Router.getCurrent() !== "home" ||
+          !node.isConnected ||
+          !node.classList.contains("focused") ||
+          this.getCurrentFocusedNode() !== node ||
+          Number(this.focusedPosterFlowToken || 0) !== Number(flowToken || 0)
+        ) {
+          return;
+        }
+        if (
+          this.activeCollectionFocusGifNode &&
+          this.activeCollectionFocusGifNode !== node &&
+          this.activeCollectionFocusGifNode.isConnected
+        ) {
+          this.hydrateCollectionFocusGif(this.activeCollectionFocusGifNode, false);
+        }
         this.hydrateCollectionFocusGif(node, true);
+        this.activeCollectionFocusGifNode = node;
+        return;
+      }
+      if (!this.isModernPosterNode(node) || !node.classList.contains("focused")) {
         return;
       }
       const prefs = this.layoutPrefs || {};
@@ -94,7 +120,18 @@ export function createHomeScreenMethods14() {
         });
       }
     },
+    cancelCollectionFocusGifDwell() {
+      if (this.collectionFocusGifSettleTimer) {
+        clearTimeout(this.collectionFocusGifSettleTimer);
+        this.collectionFocusGifSettleTimer = null;
+      }
+      if (this.collectionFocusGifTimer) {
+        clearTimeout(this.collectionFocusGifTimer);
+        this.collectionFocusGifTimer = null;
+      }
+    },
     cancelFocusedPosterFlow() {
+      this.cancelCollectionFocusGifDwell();
       if (this.focusedPosterTimer) {
         clearTimeout(this.focusedPosterTimer);
         this.focusedPosterTimer = null;

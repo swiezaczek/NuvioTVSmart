@@ -308,6 +308,7 @@ export function createHomeScreenMethods23() {
         if (!canUpdateInPlace) {
           this.cancelModernCameraFollow({ stopAnimations: true });
           this.cancelFocusedPosterFlow();
+          this.clearHomeTrailerLayers();
           this.expandedPosterNode = null;
         }
         // Rows whose markup is the one already mounted are not parsed again.
@@ -512,6 +513,9 @@ export function createHomeScreenMethods23() {
       }
       this.homeRouteEnterPending = false;
       this.renderedLayoutMode = this.layoutMode;
+      if (!this.isInitialHomeLoading && this.hasLoadedOnce) {
+        this.hasPaintedInitialHomeContent = true;
+      }
       this.ensureHomeTruncationObservers();
       this.scheduleHomeTruncationUpdate();
       void ensureHeroMdbListRatings.call(this);

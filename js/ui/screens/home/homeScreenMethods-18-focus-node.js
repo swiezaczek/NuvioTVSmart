@@ -45,11 +45,19 @@ export function createHomeScreenMethods18() {
         deferUntilVerticalSettle: deferHomeArtworkUntilSettle,
         focusedRowOnly: this.isLegacyTvRuntime()
       });
+      this.cancelCollectionFocusGifDwell?.();
       if (this.isCollectionFolderNode(current)) {
         this.hydrateCollectionFocusGif(current, false);
-      }
-      if (this.isCollectionFolderNode(target)) {
-        this.hydrateCollectionFocusGif(target, true);
+        if (this.activeCollectionFocusGifNode === current) {
+          this.activeCollectionFocusGifNode = null;
+        }
+      } else if (
+        this.activeCollectionFocusGifNode &&
+        this.activeCollectionFocusGifNode !== target &&
+        this.activeCollectionFocusGifNode.isConnected
+      ) {
+        this.hydrateCollectionFocusGif(this.activeCollectionFocusGifNode, false);
+        this.activeCollectionFocusGifNode = null;
       }
       this.setSidebarExpanded(this.isSidebarNode(target));
       if (this.isMainNode(target)) {

@@ -131,6 +131,7 @@ export function createHomeScreenMethods04() {
         cancelAnimationFrame(this.homeRenderFrame);
         this.homeRenderFrame = null;
       }
+      this.homeBackgroundRenderFirstQueuedAt = 0;
     },
     cancelInitialHomeLoadTimeout() {
       if (this.initialHomeLoadTimeout) {
@@ -204,23 +205,35 @@ export function createHomeScreenMethods04() {
       });
     },
     requestBackgroundRender() {
-      this.requestRender({ delayMs: this.getBackgroundRenderDelay() });
+      const delayMs = this.getBackgroundRenderDelay();
+      if (delayMs > 0 && this.hasPaintedInitialHomeContent) {
+        const now = Date.now();
+        if (!this.homeBackgroundRenderFirstQueuedAt) {
+          this.homeBackgroundRenderFirstQueuedAt = now;
+        }
+        const elapsed = now - this.homeBackgroundRenderFirstQueuedAt;
+        const maxCoalesceMs = 720;
+        const boundedDelayMs = elapsed >= maxCoalesceMs ? 0 : Math.min(delayMs, maxCoalesceMs - elapsed);
+        this.requestRender({ delayMs: boundedDelayMs });
+        return;
+      }
+      this.requestRender({ delayMs });
     },
     shouldDeferHomeRenderForInput() {
       if (this.layoutMode === "modern" && this.hasUserInteractedSinceHomePaint && this.shouldSuspendModernViewportFocusSync()) {
         return true;
       }
-      // Tizen fast path: on constrained/legacy runtimes a full innerHTML
-      // render mid-navigation steals frames and invalidates the nav model.
-      // Defer background renders until 800ms after the last D-pad press on
-      // every layout, not just modern.
+      // On TV runtimes a full innerHTML/DOM render mid-navigation steals frames
+      // and invalidates the nav model. Defer background renders until 800ms after
+      // the last D-pad press on all TV runtimes and every layout.
       try {
-        const constrained =
+        const tvRuntime =
+          Boolean(getTvRuntimePerformanceProfile()?.isTvRuntime) ||
           (typeof this.isPerformanceConstrained === "function" && this.isPerformanceConstrained()) ||
           (typeof this.isLegacyTvRuntime === "function" && this.isLegacyTvRuntime()) ||
           globalThis?.document?.body?.classList?.contains("legacy-tizen") ||
           globalThis?.document?.documentElement?.classList?.contains("legacy-tizen");
-        if (constrained && Date.now() - Number(this.lastHomeInputAt || 0) < 800) {
+        if (tvRuntime && Date.now() - Number(this.lastHomeInputAt || 0) < 800) {
           return true;
         }
       } catch (_) {}
@@ -505,19 +518,47 @@ export function createHomeScreenMethods04() {
         CollectionsStore.get()
       ]);
     },
+    cancelHomeRouteReturnSettle() {
+      if (this.homeRouteReturnSettleTimer) {
+        clearTimeout(this.homeRouteReturnSettleTimer);
+        this.homeRouteReturnSettleTimer = null;
+      }
+      if (typeof this.homeRouteReturnSettleResolve === "function") {
+        const resolve = this.homeRouteReturnSettleResolve;
+        this.homeRouteReturnSettleResolve = null;
+        resolve(false);
+      }
+    },
     async refreshHomeAfterRouteReturn({ preserveReturnState = true, reason = "route-return" } = {}) {
-      // Android retains Home's rows on resume. Rebuild only for changed inputs
-      // or an interrupted catalog load; otherwise reconcile watch state and
-      // merge catalog page one only after the shared freshness window expires.
+      // Android retains Home's rows on resume. Wait ~500ms for focus and layout
+      // to settle before checking inputs and kicking off background work, and
+      // respect a 60s catalog freshness cooldown so quick tab switches never
+      // stutter on focus.
+      this.cancelHomeRouteReturnSettle();
+      const token = this.homeLoadToken;
+      const settled = await new Promise((resolve) => {
+        this.homeRouteReturnSettleResolve = resolve;
+        this.homeRouteReturnSettleTimer = setTimeout(() => {
+          this.homeRouteReturnSettleTimer = null;
+          this.homeRouteReturnSettleResolve = null;
+          resolve(token === this.homeLoadToken && Router.getCurrent() === "home");
+        }, 500);
+      });
+      if (!settled) {
+        return false;
+      }
       const signature = this.buildHomeRouteInputSignature();
       if (!signature || signature !== this.loadedHomeRouteInputSignature) {
         return this.requestHomeBackgroundRefresh({ preserveReturnState, reason });
       }
-      this.retryPendingCatalogRows();
-      const token = this.homeLoadToken;
-      return Promise.all([
+      const catalogCooldownMs = 60 * 1000;
+      const lastCatalogActivityAt = Math.max(
+        Number(this.lastHomeCatalogRefreshAtMs || 0),
+        Number(this.lastHomeCatalogReturnCheckAtMs || 0)
+      );
+      const withinCatalogCooldown = lastCatalogActivityAt > 0 && Date.now() - lastCatalogActivityAt < catalogCooldownMs;
+      const tasks = [
         this.refreshHomeContinueWatchingAfterSync(),
-        this.refreshHomeCatalogsIfStale({ reason }),
         getSidebarProfileState()
           .catch(() => null)
           .then((profile) => {
@@ -531,7 +572,26 @@ export function createHomeScreenMethods04() {
               this.requestBackgroundRender();
             }
           })
-      ]);
+      ];
+      if (this.pendingHomeCatalogDescriptors?.length) {
+        tasks.push(
+          this.resumePendingHomeCatalogDescriptors?.({
+            token,
+            routeInputSignature: signature
+          })
+        );
+      }
+      if (!withinCatalogCooldown) {
+        this.lastHomeCatalogReturnCheckAtMs = Date.now();
+        this.retryPendingCatalogRows();
+        tasks.push(this.refreshHomeCatalogsIfStale({ reason }));
+      } else {
+        logHomePerf("routeReturnCatalogCooldownSkipped", {
+          reason,
+          ageMs: Date.now() - lastCatalogActivityAt
+        });
+      }
+      return Promise.all(tasks);
     },
     ensureStartupSyncSubscription() {
       if (this.unsubscribeStartupSyncPullCompleted) {

@@ -440,7 +440,13 @@ function getGenericPool() {
 function rescaleWithPool(state, url, { width, height, fit, priority = 2, isStale = null } = {}) {
   // Check the request before touching the pool, so artwork that can never be
   // rescaled does not spin up workers on its way to the fallback.
-  if (!state || !url || !(width > 0) || !(height > 0) || !isRescalableArtworkFit(fit)) {
+  if (
+    !state ||
+    !isRescalableArtworkUrl(url) ||
+    !(width > 0) ||
+    !(height > 0) ||
+    !isRescalableArtworkFit(fit)
+  ) {
     return Promise.resolve(null);
   }
   // The fit belongs in the key: the same artwork in the same box is cropped
@@ -513,12 +519,24 @@ function rescaleWithPool(state, url, { width, height, fit, priority = 2, isStale
   return job.promise;
 }
 
+const NON_RESCALABLE_ARTWORK_URL_PATTERN = /\.(?:gif|gifv|webp|png|svg|avif)(?:$|[?#])/i;
+const NON_RESCALABLE_DATA_URL_PATTERN = /^data:image\/(?:gif|webp|png|svg\+xml|avif)\b/i;
+
+export function isRescalableArtworkUrl(url) {
+  const normalized = String(url || "").trim();
+  if (!normalized) return false;
+  if (NON_RESCALABLE_DATA_URL_PATTERN.test(normalized)) return false;
+  return !NON_RESCALABLE_ARTWORK_URL_PATTERN.test(normalized);
+}
+
 /**
  * Resolve a card-sized object url for `url`, or null when the original should
  * be used as-is. Never rejects: every failure path falls back to the original.
  */
 function shouldQueueRescale(url, { width, height, fit } = {}) {
-  return Boolean(url && width > 0 && height > 0 && isRescalableArtworkFit(fit));
+  return Boolean(
+    isRescalableArtworkUrl(url) && width > 0 && height > 0 && isRescalableArtworkFit(fit)
+  );
 }
 
 export function rescaleHomeArtwork(url, options) {
