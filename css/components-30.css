@@ -54,11 +54,9 @@
 
 .player-platform-webos .player-html-subtitles {
   font-family: var(--player-html-subtitle-font-family, "Roboto", Arial, sans-serif);
-  line-height: var(--player-subtitle-line-height, 1.2);
 }
 
 .player-platform-webos .player-html-subtitle-line {
-  --player-html-subtitle-padding-block: var(--player-subtitle-line-padding-block, 0);
   --player-html-subtitle-padding-inline: 0.08em;
 }
 
