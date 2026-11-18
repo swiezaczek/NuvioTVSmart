@@ -87,7 +87,8 @@ export function createHomeScreenMethods18() {
             deferUntilVerticalSettle: direction === "up" || direction === "down"
           });
           this.scheduleFocusedPosterFlow(target, {
-            deferUntilVerticalSettle: direction === "up" || direction === "down"
+            deferUntilVerticalSettle: direction === "up" || direction === "down",
+            repeat: Boolean(inputMeta?.repeat)
           });
         }
       } else {

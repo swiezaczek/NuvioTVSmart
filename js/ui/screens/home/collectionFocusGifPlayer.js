@@ -1,17 +1,18 @@
-const MAX_RAW_CACHE_ENTRIES = 12;
-const MAX_RAW_CACHE_BYTES = 4 * 1024 * 1024;
+const MAX_RAW_CACHE_ENTRIES = 20;
+const MAX_RAW_CACHE_BYTES = 8 * 1024 * 1024;
 const MAX_SINGLE_RAW_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_ACTIVE_BITMAP_BYTES = 36 * 1024 * 1024;
-const LOOKAHEAD_BUFFER_FRAMES = 28;
-const INITIAL_PREBUFFER_CAP = 30;
-const NEIGHBOR_PREFETCH_DELAY_MS = 900;
+const LOOKAHEAD_BUFFER_FRAMES = 16;
+const INITIAL_PREBUFFER_CAP = 6;
+const NEIGHBOR_PREFETCH_DELAY_MS = 350;
 const MAX_NEIGHBOR_PREFETCH_ITEMS = 3;
 const DEFAULT_FRAME_DURATION_MS = 40;
 const MIN_FRAME_DURATION_MS = 16;
+const TAIL_DECODE_PACE_MS = 12;
 
-function yieldToRenderer() {
+function yieldToRenderer(delayMs = 0) {
   return new Promise((resolve) => {
-    setTimeout(resolve, 0);
+    setTimeout(resolve, delayMs);
   });
 }
 
@@ -458,7 +459,7 @@ export const collectionFocusGifPlayer = {
           dims.width < (firstVideoFrame.displayWidth || firstVideoFrame.codedWidth) ||
           dims.height < (firstVideoFrame.displayHeight || firstVideoFrame.codedHeight);
         const resizeOpts = needResize
-          ? { resizeWidth: dims.width, resizeHeight: dims.height, resizeQuality: "medium" }
+          ? { resizeWidth: dims.width, resizeHeight: dims.height, resizeQuality: "low" }
           : undefined;
         const firstBitmap = await globalThis.createImageBitmap(firstVideoFrame, resizeOpts);
         const firstDurationMs = Math.max(
@@ -552,7 +553,7 @@ export const collectionFocusGifPlayer = {
         gifNode.removeAttribute?.("src");
         parent.insertBefore(canvas, gifNode.nextSibling || null);
         session.canvas = canvas;
-        ctx.clearRect(0, 0, dims.width, dims.height);
+        ctx.globalCompositeOperation = "copy";
         ctx.drawImage(firstBitmap, 0, 0, dims.width, dims.height);
         node.classList.add("is-focus-gif-canvas-mode");
         node.classList.add("is-focus-gif-active");
@@ -564,21 +565,32 @@ export const collectionFocusGifPlayer = {
         let lastTickAt = globalThis.performance?.now?.() || Date.now();
         let accumulatedMs = 0;
 
+        const countDecodedAhead = () => {
+          let ahead = 0;
+          for (let offset = 1; offset < frameCount; offset += 1) {
+            if (!session.frames.has((playIndex + offset) % frameCount)) {
+              break;
+            }
+            ahead += 1;
+            if (ahead >= 12) break;
+          }
+          return ahead;
+        };
+
         const pumpDecodeAhead = async () => {
           if (decodingActive || !session.decoder || !isStillValid()) {
             return;
           }
           decodingActive = true;
-          let decodedInBurst = 0;
           try {
             if (cacheAllFrames) {
               while (isStillValid() && session.frames.size < frameCount) {
                 const idx = nextDecodeCursor;
                 nextDecodeCursor = (nextDecodeCursor + 1) % frameCount;
                 await decodeFrameAt(idx);
-                decodedInBurst += 1;
-                if (decodedInBurst % 2 === 0 && isStillValid()) {
-                  await yieldToRenderer();
+                if (isStillValid()) {
+                  const delayMs = countDecodedAhead() >= 6 ? TAIL_DECODE_PACE_MS : 0;
+                  await yieldToRenderer(delayMs);
                 }
               }
               if (session.frames.size >= frameCount && session.decoder) {
@@ -601,9 +613,9 @@ export const collectionFocusGifPlayer = {
                   break;
                 }
                 await decodeFrameAt(targetIdx);
-                decodedInBurst += 1;
-                if (decodedInBurst % 2 === 0 && isStillValid()) {
-                  await yieldToRenderer();
+                if (isStillValid()) {
+                  const delayMs = countDecodedAhead() >= 6 ? TAIL_DECODE_PACE_MS : 0;
+                  await yieldToRenderer(delayMs);
                 }
               }
             }
@@ -627,14 +639,14 @@ export const collectionFocusGifPlayer = {
           let currentSlot = session.frames.get(playIndex);
           let frameChanged = false;
           let guard = 0;
-          while (currentSlot && accumulatedMs >= currentSlot.durationMs && guard < 4) {
+          while (currentSlot && accumulatedMs + 2 >= currentSlot.durationMs && guard < 4) {
             const nextIndex = (playIndex + 1) % frameCount;
             const nextSlot = session.frames.get(nextIndex);
             if (!nextSlot) {
               accumulatedMs = currentSlot.durationMs;
               break;
             }
-            accumulatedMs -= currentSlot.durationMs;
+            accumulatedMs = Math.max(0, accumulatedMs - currentSlot.durationMs);
             if (!cacheAllFrames && playIndex !== nextIndex) {
               const expired = session.frames.get(playIndex);
               session.frames.delete(playIndex);
@@ -647,7 +659,7 @@ export const collectionFocusGifPlayer = {
           }
 
           if (frameChanged && currentSlot?.bitmap) {
-            ctx.clearRect(0, 0, dims.width, dims.height);
+            ctx.globalCompositeOperation = "copy";
             ctx.drawImage(currentSlot.bitmap, 0, 0, dims.width, dims.height);
             if (!cacheAllFrames && !decodingActive) {
               void pumpDecodeAhead();
