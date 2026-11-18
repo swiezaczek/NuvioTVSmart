@@ -13,19 +13,77 @@ export function keepControlsClearance({
   return Boolean(controlsVisible) || Number(now) < Number(hideUntil || 0);
 }
 
+const clearanceStates = new WeakMap();
+
 // HTML bottom cues and capable ASS renderers receive selective placement.
 // Authored positions and opaque native subtitle planes retain their coordinates.
-export function syncHtmlSubtitleClearance(screen) {
-  const refs = screen.uiRefs;
+export function syncHtmlSubtitleClearance(screen, { force = false } = {}) {
+  const refs = screen?.uiRefs;
   const root = refs?.root;
   if (!root?.style || typeof root.getBoundingClientRect !== "function") return;
+  const controlsClearanceActive = keepControlsClearance({
+    controlsVisible: screen.controlsVisible,
+    hideUntil: screen.controlsHideUntil
+  });
+  const modalBlocked = Boolean(refs.controlsOverlay?.classList?.contains?.("modal-blocked"));
+  const skipIntroVisible = Boolean(
+    refs.skipIntro && !refs.skipIntro.classList?.contains?.("hidden")
+  );
+  const nextEpisodeVisible = Boolean(
+    refs.nextEpisodeCard && !refs.nextEpisodeCard.classList?.contains?.("hidden")
+  );
+  const seekOverlayActive = Boolean(
+    screen.seekOverlayVisible &&
+    !screen.controlsVisible &&
+    (!refs.seekOverlay || !refs.seekOverlay.classList?.contains?.("hidden"))
+  );
+  const subtitleDialogVisible = Boolean(screen.subtitleDialogVisible);
+  const verticalOffset = getSubtitleVerticalOffsetVh(screen.subtitleStyleSettings?.verticalOffset);
+  const playbackBadgesVisible = Boolean(refs.playbackBadges && !refs.playbackBadges.hidden);
+  const chapterTitleVisible = Boolean(
+    refs.chapterTitle && !refs.chapterTitle.classList?.contains?.("hidden")
+  );
+  const seekChapterTitleVisible = Boolean(
+    refs.seekChapterTitle && !refs.seekChapterTitle.classList?.contains?.("hidden")
+  );
+  const progressFocused = Boolean(refs.progressShell?.classList?.contains?.("focused"));
+  const rootWidth = Number(root.clientWidth || 0);
+  const rootHeight = Number(root.clientHeight || 0);
+  const assRenderer = screen.assSubtitleRenderer || null;
+
+  const layoutKey = [
+    controlsClearanceActive ? 1 : 0,
+    screen.controlsVisible ? 1 : 0,
+    modalBlocked ? 1 : 0,
+    skipIntroVisible ? 1 : 0,
+    nextEpisodeVisible ? 1 : 0,
+    seekOverlayActive ? 1 : 0,
+    subtitleDialogVisible ? 1 : 0,
+    playbackBadgesVisible ? 1 : 0,
+    chapterTitleVisible ? 1 : 0,
+    seekChapterTitleVisible ? 1 : 0,
+    progressFocused ? 1 : 0,
+    verticalOffset,
+    rootWidth,
+    rootHeight
+  ].join("|");
+
+  const cached = clearanceStates.get(screen);
+  if (!force && cached && cached.root === root && cached.layoutKey === layoutKey) {
+    if (assRenderer && cached.assRenderer !== assRenderer && cached.placement) {
+      cached.assRenderer = assRenderer;
+      assRenderer.setPlacement?.(cached.placement);
+    }
+    return;
+  }
+
   const viewport = root.getBoundingClientRect();
   if (!(viewport.height > 0)) return;
   const gap = (viewport.height * 8) / 540;
   let clearance = 0;
   const include = (node, enabled) => {
     if (
-      screen.subtitleDialogVisible ||
+      subtitleDialogVisible ||
       !enabled ||
       !node ||
       node.classList.contains("hidden") ||
@@ -37,30 +95,20 @@ export function syncHtmlSubtitleClearance(screen) {
     const rect = node.getBoundingClientRect();
     if (rect.height > 0) clearance = Math.max(clearance, viewport.bottom - rect.top + gap);
   };
-  include(
-    refs.controlsBottom,
-    keepControlsClearance({
-      controlsVisible: screen.controlsVisible,
-      hideUntil: screen.controlsHideUntil
-    }) && !refs.controlsOverlay?.classList.contains("modal-blocked")
-  );
+  include(refs.controlsBottom, controlsClearanceActive && !modalBlocked);
   include(refs.skipIntro, true);
   include(refs.nextEpisodeCard, true);
   include(refs.seekOverlay, screen.seekOverlayVisible && !screen.controlsVisible);
-  const bottom =
-    (viewport.height *
-      (8 - getSubtitleVerticalOffsetVh(screen.subtitleStyleSettings?.verticalOffset))) /
-    100;
+  const bottom = (viewport.height * (8 - verticalOffset)) / 100;
   const lift = Math.max(0, Math.min(viewport.height / 2, clearance) - bottom);
   const value = `${Math.round(lift)}px`;
   if (root.style.getPropertyValue("--player-subtitle-clearance") !== value)
     root.style.setProperty("--player-subtitle-clearance", value);
-  screen.assSubtitleRenderer?.setPlacement?.({
+  const placement = {
     viewportBottom: viewport.bottom,
     overlayTop: clearance > 0 ? viewport.bottom - Math.min(viewport.height / 2, clearance) : null,
-    userOffsetPx:
-      -(
-        viewport.height * getSubtitleVerticalOffsetVh(screen.subtitleStyleSettings?.verticalOffset)
-      ) / 100
-  });
+    userOffsetPx: -(viewport.height * verticalOffset) / 100
+  };
+  clearanceStates.set(screen, { root, layoutKey, assRenderer, placement });
+  assRenderer?.setPlacement?.(placement);
 }

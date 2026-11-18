@@ -188,7 +188,7 @@ export function syncPlayerPlaybackBadges(screen, controller, renderChip, languag
   }
   if (!state.visible) {
     state.settings = StreamBadgeSettingsStore.snapshot();
-    state.key = null;
+    state.hasKey = false;
   }
   state.visible = true;
   if (!state.settings.showInPlayer) {
@@ -198,32 +198,83 @@ export function syncPlayerPlaybackBadges(screen, controller, renderChip, languag
   try {
     const video = controller.video;
     const hls = controller.hlsInstance;
+    const dash = controller.dashInstance;
     const audioTrack = hls?.audioTracks?.[hls.audioTrack];
     const level = hls?.levels?.[hls.currentLevel];
-    const key = JSON.stringify([
-      controller.playbackEngine,
-      controller.avplayUrl,
-      video?.currentSrc,
-      video?.videoWidth,
-      video?.videoHeight,
-      screen.currentStreamIndex,
-      screen.selectedAudioTrackIndex,
-      controller.selectedAvPlayAudioTrackIndex,
-      controller.hlsInstance?.audioTrack,
-      controller.hlsInstance?.currentLevel,
-      level?.videoCodec,
-      level?.videoRange,
-      audioTrack?.audioCodec,
-      audioTrack?.lang,
-      audioTrack?.channels,
-      controller.dashInstance?.getCurrentTrackFor?.("audio")?.id,
-      controller.dashInstance?.getCurrentRepresentationForType?.("video")?.id,
-      Array.from(video?.audioTracks || []).findIndex((track) => track.enabled || track.selected)
-    ]);
-    if (state.key === key && state.hls === controller.hlsInstance && state.dash === controller.dashInstance) return;
-    state.hls = controller.hlsInstance;
-    state.dash = controller.dashInstance;
-    state.key = key;
+    const rawAudioTracks = video?.audioTracks;
+    let activeAudioTrackIndex = -1;
+    if (rawAudioTracks && typeof rawAudioTracks.length === "number") {
+      for (let i = 0; i < rawAudioTracks.length; i += 1) {
+        const track = rawAudioTracks[i];
+        if (track && (track.enabled || track.selected)) {
+          activeAudioTrackIndex = i;
+          break;
+        }
+      }
+    }
+    const engine = controller.playbackEngine;
+    const avplayUrl = controller.avplayUrl;
+    const currentSrc = video?.currentSrc;
+    const videoWidth = video?.videoWidth;
+    const videoHeight = video?.videoHeight;
+    const streamIndex = screen.currentStreamIndex;
+    const selectedAudioIndex = screen.selectedAudioTrackIndex;
+    const avplayAudioIndex = controller.selectedAvPlayAudioTrackIndex;
+    const hlsAudioTrack = hls?.audioTrack;
+    const hlsCurrentLevel = hls?.currentLevel;
+    const levelVideoCodec = level?.videoCodec;
+    const levelVideoRange = level?.videoRange;
+    const audioCodec = audioTrack?.audioCodec;
+    const audioLang = audioTrack?.lang;
+    const audioChannels = audioTrack?.channels;
+    const dashAudioId = dash?.getCurrentTrackFor?.("audio")?.id;
+    const dashVideoId = dash?.getCurrentRepresentationForType?.("video")?.id;
+    if (
+      state.hasKey &&
+      state.hls === hls &&
+      state.dash === dash &&
+      Object.is(state.engine, engine) &&
+      Object.is(state.avplayUrl, avplayUrl) &&
+      Object.is(state.currentSrc, currentSrc) &&
+      Object.is(state.videoWidth, videoWidth) &&
+      Object.is(state.videoHeight, videoHeight) &&
+      Object.is(state.streamIndex, streamIndex) &&
+      Object.is(state.selectedAudioIndex, selectedAudioIndex) &&
+      Object.is(state.avplayAudioIndex, avplayAudioIndex) &&
+      Object.is(state.hlsAudioTrack, hlsAudioTrack) &&
+      Object.is(state.hlsCurrentLevel, hlsCurrentLevel) &&
+      Object.is(state.levelVideoCodec, levelVideoCodec) &&
+      Object.is(state.levelVideoRange, levelVideoRange) &&
+      Object.is(state.audioCodec, audioCodec) &&
+      Object.is(state.audioLang, audioLang) &&
+      Object.is(state.audioChannels, audioChannels) &&
+      Object.is(state.dashAudioId, dashAudioId) &&
+      Object.is(state.dashVideoId, dashVideoId) &&
+      state.activeAudioTrackIndex === activeAudioTrackIndex
+    ) {
+      return;
+    }
+    state.hls = hls;
+    state.dash = dash;
+    state.engine = engine;
+    state.avplayUrl = avplayUrl;
+    state.currentSrc = currentSrc;
+    state.videoWidth = videoWidth;
+    state.videoHeight = videoHeight;
+    state.streamIndex = streamIndex;
+    state.selectedAudioIndex = selectedAudioIndex;
+    state.avplayAudioIndex = avplayAudioIndex;
+    state.hlsAudioTrack = hlsAudioTrack;
+    state.hlsCurrentLevel = hlsCurrentLevel;
+    state.levelVideoCodec = levelVideoCodec;
+    state.levelVideoRange = levelVideoRange;
+    state.audioCodec = audioCodec;
+    state.audioLang = audioLang;
+    state.audioChannels = audioChannels;
+    state.dashAudioId = dashAudioId;
+    state.dashVideoId = dashVideoId;
+    state.activeAudioTrackIndex = activeAudioTrackIndex;
+    state.hasKey = true;
     const info = readPlaybackMediaInfo(controller);
     const stream = screen.getCurrentStreamCandidate?.();
     const meta = [
@@ -242,7 +293,7 @@ export function syncPlayerPlaybackBadges(screen, controller, renderChip, languag
     if (node.innerHTML !== html) node.innerHTML = html;
     node.hidden = !html;
   } catch (_) {
-    state.key = null;
+    state.hasKey = false;
     node.hidden = true;
   }
 }

@@ -294,7 +294,8 @@ export function createPlayerScreenMethods15() {
         seekWidth: "",
         seekPreviewText: "",
         seekDirectionText: "",
-        progressFocused: false
+        progressFocused: false,
+        isSeeking: false
       };
       this.refreshLoadingOverlayPresentation();
       this.renderStartupErrorOverlay();

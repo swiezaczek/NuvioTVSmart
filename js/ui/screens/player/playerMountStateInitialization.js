@@ -282,6 +282,8 @@ export function initializePlayerMountState(params, initialStreamUrl) {
   this.skipIntroSuppressedKey = "";
   this.skipIntroSuppressedUntil = 0;
   this.lastActionOverlayBottomPx = null;
+  this.lastActionOverlayMeasureKey = "";
+  this.lastActionOverlayRoot = null;
   this.subtitleSelectionTimer = null;
   this.subtitleSelectionToken = 0;
   this.subtitleLoadToken = 0;

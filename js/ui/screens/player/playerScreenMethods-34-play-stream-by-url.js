@@ -133,7 +133,7 @@ export function createPlayerScreenMethods34() {
       this.playbackRecoveryActive = preservePresentedPlaybackFrame;
       this.hasPresentedPlaybackFrame = preservePresentedPlaybackFrame;
       if (!preservePresentedPlaybackFrame) {
-        this.scheduleSourceStartupTimeout?.();
+        this.scheduleSourceStartupTimeout?.(streamUrl);
       }
       this.webOsNativeStartupLoadingExtended = false;
       if (!preserveStartupRecoveryState) {
