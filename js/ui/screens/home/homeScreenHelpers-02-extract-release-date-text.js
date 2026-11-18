@@ -231,7 +231,7 @@ export function shouldEnrichModernHero(hero) {
 
 export const HERO_IMAGE_PRELOAD_CACHE_LIMIT = 32;
 
-export const HERO_BACKDROP_BITMAP_CACHE_LIMIT = 8;
+export const HERO_BACKDROP_BITMAP_CACHE_LIMIT = 4;
 
 export const HERO_IMAGE_PRELOAD_TIMEOUT_MS = 1500;
 
@@ -239,62 +239,57 @@ export const heroImagePreloadCache = new Map();
 
 export const heroBackdropBitmapCache = new Map();
 
-export function preloadHeroBackdrop(src) {
-  const normalized = String(src || "").trim();
-  if (!normalized) {
-    return Promise.resolve({ loaded: false, bitmap: null });
-  }
-  const isTv = Boolean(getTvRuntimePerformanceProfile()?.isTvRuntime);
-  if (
-    isTv &&
+function canDecodeHeroBackdropBitmap(src) {
+  // Tizen's in-process renderer decodes a full-size <img> inside Commit; a
+  // screen-sized ImageBitmap mirrors Android's Coil request sized to the hero.
+  return (
+    Platform.isTizen() &&
+    !getTvRuntimePerformanceProfile()?.isPerformanceConstrained &&
     typeof globalThis.fetch === "function" &&
     typeof globalThis.createImageBitmap === "function" &&
-    /^https?:\/\//i.test(normalized)
-  ) {
-    const prefs = typeof LayoutPreferences?.get === "function" ? LayoutPreferences.get() || {} : {};
-    const isFullScreenBackdrop = prefs.homeLayout === "classic" || Boolean(prefs.modernHeroFullScreenBackdropEnabled);
-    const resizeWidth = isFullScreenBackdrop ? 1920 : 960;
-    const cacheLimit = isFullScreenBackdrop ? 4 : HERO_BACKDROP_BITMAP_CACHE_LIMIT;
-    const cacheKey = `${resizeWidth}:${normalized}`;
-    const cached = heroBackdropBitmapCache.get(cacheKey);
-    if (cached) {
-      heroBackdropBitmapCache.delete(cacheKey);
-      heroBackdropBitmapCache.set(cacheKey, cached);
-      return cached;
-    }
-    while (heroBackdropBitmapCache.size >= cacheLimit) {
-      const oldestKey = heroBackdropBitmapCache.keys().next().value;
-      const oldestPromise = heroBackdropBitmapCache.get(oldestKey);
-      heroBackdropBitmapCache.delete(oldestKey);
-      oldestPromise?.then?.((entry) => entry?.bitmap?.close?.())?.catch?.(() => {});
-    }
-    const promise = (async () => {
-      try {
-        const response = await globalThis.fetch(normalized, {
-          mode: "cors",
-          credentials: "omit"
-        });
-        if (!response || !response.ok) {
-          throw new Error(`HTTP ${response?.status || 0}`);
-        }
-        const blob = await response.blob();
-        const bitmap = await globalThis.createImageBitmap(blob, {
-          resizeWidth,
-          resizeQuality: "medium"
-        });
-        return { loaded: true, bitmap };
-      } catch (_) {
-        if (heroBackdropBitmapCache.get(cacheKey) === promise) {
-          heroBackdropBitmapCache.delete(cacheKey);
-        }
-        const loaded = await preloadImageSource(normalized);
-        return { loaded, bitmap: null };
-      }
-    })();
-    heroBackdropBitmapCache.set(cacheKey, promise);
-    return promise;
+    /^https?:\/\//i.test(src)
+  );
+}
+
+export function preloadHeroBackdrop(src) {
+  const normalized = String(src || "").trim();
+  if (!normalized || !canDecodeHeroBackdropBitmap(normalized)) {
+    return preloadImageSource(normalized).then((loaded) => ({ loaded, bitmap: null }));
   }
-  return preloadImageSource(normalized).then((loaded) => ({ loaded, bitmap: null }));
+  const cached = heroBackdropBitmapCache.get(normalized);
+  if (cached) {
+    heroBackdropBitmapCache.delete(normalized);
+    heroBackdropBitmapCache.set(normalized, cached);
+    return cached;
+  }
+  if (heroBackdropBitmapCache.size >= HERO_BACKDROP_BITMAP_CACHE_LIMIT) {
+    const oldestSource = heroBackdropBitmapCache.keys().next().value;
+    const oldest = heroBackdropBitmapCache.get(oldestSource);
+    heroBackdropBitmapCache.delete(oldestSource);
+    // Swaps already waiting on this entry draw it before the close runs.
+    oldest.then((entry) => entry.bitmap?.close?.());
+  }
+  const resizeWidth = Math.max(1, Math.round((globalThis.innerWidth || 1920) * (globalThis.devicePixelRatio || 1)));
+  const preload = globalThis
+    .fetch(normalized, { mode: "cors", credentials: "omit" })
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      return response.blob();
+    })
+    .then((blob) => globalThis.createImageBitmap(blob, { resizeWidth, resizeQuality: "medium" }))
+    .then(
+      (bitmap) => ({ loaded: true, bitmap }),
+      () => {
+        if (heroBackdropBitmapCache.get(normalized) === preload) {
+          heroBackdropBitmapCache.delete(normalized);
+        }
+        return preloadImageSource(normalized).then((loaded) => ({ loaded, bitmap: null }));
+      }
+    );
+  heroBackdropBitmapCache.set(normalized, preload);
+  return preload;
 }
 
 export function preloadImageSource(src) {
@@ -371,68 +366,19 @@ export function preloadHeroAssets(hero, layoutMode = "modern") {
   return Promise.all([preloadHeroBackdrop(display?.backdrop), preloadImageSource(display?.logo)]);
 }
 
-const activeHeroEnterRestoreMap = new WeakMap();
-
-export function restoreHeroImageEnterTransition(image) {
-  const restore = activeHeroEnterRestoreMap.get(image);
-  if (typeof restore === "function") {
-    activeHeroEnterRestoreMap.delete(image);
-    restore();
-  }
-}
-
-export function prepareHeroImageEnter(image, enterClass, { deferTransitionRestore = false } = {}) {
+export function prepareHeroImageEnter(image, enterClass) {
   // A reused image is already opaque. Without an immediate reset, changing src
   // flashes the new artwork while CSS starts fading from 1 towards 0; the next
   // animation frame then reverses that fade instead of entering from 0.
-  restoreHeroImageEnterTransition(image);
   const transition = image.style.getPropertyValue("transition");
   const priority = image.style.getPropertyPriority("transition");
-  const restore = () => {
-    if (activeHeroEnterRestoreMap.get(image) === restore) {
-      activeHeroEnterRestoreMap.delete(image);
-    }
-    if (transition) {
-      image.style.setProperty("transition", transition, priority);
-    } else {
-      image.style.removeProperty("transition");
-    }
-  };
   image.style.setProperty("transition", "none", "important");
   image.classList.remove("is-visible");
   image.classList.add(enterClass);
-  if (deferTransitionRestore) {
-    activeHeroEnterRestoreMap.set(image, restore);
-    return restore;
-  }
   void image.offsetWidth;
-  restore();
-  return restore;
-}
-
-export function runHeroImageEnterAnimation(
-  image,
-  enterClass,
-  { durationMs = 400, isCurrent = () => true, onFinalize = null, ghost = null } = {}
-) {
-  // Commit the initial opacity: 0 frame cleanly across rAF before restoring
-  // transitions and triggering .is-visible, avoiding synchronous layout reflows.
-  prepareHeroImageEnter(image, enterClass, { deferTransitionRestore: true });
-  requestAnimationFrame(() => {
-    if (!isCurrent()) {
-      restoreHeroImageEnterTransition(image);
-      return;
-    }
-    restoreHeroImageEnterTransition(image);
-    requestAnimationFrame(() => {
-      if (!isCurrent()) {
-        return;
-      }
-      image.classList.add("is-visible");
-      ghost?.classList?.add("is-fading-out");
-      setTimeout(() => {
-        onFinalize?.();
-      }, durationMs);
-    });
-  });
+  if (transition) {
+    image.style.setProperty("transition", transition, priority);
+  } else {
+    image.style.removeProperty("transition");
+  }
 }

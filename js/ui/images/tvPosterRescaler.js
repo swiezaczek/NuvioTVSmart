@@ -440,13 +440,7 @@ function getGenericPool() {
 function rescaleWithPool(state, url, { width, height, fit, priority = 2, isStale = null } = {}) {
   // Check the request before touching the pool, so artwork that can never be
   // rescaled does not spin up workers on its way to the fallback.
-  if (
-    !state ||
-    !isRescalableArtworkUrl(url) ||
-    !(width > 0) ||
-    !(height > 0) ||
-    !isRescalableArtworkFit(fit)
-  ) {
+  if (!state || !url || !(width > 0) || !(height > 0) || !isRescalableArtworkFit(fit)) {
     return Promise.resolve(null);
   }
   // The fit belongs in the key: the same artwork in the same box is cropped
@@ -519,23 +513,26 @@ function rescaleWithPool(state, url, { width, height, fit, priority = 2, isStale
   return job.promise;
 }
 
-const NON_RESCALABLE_ARTWORK_URL_PATTERN = /\.(?:gif|gifv|webp|png|svg|avif)(?:$|[?#])/i;
-const NON_RESCALABLE_DATA_URL_PATTERN = /^data:image\/(?:gif|webp|png|svg\+xml|avif)\b/i;
+// The worker only rescales JPEG, so a source that is plainly something else
+// would cost a full fetch and a worker slot just to learn "not jpeg" while the
+// card waits. The extension check ignores the query and fragment.
+const NON_JPEG_PATH_RE = /\.(?:gifv?|webp|png|svg|avif)$/i;
+const DATA_URL_RE = /^data:/i;
+const JPEG_DATA_URL_RE = /^data:image\/jpe?g[;,]/i;
 
-export function isRescalableArtworkUrl(url) {
-  const normalized = String(url || "").trim();
-  if (!normalized) return false;
-  if (NON_RESCALABLE_DATA_URL_PATTERN.test(normalized)) return false;
-  return !NON_RESCALABLE_ARTWORK_URL_PATTERN.test(normalized);
+function isObviousNonJpegUrl(url) {
+  const value = String(url);
+  if (DATA_URL_RE.test(value)) return !JPEG_DATA_URL_RE.test(value);
+  return NON_JPEG_PATH_RE.test(value.split(/[?#]/, 1)[0]);
 }
 
 /**
  * Resolve a card-sized object url for `url`, or null when the original should
  * be used as-is. Never rejects: every failure path falls back to the original.
  */
-function shouldQueueRescale(url, { width, height, fit } = {}) {
+export function shouldQueueRescale(url, { width, height, fit } = {}) {
   return Boolean(
-    isRescalableArtworkUrl(url) && width > 0 && height > 0 && isRescalableArtworkFit(fit)
+    url && width > 0 && height > 0 && isRescalableArtworkFit(fit) && !isObviousNonJpegUrl(url)
   );
 }
 
