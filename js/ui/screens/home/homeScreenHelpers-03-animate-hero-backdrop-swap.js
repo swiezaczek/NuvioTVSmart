@@ -188,7 +188,7 @@ import {
 } from "./homeUtils.js";
 
 import {
-  preloadImageSource,
+  preloadHeroBackdrop,
   restoreHeroImageEnterTransition,
   runHeroImageEnterAnimation
 } from "./homeScreenHelpers-02-extract-release-date-text.js";
@@ -208,13 +208,27 @@ export function animateHeroBackdropSwap(
   // Decorative: the logo/brand carries the title, and a pending backdrop would
   // otherwise paint it as alt text over the hero.
   const normalizedAlt = "";
-  const currentSrc = String(backdrop.getAttribute("src") || "").trim();
+  const currentSrc = String(backdrop.dataset?.canvasSrc || backdrop.getAttribute("src") || "").trim();
   const transitionMode = options?.transitionMode || "crossfade";
   const token = Number(backdrop.heroBackdropTransitionToken || 0) + 1;
   backdrop.heroBackdropTransitionToken = token;
 
+  const getCanvas = () => backdrop.parentElement?.querySelector?.(".home-hero-backdrop-canvas") || null;
+
   const clearGhosts = () => {
     backdrop.parentElement?.querySelectorAll?.(".home-hero-backdrop-transition-ghost")?.forEach((node) => node.remove());
+  };
+
+  const removeCanvas = () => {
+    const canvas = getCanvas();
+    if (canvas) {
+      restoreHeroImageEnterTransition(canvas);
+      canvas.remove();
+    }
+    if (backdrop.dataset) {
+      delete backdrop.dataset.canvasSrc;
+    }
+    backdrop.style.opacity = "";
   };
 
   const finalize = () => {
@@ -223,11 +237,17 @@ export function animateHeroBackdropSwap(
     }
     restoreHeroImageEnterTransition(backdrop);
     backdrop.classList.remove("home-hero-backdrop-transition-enter", "is-visible");
+    const canvas = getCanvas();
+    if (canvas) {
+      restoreHeroImageEnterTransition(canvas);
+      canvas.classList.remove("home-hero-backdrop-transition-enter", "is-visible");
+    }
     clearGhosts();
   };
 
   if (!normalizedSrc) {
     finalize();
+    removeCanvas();
     backdrop.removeAttribute("src");
     backdrop.setAttribute("alt", normalizedAlt);
     backdrop.classList.add("placeholder");
@@ -241,11 +261,45 @@ export function animateHeroBackdropSwap(
     return;
   }
 
-  preloadImageSource(normalizedSrc).then((loaded) => {
+  preloadHeroBackdrop(normalizedSrc).then((result) => {
     if (Number(backdrop.heroBackdropTransitionToken || 0) !== token) {
       return;
     }
 
+    const parent = backdrop.parentElement;
+    if (result?.bitmap && parent) {
+      clearGhosts();
+      let canvas = getCanvas();
+      if (!canvas) {
+        canvas = document.createElement("canvas");
+        canvas.className = `${backdrop.className} home-hero-backdrop-canvas`;
+        canvas.style.cssText = backdrop.style.cssText;
+        parent.insertBefore(canvas, backdrop.nextSibling);
+      }
+      canvas.width = result.bitmap.width;
+      canvas.height = result.bitmap.height;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.drawImage(result.bitmap, 0, 0);
+      }
+      if (backdrop.dataset) {
+        backdrop.dataset.canvasSrc = normalizedSrc;
+      }
+      backdrop.removeAttribute("src");
+      backdrop.setAttribute("alt", normalizedAlt);
+      backdrop.style.opacity = "0";
+      backdrop.classList.remove("placeholder");
+      runHeroImageEnterAnimation(canvas, "home-hero-backdrop-transition-enter", {
+        durationMs,
+        isCurrent: () => Number(backdrop.heroBackdropTransitionToken || 0) === token,
+        onFinalize: finalize,
+        waitForDecode: false
+      });
+      return;
+    }
+
+    removeCanvas();
+    const loaded = Boolean(result?.loaded);
     if (!loaded) {
       finalize();
       backdrop.setAttribute("src", normalizedSrc);
@@ -257,7 +311,6 @@ export function animateHeroBackdropSwap(
     clearGhosts();
     let ghost = null;
     if (transitionMode !== "single-layer") {
-      const parent = backdrop.parentElement;
       if (parent && currentSrc) {
         ghost = backdrop.cloneNode(false);
         ghost.classList.remove("home-hero-backdrop-transition-enter", "is-visible");
@@ -267,32 +320,34 @@ export function animateHeroBackdropSwap(
     }
 
     backdrop.classList.remove("placeholder");
-    const parent = backdrop.parentElement;
     const nextSibling = backdrop.nextSibling;
     if (parent && typeof backdrop.decode === "function") {
       parent.removeChild(backdrop);
       backdrop.decoding = "async";
       backdrop.setAttribute("src", normalizedSrc);
       backdrop.setAttribute("alt", normalizedAlt);
-      backdrop.decode().catch(() => {}).then(() => {
-        if (Number(backdrop.heroBackdropTransitionToken || 0) !== token) {
-          return;
-        }
-        if (ghost && ghost.parentElement === parent) {
-          parent.insertBefore(backdrop, ghost.nextSibling);
-        } else if (nextSibling && nextSibling.parentElement === parent) {
-          parent.insertBefore(backdrop, nextSibling);
-        } else {
-          parent.appendChild(backdrop);
-        }
-        runHeroImageEnterAnimation(backdrop, "home-hero-backdrop-transition-enter", {
-          durationMs,
-          isCurrent: () => Number(backdrop.heroBackdropTransitionToken || 0) === token,
-          onFinalize: finalize,
-          ghost,
-          waitForDecode: false
+      backdrop
+        .decode()
+        .catch(() => {})
+        .then(() => {
+          if (Number(backdrop.heroBackdropTransitionToken || 0) !== token) {
+            return;
+          }
+          if (ghost && ghost.parentElement === parent) {
+            parent.insertBefore(backdrop, ghost.nextSibling);
+          } else if (nextSibling && nextSibling.parentElement === parent) {
+            parent.insertBefore(backdrop, nextSibling);
+          } else {
+            parent.appendChild(backdrop);
+          }
+          runHeroImageEnterAnimation(backdrop, "home-hero-backdrop-transition-enter", {
+            durationMs,
+            isCurrent: () => Number(backdrop.heroBackdropTransitionToken || 0) === token,
+            onFinalize: finalize,
+            ghost,
+            waitForDecode: false
+          });
         });
-      });
       return;
     }
     backdrop.setAttribute("src", normalizedSrc);

@@ -231,9 +231,60 @@ export function shouldEnrichModernHero(hero) {
 
 export const HERO_IMAGE_PRELOAD_CACHE_LIMIT = 32;
 
+export const HERO_BACKDROP_BITMAP_CACHE_LIMIT = 8;
+
 export const HERO_IMAGE_PRELOAD_TIMEOUT_MS = 1500;
 
 export const heroImagePreloadCache = new Map();
+
+export const heroBackdropBitmapCache = new Map();
+
+export function preloadHeroBackdrop(src) {
+  const normalized = String(src || "").trim();
+  if (!normalized) {
+    return Promise.resolve({ loaded: false, bitmap: null });
+  }
+  if (typeof globalThis.fetch === "function" && typeof globalThis.createImageBitmap === "function" && /^https?:\/\//i.test(normalized)) {
+    const cached = heroBackdropBitmapCache.get(normalized);
+    if (cached) {
+      heroBackdropBitmapCache.delete(normalized);
+      heroBackdropBitmapCache.set(normalized, cached);
+      return cached;
+    }
+    while (heroBackdropBitmapCache.size >= HERO_BACKDROP_BITMAP_CACHE_LIMIT) {
+      const oldestKey = heroBackdropBitmapCache.keys().next().value;
+      const oldestPromise = heroBackdropBitmapCache.get(oldestKey);
+      heroBackdropBitmapCache.delete(oldestKey);
+      oldestPromise?.then?.((entry) => entry?.bitmap?.close?.())?.catch?.(() => {});
+    }
+    const promise = (async () => {
+      try {
+        const response = await globalThis.fetch(normalized, {
+          mode: "cors",
+          credentials: "omit"
+        });
+        if (!response || !response.ok) {
+          throw new Error(`HTTP ${response?.status || 0}`);
+        }
+        const blob = await response.blob();
+        const bitmap = await globalThis.createImageBitmap(blob, {
+          resizeWidth: 960,
+          resizeQuality: "medium"
+        });
+        return { loaded: true, bitmap };
+      } catch (_) {
+        if (heroBackdropBitmapCache.get(normalized) === promise) {
+          heroBackdropBitmapCache.delete(normalized);
+        }
+        const loaded = await preloadImageSource(normalized);
+        return { loaded, bitmap: null };
+      }
+    })();
+    heroBackdropBitmapCache.set(normalized, promise);
+    return promise;
+  }
+  return preloadImageSource(normalized).then((loaded) => ({ loaded, bitmap: null }));
+}
 
 export function preloadImageSource(src) {
   const normalized = String(src || "").trim();
@@ -306,7 +357,7 @@ export function preloadImageSource(src) {
 
 export function preloadHeroAssets(hero, layoutMode = "modern") {
   const display = layoutMode === "modern" ? buildModernHeroPresentation(hero) : buildHeroDisplayModel(hero, layoutMode);
-  return Promise.all([preloadImageSource(display?.backdrop), preloadImageSource(display?.logo)]);
+  return Promise.all([preloadHeroBackdrop(display?.backdrop), preloadImageSource(display?.logo)]);
 }
 
 const activeHeroEnterRestoreMap = new WeakMap();
