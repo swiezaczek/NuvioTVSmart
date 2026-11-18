@@ -297,12 +297,24 @@ export function createHomeScreenMethods11() {
       if (!(gifNode instanceof HTMLImageElement)) {
         return;
       }
+      const player = internals?.collectionFocusGifPlayer || null;
       if (active) {
         const src = String(gifNode.dataset.src || gifNode.getAttribute("src") || "").trim();
-        if (src && !gifNode.getAttribute("src")) {
+        if (!src) {
+          return;
+        }
+        if (player) {
+          player.activate({ screen: this, node, gifNode, src });
+          return;
+        }
+        if (!gifNode.getAttribute("src")) {
           gifNode.setAttribute("src", src);
         }
         node.classList.add("is-focus-gif-active");
+        return;
+      }
+      if (player) {
+        player.deactivate(node);
         return;
       }
       node.classList.remove("is-focus-gif-active");

@@ -276,11 +276,13 @@
 }
 
 .home-screen-shell .home-collection-card .content-poster,
-.home-screen-shell .home-collection-card .home-poster-focus-gif {
+.home-screen-shell .home-collection-card .home-poster-focus-gif,
+.home-screen-shell .home-collection-card .home-poster-focus-gif-canvas {
   object-fit: fill;
 }
 
-.home-screen-shell .home-poster-focus-gif {
+.home-screen-shell .home-poster-focus-gif,
+.home-screen-shell .home-poster-focus-gif-canvas {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -292,7 +294,12 @@
   transition: opacity 200ms ease;
 }
 
-.home-screen-shell .home-collection-card.is-focus-gif-active .home-poster-focus-gif {
+.home-screen-shell .home-collection-card.is-focus-gif-canvas-mode .home-poster-focus-gif {
+  display: none;
+}
+
+.home-screen-shell .home-collection-card.is-focus-gif-active .home-poster-focus-gif,
+.home-screen-shell .home-collection-card.is-focus-gif-active .home-poster-focus-gif-canvas {
   opacity: 1;
   transform: translateZ(0);
 }

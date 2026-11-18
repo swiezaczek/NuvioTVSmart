@@ -67,7 +67,12 @@ export function createHomeScreenMethods18() {
         const usingDelayedCameraFollow = this.scheduleModernCameraFollow(target, direction, current, scrollAdjustments, inputMeta);
         if (!usingDelayedCameraFollow) {
           this.ensureTrackHorizontalVisibility(target, direction, scrollAdjustments.horizontal);
-          if (!shouldDeferFocusEffects) {
+          const sameHorizontalRow =
+            (direction === "left" || direction === "right") &&
+            !scrollAdjustments.vertical &&
+            String(current?.dataset?.navRow || "") !== "" &&
+            current?.dataset?.navRow === target?.dataset?.navRow;
+          if (!shouldDeferFocusEffects && !sameHorizontalRow) {
             this.ensureMainVerticalVisibility(target, direction, current, scrollAdjustments.vertical);
           }
         }

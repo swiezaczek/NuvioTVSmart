@@ -74,7 +74,18 @@ export function createHomeScreenMethods19() {
         this.lastHorizontalHomeDpadAt = now;
       }
 
-      if (this.isMainNode(current) && !this.shouldSuspendModernViewportFocusSync() && !this.isNodeWithinMainViewport(current)) {
+      this.lastHomeDpadMoveAt = now;
+      const recentlyNavigatedInMain =
+        current === this.lastMainFocus &&
+        Number(this.lastHomeDpadMoveAtPrev || 0) > 0 &&
+        now - Number(this.lastHomeDpadMoveAtPrev || 0) < 1200;
+      this.lastHomeDpadMoveAtPrev = now;
+      if (
+        !recentlyNavigatedInMain &&
+        this.isMainNode(current) &&
+        !this.shouldSuspendModernViewportFocusSync() &&
+        !this.isNodeWithinMainViewport(current)
+      ) {
         current = this.syncMainFocusToViewport({ suppressFlows: true }) || current;
       }
 

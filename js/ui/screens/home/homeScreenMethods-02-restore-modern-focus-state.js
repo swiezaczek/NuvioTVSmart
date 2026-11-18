@@ -285,14 +285,12 @@ export function createHomeScreenMethods02() {
         const acceleration = -state.stiffness * displacement - state.damping * state.velocity;
         state.velocity += acceleration * deltaSeconds;
         state.position += state.velocity * deltaSeconds;
-        container[property] = state.position;
+        const clampedPosition = Math.max(0, Math.min(max, state.position));
+        container[property] = clampedPosition;
 
-        // Reading scroll position after writing it can flush layout. It only
-        // affects settling once velocity is low enough; keep that check first.
-        if (
-          Math.abs(state.velocity) <= state.velocityEpsilon &&
-          Math.abs(Number(state.target || 0) - Number(container[property] || 0)) <= state.precision
-        ) {
+        // Compare against in-memory clampedPosition instead of reading
+        // container[property] immediately after writing it (avoids sync layout flush).
+        if (Math.abs(state.velocity) <= state.velocityEpsilon && Math.abs(Number(state.target || 0) - clampedPosition) <= state.precision) {
           container[property] = state.target;
           existing[key] = null;
           springMap.set(container, existing);
