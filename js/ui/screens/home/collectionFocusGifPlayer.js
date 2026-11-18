@@ -332,14 +332,6 @@ function applyImageFallback(node, gifNode, src, session, token) {
     return;
   }
   node.classList?.remove?.("is-focus-gif-canvas-mode");
-  const parent = gifNode.parentElement || null;
-  const nextSibling = gifNode.nextSibling || null;
-  const canDetach = Boolean(
-    parent && typeof parent.removeChild === "function" && typeof gifNode.decode === "function"
-  );
-  if (canDetach && !gifNode.getAttribute?.("src")) {
-    parent.removeChild(gifNode);
-  }
   if (!gifNode.getAttribute?.("src")) {
     gifNode.setAttribute("src", src);
   }
@@ -348,20 +340,7 @@ function applyImageFallback(node, gifNode, src, session, token) {
       .catch(() => {})
       .then(() => {
         if (session.cancelled || session.token !== token || node?.isConnected === false) {
-          if (canDetach && !gifNode.parentElement && parent.isConnected !== false) {
-            gifNode.removeAttribute("src");
-            parent.insertBefore(
-              gifNode,
-              nextSibling && nextSibling.parentElement === parent ? nextSibling : null
-            );
-          }
           return;
-        }
-        if (canDetach && !gifNode.parentElement) {
-          parent.insertBefore(
-            gifNode,
-            nextSibling && nextSibling.parentElement === parent ? nextSibling : null
-          );
         }
         if (node.classList?.contains?.("focused") !== false) {
           node.classList?.add?.("is-focus-gif-active");

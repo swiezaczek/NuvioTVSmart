@@ -292,8 +292,7 @@ export function animateHeroBackdropSwap(
       runHeroImageEnterAnimation(canvas, "home-hero-backdrop-transition-enter", {
         durationMs,
         isCurrent: () => Number(backdrop.heroBackdropTransitionToken || 0) === token,
-        onFinalize: finalize,
-        waitForDecode: false
+        onFinalize: finalize
       });
       return;
     }
@@ -319,45 +318,14 @@ export function animateHeroBackdropSwap(
       }
     }
 
-    backdrop.classList.remove("placeholder");
-    const nextSibling = backdrop.nextSibling;
-    if (parent && typeof backdrop.decode === "function") {
-      parent.removeChild(backdrop);
-      backdrop.decoding = "async";
-      backdrop.setAttribute("src", normalizedSrc);
-      backdrop.setAttribute("alt", normalizedAlt);
-      backdrop
-        .decode()
-        .catch(() => {})
-        .then(() => {
-          if (Number(backdrop.heroBackdropTransitionToken || 0) !== token) {
-            return;
-          }
-          if (ghost && ghost.parentElement === parent) {
-            parent.insertBefore(backdrop, ghost.nextSibling);
-          } else if (nextSibling && nextSibling.parentElement === parent) {
-            parent.insertBefore(backdrop, nextSibling);
-          } else {
-            parent.appendChild(backdrop);
-          }
-          runHeroImageEnterAnimation(backdrop, "home-hero-backdrop-transition-enter", {
-            durationMs,
-            isCurrent: () => Number(backdrop.heroBackdropTransitionToken || 0) === token,
-            onFinalize: finalize,
-            ghost,
-            waitForDecode: false
-          });
-        });
-      return;
-    }
-    backdrop.setAttribute("src", normalizedSrc);
-    backdrop.setAttribute("alt", normalizedAlt);
     runHeroImageEnterAnimation(backdrop, "home-hero-backdrop-transition-enter", {
       durationMs,
       isCurrent: () => Number(backdrop.heroBackdropTransitionToken || 0) === token,
       onFinalize: finalize,
-      ghost,
-      waitForDecode: true
+      ghost
     });
+    backdrop.classList.remove("placeholder");
+    backdrop.setAttribute("src", normalizedSrc);
+    backdrop.setAttribute("alt", normalizedAlt);
   });
 }
