@@ -89,7 +89,7 @@ function extractReleaseYear(item = {}) {
   return "";
 }
 
-function groupNodesByOffsetTop(nodes = []) {
+function groupNodesIntoTopBuckets(nodes = []) {
   const grouped = [];
   nodes.forEach((node) => {
     const top = Math.round(node.offsetTop);
@@ -101,7 +101,67 @@ function groupNodesByOffsetTop(nodes = []) {
     grouped.push({ top, nodes: [node] });
   });
   grouped.sort((left, right) => left.top - right.top);
-  return grouped.map((entry) => entry.nodes);
+  return grouped;
+}
+
+function groupNodesByOffsetTop(nodes = [], { cache = null, containerClientWidth = null } = {}) {
+  const list = Array.isArray(nodes) ? nodes : [];
+  const count = list.length;
+  const width = containerClientWidth == null ? null : Number(containerClientWidth);
+  if (!cache || typeof cache !== "object") {
+    return groupNodesIntoTopBuckets(list).map((entry) => entry.nodes);
+  }
+  if (!count) {
+    cache.cardCount = 0;
+    cache.containerClientWidth = width;
+    cache.firstNode = null;
+    cache.lastNode = null;
+    cache.lastRowTop = null;
+    cache.rows = [];
+    return cache.rows;
+  }
+  if (
+    Array.isArray(cache.rows) &&
+    cache.cardCount === count &&
+    cache.containerClientWidth === width &&
+    cache.firstNode === list[0] &&
+    cache.lastNode === list[count - 1]
+  ) {
+    return cache.rows;
+  }
+  if (
+    Array.isArray(cache.rows) &&
+    cache.cardCount > 0 &&
+    count > cache.cardCount &&
+    cache.containerClientWidth === width &&
+    cache.firstNode === list[0] &&
+    cache.lastNode === list[cache.cardCount - 1] &&
+    Number.isFinite(cache.lastRowTop)
+  ) {
+    const tailBuckets = groupNodesIntoTopBuckets(list.slice(cache.cardCount));
+    if (tailBuckets.length && tailBuckets[0].top >= cache.lastRowTop - 6) {
+      let startBucket = 0;
+      if (Math.abs(tailBuckets[0].top - cache.lastRowTop) <= 6 && cache.rows.length) {
+        cache.rows[cache.rows.length - 1].push(...tailBuckets[0].nodes);
+        startBucket = 1;
+      }
+      for (let i = startBucket; i < tailBuckets.length; i += 1) {
+        cache.rows.push(tailBuckets[i].nodes);
+      }
+      cache.cardCount = count;
+      cache.lastNode = list[count - 1];
+      cache.lastRowTop = tailBuckets[tailBuckets.length - 1].top;
+      return cache.rows;
+    }
+  }
+  const buckets = groupNodesIntoTopBuckets(list);
+  cache.cardCount = count;
+  cache.containerClientWidth = width;
+  cache.firstNode = list[0];
+  cache.lastNode = list[count - 1];
+  cache.lastRowTop = buckets.length ? buckets[buckets.length - 1].top : null;
+  cache.rows = buckets.map((entry) => entry.nodes);
+  return cache.rows;
 }
 
 function setContainerScrollTop(container, top, behavior = "auto") {

@@ -56,6 +56,12 @@ export function createCatalogSeeAllScreenMethods03() {
       this.posterOptionsController?.destroy?.({ restoreFocus: false });
       this.posterOptionsController = null;
       this.posterOptionsFocusKey = "";
+      if (this._catalogResizeHandler && typeof window !== "undefined" && typeof window.removeEventListener === "function") {
+        window.removeEventListener("resize", this._catalogResizeHandler);
+        this._catalogResizeHandler = null;
+      }
+      this._catalogRenderedGridState = null;
+      this._catalogNavRowCache = null;
       ScreenUtils.hide(this.container);
     }
   };

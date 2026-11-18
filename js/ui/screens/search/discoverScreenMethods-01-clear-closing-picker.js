@@ -83,6 +83,29 @@ export function createDiscoverScreenMethods01() {
         .catch(() => watchedItems);
       this.watchedTitleIds = buildWatchedTitleIdSet(projectedItems);
     },
+    updateRenderedWatchedBadges() {
+      const grid = this.container?.querySelector?.("#discoverGridMount");
+      if (!grid) {
+        return false;
+      }
+      const cards = grid.querySelectorAll(".seeall-card.focusable");
+      cards.forEach((card) => {
+        const itemIndex = Number(card.dataset?.itemIndex);
+        const item = Number.isInteger(itemIndex) ? this.items?.[itemIndex] : null;
+        const posterWrap = card.querySelector(".seeall-card-poster-wrap");
+        if (!item || !posterWrap) {
+          return;
+        }
+        const watched = isTitleItemWatched(item, this.watchedTitleIds);
+        const badge = posterWrap.querySelector(".title-watched-badge");
+        if (watched && !badge) {
+          posterWrap.insertAdjacentHTML("beforeend", renderTitleWatchedBadge());
+        } else if (!watched && badge) {
+          badge.remove();
+        }
+      });
+      return true;
+    },
     getRouteStateKey() {
       return "discover";
     },
@@ -190,6 +213,9 @@ export function createDiscoverScreenMethods01() {
       this.rowFocusedIndexByRow = {};
       this.pendingRestoreFocus = false;
       this.preserveViewportOnNextRender = false;
+      this._discoverRenderedGridState = null;
+      this._discoverLoadingRendered = null;
+      this._discoverNavRowCache = null;
       this.discoverVerticalFastScrollState = null;
       this.discoverVerticalFastScrollEndTimer = null;
       this.nextSkip = 0;
@@ -221,7 +247,9 @@ export function createDiscoverScreenMethods01() {
           }
           if (hasRestoredRouteState) {
             this.suppressInitialLoadingRenders = false;
-            this.requestRender();
+            if (!this.updateRenderedWatchedBadges()) {
+              this.requestRender();
+            }
             return;
           }
           await this.loadCatalogsAndContent();
@@ -314,7 +342,7 @@ export function createDiscoverScreenMethods01() {
         ? `${selectedCatalog.addonName || "Addon"} • ${formatAddonTypeLabel(selectedCatalog.type)}`
         : "Choose a catalog to start browsing";
     },
-    renderDiscoverCards(selectedCatalog = null) {
+    getDiscoverRenderItems() {
       // Tizen fast path: paged catalogs accumulate hundreds of items across
       // loads. Render bounded windows and expand as focus or scrolling nears
       // the current end. Finite sets render fully.
@@ -323,15 +351,13 @@ export function createDiscoverScreenMethods01() {
       const renderLimit = Number.isFinite(currentRenderLimit)
         ? Math.max(DISCOVER_ITEM_WINDOW_SIZE, currentRenderLimit)
         : DISCOVER_ITEM_WINDOW_SIZE;
-      const renderItems =
-        allItems.length > DISCOVER_ITEM_WINDOW_SIZE && this.hasMore && ScreenUtils.shouldSkipRouteEnter(this)
-          ? allItems.slice(0, Math.min(allItems.length, renderLimit))
-          : allItems;
-      return renderItems.length
-        ? renderItems
-            .map((item) => customPosterForItem(item, "search"))
-            .map(
-              (item, index) => `
+      return allItems.length > DISCOVER_ITEM_WINDOW_SIZE && this.hasMore && ScreenUtils.shouldSkipRouteEnter(this)
+        ? allItems.slice(0, Math.min(allItems.length, renderLimit))
+        : allItems;
+    },
+    renderDiscoverCard(rawItem, index, selectedCatalog = null) {
+      const item = customPosterForItem(rawItem, "search");
+      return `
                   <article class="discover-card seeall-card focusable"
                             data-action="openDetail"
                             data-item-id="${item.id || ""}"
@@ -362,9 +388,11 @@ export function createDiscoverScreenMethods01() {
                          : ""
                      }
                    </article>
-                 `
-            )
-            .join("")
+                 `;
+    },
+    renderDiscoverCards(selectedCatalog = null, renderItems = this.getDiscoverRenderItems()) {
+      return renderItems.length
+        ? renderItems.map((item, index) => this.renderDiscoverCard(item, index, selectedCatalog)).join("")
         : `<div class="seeall-empty">${escapeHtml(t("catalog_see_all_empty_title", {}, "No items available"))}</div>`;
     },
     maybeExpandRenderedItems(index) {

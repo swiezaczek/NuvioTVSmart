@@ -29,6 +29,7 @@ export function createFolderDetailScreenMethods03() {
   return {
     render() {
       this.cancelScheduledRender();
+      this.invalidateNavRowCache?.();
       if (this.useHomeFollowLayout) {
         this.renderFollowLayout();
         return;
@@ -206,9 +207,17 @@ export function createFolderDetailScreenMethods03() {
           `;
 
       ScreenUtils.indexFocusables(this.container);
+      if (typeof window !== "undefined" && typeof window.addEventListener === "function" && !this._folderResizeHandler) {
+        this._folderResizeHandler = () => {
+          this.invalidateNavRowCache?.();
+        };
+        window.addEventListener("resize", this._folderResizeHandler, { passive: true });
+      }
       this.buildNavigationModel();
       this.restoreFocus();
-      this.applyHeroToDom();
+      if (this.viewMode !== "TABBED_GRID") {
+        this.applyHeroToDom();
+      }
     },
     renderFollowLayout() {
       this.renderedLayoutMode = "modern";
@@ -297,15 +306,26 @@ export function createFolderDetailScreenMethods03() {
         if (!rowKey || this._trackScrollHandlers.has(track)) {
           return;
         }
+        let measuredTrackWidth = 0;
+        let cachedCardWidth = 230;
         const handler = () => {
-          if (this._trackPaginationInFlight?.has(rowKey)) {
+          if (this._trackPaginationInFlight?.has(rowKey) || this._trackPaginationFailed?.has(rowKey)) {
             return;
           }
-          const cards = track.querySelectorAll(".home-content-card:not(.home-poster-card-loading)");
-          const firstCard = cards[0];
-          const cardWidth = firstCard ? firstCard.offsetWidth : 230;
-          const nearEndThreshold = (cardWidth + 24) * 4;
-          const distanceFromEnd = track.scrollWidth - (track.scrollLeft + track.clientWidth);
+          const rowData = (this.rows || []).find((row) => String(row?.homeCatalogKey || "") === rowKey) || null;
+          const tabIndex = Number(rowData?.folderTabIndex ?? -1);
+          const tab = this.tabs?.[tabIndex] || null;
+          if (!rowData || !tab || tab.isAllTab || tab.loading || !tab.hasMore || tab.error || rowData?.result?.status === "error") {
+            return;
+          }
+          const trackClientWidth = Number(track.clientWidth || 0);
+          if (trackClientWidth !== measuredTrackWidth) {
+            const firstCard = track.querySelector(".home-content-card:not(.home-poster-card-loading)");
+            cachedCardWidth = firstCard ? Number(firstCard.offsetWidth || 230) : 230;
+            measuredTrackWidth = trackClientWidth;
+          }
+          const nearEndThreshold = (cachedCardWidth + 24) * 4;
+          const distanceFromEnd = track.scrollWidth - (track.scrollLeft + trackClientWidth);
           if (distanceFromEnd > nearEndThreshold) {
             return;
           }

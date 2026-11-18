@@ -6,6 +6,7 @@
 export const STREAM_VIRTUALIZATION_THRESHOLD = 100;
 export const STREAM_VIRTUALIZATION_MIN_WINDOW = 20;
 export const STREAM_VIRTUALIZATION_OVERSCAN_PX = 720;
+export const STREAM_VIRTUALIZATION_HYSTERESIS_PX = 360;
 export const STREAM_VIRTUALIZATION_DEFAULT_ROW_EXTENT = 232;
 
 function finitePositive(value, fallback) {
@@ -100,7 +101,9 @@ export function getStreamVirtualWindow(
     viewportHeight = 0,
     overscanPx = STREAM_VIRTUALIZATION_OVERSCAN_PX,
     minWindow = STREAM_VIRTUALIZATION_MIN_WINDOW,
-    preferredIndex = null
+    preferredIndex = null,
+    previousWindow = null,
+    hysteresisPx = STREAM_VIRTUALIZATION_HYSTERESIS_PX
   } = {}
 ) {
   const count = Array.isArray(model?.keys) ? model.keys.length : 0;
@@ -132,6 +135,38 @@ export function getStreamVirtualWindow(
     preferredIndex != null && preferredIndex !== "" && Number.isFinite(preferredValue)
       ? clampIndex(preferredValue, count)
       : -1;
+
+  if (
+    previousWindow &&
+    Number.isInteger(previousWindow.start) &&
+    Number.isInteger(previousWindow.end) &&
+    previousWindow.start >= 0 &&
+    previousWindow.end >= previousWindow.start &&
+    previousWindow.end < count &&
+    previousWindow.end - previousWindow.start + 1 >= safeMinWindow &&
+    (preferred < 0 || (preferred >= previousWindow.start && preferred <= previousWindow.end))
+  ) {
+    const effectiveHysteresis = Math.min(safeOverscan, finiteNonNegative(hysteresisPx, 0));
+    const keepMargin = Math.max(0, safeOverscan - effectiveHysteresis);
+    const requiredTop = Math.max(0, safeScrollTop - keepMargin);
+    const requiredBottom = Math.min(totalExtent, safeScrollTop + safeViewportHeight + keepMargin);
+    const prevTopOffset = Math.max(0, Number(offsets[previousWindow.start] || 0));
+    const prevBottomOffset = Math.min(
+      totalExtent,
+      Number(offsets[previousWindow.end + 1] ?? totalExtent)
+    );
+    const coversTop = previousWindow.start === 0 || prevTopOffset <= requiredTop;
+    const coversBottom = previousWindow.end === count - 1 || prevBottomOffset >= requiredBottom;
+    if (coversTop && coversBottom) {
+      return {
+        start: previousWindow.start,
+        end: previousWindow.end,
+        topSpacer: prevTopOffset,
+        bottomSpacer: Math.max(0, totalExtent - prevBottomOffset),
+        totalExtent
+      };
+    }
+  }
 
   let start = findStreamVirtualIndex(offsets, Math.max(0, safeScrollTop - safeOverscan));
   let end = findStreamVirtualIndex(
