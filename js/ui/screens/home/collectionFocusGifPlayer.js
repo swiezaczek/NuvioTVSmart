@@ -2,8 +2,10 @@ const MAX_RAW_CACHE_ENTRIES = 20;
 const MAX_RAW_CACHE_BYTES = 8 * 1024 * 1024;
 const MAX_SINGLE_RAW_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_ACTIVE_BITMAP_BYTES = 36 * 1024 * 1024;
-const LOOKAHEAD_BUFFER_FRAMES = 16;
-const INITIAL_PREBUFFER_CAP = 6;
+const LOOKAHEAD_BUFFER_FRAMES = 18;
+const INITIAL_PREBUFFER_CAP = 10;
+const DECODE_BATCH_CONCURRENCY = 4;
+const TAIL_AHEAD_TARGET = 12;
 const NEIGHBOR_PREFETCH_DELAY_MS = 700;
 const MAX_NEIGHBOR_PREFETCH_ITEMS = 2;
 const DEFAULT_FRAME_DURATION_MS = 40;
@@ -530,8 +532,13 @@ export const collectionFocusGifPlayer = {
           return true;
         };
 
-        for (let i = 1; i < initialTargetCount; i += 1) {
-          if (!(await decodeFrameAt(i)) || !isStillValid()) {
+        for (let i = 1; i < initialTargetCount; i += DECODE_BATCH_CONCURRENCY) {
+          const batchIndices = [];
+          for (let k = i; k < Math.min(initialTargetCount, i + DECODE_BATCH_CONCURRENCY); k += 1) {
+            batchIndices.push(k);
+          }
+          const results = await Promise.all(batchIndices.map((idx) => decodeFrameAt(idx)));
+          if (!isStillValid() || results.some((ok) => !ok)) {
             break;
           }
         }
@@ -575,9 +582,40 @@ export const collectionFocusGifPlayer = {
               break;
             }
             ahead += 1;
-            if (ahead >= 12) break;
+            if (ahead >= TAIL_AHEAD_TARGET) break;
           }
           return ahead;
+        };
+
+        const nextBatchIndices = () => {
+          const batchIndices = [];
+          if (cacheAllFrames) {
+            let scanned = 0;
+            while (
+              scanned < frameCount &&
+              batchIndices.length < DECODE_BATCH_CONCURRENCY &&
+              session.frames.size + batchIndices.length < frameCount
+            ) {
+              const idx = nextDecodeCursor;
+              nextDecodeCursor = (nextDecodeCursor + 1) % frameCount;
+              scanned += 1;
+              if (!session.frames.has(idx) && !batchIndices.includes(idx)) {
+                batchIndices.push(idx);
+              }
+            }
+            return batchIndices;
+          }
+          for (
+            let offset = 0;
+            offset < maxWindowFrames && batchIndices.length < DECODE_BATCH_CONCURRENCY;
+            offset += 1
+          ) {
+            const candidateIdx = (playIndex + offset) % frameCount;
+            if (!session.frames.has(candidateIdx) && !batchIndices.includes(candidateIdx)) {
+              batchIndices.push(candidateIdx);
+            }
+          }
+          return batchIndices;
         };
 
         const pumpDecodeAhead = async () => {
@@ -586,41 +624,26 @@ export const collectionFocusGifPlayer = {
           }
           decodingActive = true;
           try {
-            if (cacheAllFrames) {
-              while (isStillValid() && session.frames.size < frameCount) {
-                const idx = nextDecodeCursor;
-                nextDecodeCursor = (nextDecodeCursor + 1) % frameCount;
-                await decodeFrameAt(idx);
-                if (isStillValid()) {
-                  const delayMs = countDecodedAhead() >= 6 ? TAIL_DECODE_PACE_MS : 0;
-                  await yieldToRenderer(delayMs);
-                }
+            const targetSize = cacheAllFrames ? frameCount : maxWindowFrames;
+            while (isStillValid() && session.frames.size < targetSize) {
+              const batchIndices = nextBatchIndices();
+              if (!batchIndices.length) {
+                break;
               }
-              if (session.frames.size >= frameCount && session.decoder) {
-                try {
-                  session.decoder.close();
-                } catch (_) {}
-                session.decoder = null;
+              const results = await Promise.all(batchIndices.map((idx) => decodeFrameAt(idx)));
+              if (!results.some(Boolean)) {
+                break;
               }
-            } else {
-              while (isStillValid() && session.frames.size < maxWindowFrames) {
-                let targetIdx = -1;
-                for (let offset = 0; offset < maxWindowFrames; offset += 1) {
-                  const candidateIdx = (playIndex + offset) % frameCount;
-                  if (!session.frames.has(candidateIdx)) {
-                    targetIdx = candidateIdx;
-                    break;
-                  }
-                }
-                if (targetIdx === -1) {
-                  break;
-                }
-                await decodeFrameAt(targetIdx);
-                if (isStillValid()) {
-                  const delayMs = countDecodedAhead() >= 6 ? TAIL_DECODE_PACE_MS : 0;
-                  await yieldToRenderer(delayMs);
-                }
+              if (isStillValid()) {
+                const delayMs = countDecodedAhead() >= TAIL_AHEAD_TARGET ? TAIL_DECODE_PACE_MS : 0;
+                await yieldToRenderer(delayMs);
               }
+            }
+            if (cacheAllFrames && session.frames.size >= frameCount && session.decoder) {
+              try {
+                session.decoder.close();
+              } catch (_) {}
+              session.decoder = null;
             }
           } catch (_) {
             // Decode error during background loop falls back cleanly on next check.
