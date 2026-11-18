@@ -251,13 +251,18 @@ export function preloadHeroBackdrop(src) {
     typeof globalThis.createImageBitmap === "function" &&
     /^https?:\/\//i.test(normalized)
   ) {
-    const cached = heroBackdropBitmapCache.get(normalized);
+    const prefs = typeof LayoutPreferences?.get === "function" ? LayoutPreferences.get() || {} : {};
+    const isFullScreenBackdrop = prefs.homeLayout === "classic" || Boolean(prefs.modernHeroFullScreenBackdropEnabled);
+    const resizeWidth = isFullScreenBackdrop ? 1920 : 960;
+    const cacheLimit = isFullScreenBackdrop ? 4 : HERO_BACKDROP_BITMAP_CACHE_LIMIT;
+    const cacheKey = `${resizeWidth}:${normalized}`;
+    const cached = heroBackdropBitmapCache.get(cacheKey);
     if (cached) {
-      heroBackdropBitmapCache.delete(normalized);
-      heroBackdropBitmapCache.set(normalized, cached);
+      heroBackdropBitmapCache.delete(cacheKey);
+      heroBackdropBitmapCache.set(cacheKey, cached);
       return cached;
     }
-    while (heroBackdropBitmapCache.size >= HERO_BACKDROP_BITMAP_CACHE_LIMIT) {
+    while (heroBackdropBitmapCache.size >= cacheLimit) {
       const oldestKey = heroBackdropBitmapCache.keys().next().value;
       const oldestPromise = heroBackdropBitmapCache.get(oldestKey);
       heroBackdropBitmapCache.delete(oldestKey);
@@ -274,19 +279,19 @@ export function preloadHeroBackdrop(src) {
         }
         const blob = await response.blob();
         const bitmap = await globalThis.createImageBitmap(blob, {
-          resizeWidth: 960,
+          resizeWidth,
           resizeQuality: "medium"
         });
         return { loaded: true, bitmap };
       } catch (_) {
-        if (heroBackdropBitmapCache.get(normalized) === promise) {
-          heroBackdropBitmapCache.delete(normalized);
+        if (heroBackdropBitmapCache.get(cacheKey) === promise) {
+          heroBackdropBitmapCache.delete(cacheKey);
         }
         const loaded = await preloadImageSource(normalized);
         return { loaded, bitmap: null };
       }
     })();
-    heroBackdropBitmapCache.set(normalized, promise);
+    heroBackdropBitmapCache.set(cacheKey, promise);
     return promise;
   }
   return preloadImageSource(normalized).then((loaded) => ({ loaded, bitmap: null }));
