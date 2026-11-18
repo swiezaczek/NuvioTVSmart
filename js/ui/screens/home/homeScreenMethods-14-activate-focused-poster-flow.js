@@ -6,7 +6,7 @@ export function createHomeScreenMethods14() {
   const { Router, applyTrailerAudioPreferences, getTvRuntimePerformanceProfile } = internals;
 
   return {
-    async activateFocusedPosterFlow(node, flowToken = Number(this.focusedPosterFlowToken || 0)) {
+    async activateFocusedPosterFlow(node, flowToken = Number(this.focusedPosterFlowToken || 0), { dwellMs = 0 } = {}) {
       if (this.isCollectionFolderNode(node)) {
         if (!node?.isConnected || !node.classList.contains("focused")) {
           return;
@@ -21,12 +21,15 @@ export function createHomeScreenMethods14() {
           clearTimeout(this.collectionFocusGifTimer);
           this.collectionFocusGifTimer = null;
         }
-        await new Promise((resolve) => {
-          this.collectionFocusGifTimer = setTimeout(() => {
-            this.collectionFocusGifTimer = null;
-            resolve();
-          }, 140);
-        });
+        const resolvedDwellMs = Math.max(0, Number(dwellMs || 0));
+        if (resolvedDwellMs > 0) {
+          await new Promise((resolve) => {
+            this.collectionFocusGifTimer = setTimeout(() => {
+              this.collectionFocusGifTimer = null;
+              resolve();
+            }, resolvedDwellMs);
+          });
+        }
         if (
           Router.getCurrent() !== "home" ||
           !node.isConnected ||

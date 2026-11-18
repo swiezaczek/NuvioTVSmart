@@ -369,7 +369,7 @@ test("buildYoutubeEmbedUrl omits random _cb so existingFrame reuse matches", asy
   assert.equal(new URL(first).searchParams.has("_cb"), false);
 });
 
-test("collection GIF focus dwell waits 140ms, cancels on rapid blur, and unloads src immediately", async () => {
+test("collection GIF focus starts immediately on single step and waits 100ms on held repeat", async () => {
   class Image {
     dataset = { src: "https://example.invalid/focus.webp" };
     attributes = new Map();
@@ -453,17 +453,17 @@ test("collection GIF focus dwell waits 140ms, cancels on rapid blur, and unloads
     shouldPreserveCollectionHeroMedia: () => false
   });
 
-  // Focusing cardA must NOT hydrate immediately before 140ms dwell.
-  screen.scheduleFocusedPosterFlow(cardA.node);
+  // Held repeat navigation delays hydration (~100ms) so passed-over cards skip decode.
+  screen.scheduleFocusedPosterFlow(cardA.node, { repeat: true });
   assert.equal(cardA.img.getAttribute("src"), undefined);
-  await new Promise((r) => setTimeout(r, 60));
-  assert.equal(cardA.img.getAttribute("src"), undefined, "still inside 140ms dwell");
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(cardA.img.getAttribute("src"), undefined, "still inside repeat skip dwell");
 
-  // Moving focus to cardB before 140ms cancels cardA hydration.
+  // Moving focus to cardB while repeating cancels cardA hydration.
   focused = cardB.node;
   cardA.node.classList.remove("focused");
-  screen.scheduleFocusedPosterFlow(cardB.node);
-  await new Promise((r) => setTimeout(r, 170));
+  screen.scheduleFocusedPosterFlow(cardB.node, { repeat: true });
+  await new Promise((r) => setTimeout(r, 140));
   assert.equal(
     cardA.img.getAttribute("src"),
     undefined,
@@ -472,7 +472,17 @@ test("collection GIF focus dwell waits 140ms, cancels on rapid blur, and unloads
   assert.equal(
     cardB.img.getAttribute("src"),
     "https://example.invalid/focus.webp",
-    "settled card hydrates after 140ms"
+    "settled card hydrates after repeat dwell"
+  );
+
+  // Non-repeat single step starts immediately without artificial dwell pause.
+  const cardC = makeCard();
+  focused = cardC.node;
+  screen.scheduleFocusedPosterFlow(cardC.node);
+  assert.equal(
+    cardC.img.getAttribute("src"),
+    "https://example.invalid/focus.webp",
+    "non-repeat collection focus starts immediately without artificial dwell pause"
   );
 
   // Immediate blur removes src.

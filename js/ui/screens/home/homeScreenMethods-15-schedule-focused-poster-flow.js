@@ -12,7 +12,7 @@ export function createHomeScreenMethods15() {
   } = internals;
 
   return {
-    scheduleFocusedPosterFlow(node, { deferUntilVerticalSettle = false } = {}) {
+    scheduleFocusedPosterFlow(node, { deferUntilVerticalSettle = false, repeat = false } = {}) {
       if (this.isCollectionFolderNode(node)) {
         this.cancelFocusedPosterFlow();
         this.clearFocusedPosterFlowState();
@@ -35,6 +35,7 @@ export function createHomeScreenMethods15() {
         }
         const flowToken = Number(this.focusedPosterFlowToken || 0) + 1;
         this.focusedPosterFlowToken = flowToken;
+        const dwellMs = repeat ? 100 : 0;
         const startCollectionDwell = () => {
           this.collectionFocusGifSettleTimer = null;
           if (
@@ -49,7 +50,7 @@ export function createHomeScreenMethods15() {
             this.collectionFocusGifSettleTimer = setTimeout(startCollectionDwell, MODERN_HOME_CONSTANTS.verticalScrollSettlePollMs);
             return;
           }
-          this.activateFocusedPosterFlow(node, flowToken).catch((error) => {
+          this.activateFocusedPosterFlow(node, flowToken, { dwellMs }).catch((error) => {
             console.warn("Collection focus GIF flow failed", error);
           });
         };
