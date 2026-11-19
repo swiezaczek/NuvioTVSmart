@@ -67,7 +67,44 @@ function emptySnapshot() {
   };
 }
 
+let envelopeCacheRaw = null;
+let envelopeCacheValue = null;
+
+function readEnvelopeRaw() {
+  try {
+    if (typeof localStorage === "undefined") {
+      return { available: false, raw: null };
+    }
+    return { available: true, raw: localStorage.getItem(STORE_KEY) };
+  } catch (_) {
+    return { available: false, raw: null };
+  }
+}
+
 function readEnvelope() {
+  const { available, raw } = readEnvelopeRaw();
+  if (available) {
+    if (raw === envelopeCacheRaw && envelopeCacheValue) {
+      return envelopeCacheValue;
+    }
+    let stored = null;
+    if (raw !== null) {
+      try {
+        stored = JSON.parse(raw);
+      } catch (_) {
+        stored = null;
+      }
+    }
+    const envelope =
+      stored && typeof stored === "object" && stored.profiles
+        ? stored
+        : { version: 1, profiles: {} };
+    envelopeCacheRaw = raw;
+    envelopeCacheValue = envelope;
+    return envelope;
+  }
+  envelopeCacheRaw = null;
+  envelopeCacheValue = null;
   const stored = LocalStore.get(STORE_KEY, null);
   return stored && typeof stored === "object" && stored.profiles
     ? stored
@@ -87,16 +124,37 @@ function getSnapshot(profileId = activeProfileId()) {
 }
 
 function saveSnapshot(snapshot, profileId = activeProfileId()) {
-  const envelope = readEnvelope();
-  envelope.profiles[String(profileId)] = snapshot;
+  const current = readEnvelope();
+  const envelope = {
+    ...current,
+    profiles: {
+      ...current.profiles,
+      [String(profileId)]: snapshot
+    }
+  };
   LocalStore.set(STORE_KEY, envelope);
+  const { available, raw } = readEnvelopeRaw();
+  if (available) {
+    envelopeCacheRaw = raw;
+    envelopeCacheValue = envelope;
+  }
   return snapshot;
 }
 
 function clearSnapshot(profileId = activeProfileId()) {
-  const envelope = readEnvelope();
-  delete envelope.profiles[String(profileId)];
+  const current = readEnvelope();
+  const nextProfiles = { ...current.profiles };
+  delete nextProfiles[String(profileId)];
+  const envelope = {
+    ...current,
+    profiles: nextProfiles
+  };
   LocalStore.set(STORE_KEY, envelope);
+  const { available, raw } = readEnvelopeRaw();
+  if (available) {
+    envelopeCacheRaw = raw;
+    envelopeCacheValue = envelope;
+  }
 }
 
 function mediaForEntry(entry = {}) {

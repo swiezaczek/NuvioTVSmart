@@ -343,6 +343,18 @@ function retireWorker(state, worker, reason) {
 }
 
 function pump(state) {
+  if (!state.disposed && state.queue.length > 0 && state.workers.length === 0) {
+    const count = workerCount();
+    for (let index = 0; index < count; index += 1) {
+      if (!spawnWorker(state)) {
+        break;
+      }
+    }
+    if (!state.workers.length) {
+      state.queue.splice(0).forEach((job) => job.settle(null, "no workers"));
+      return;
+    }
+  }
   while (!state.disposed && state.idle.length && state.queue.length) {
     // Highest priority first, newest first within a priority: after a long
     // scroll the latest requests are the cards on screen, while the rows passed
@@ -617,6 +629,41 @@ export function resetHomeArtworkRescaler() {
   const state = pool;
   pool = null;
   resetPool(state);
+}
+
+function suspendIdlePoolWorkers(state) {
+  if (!state || state.disposed) {
+    return;
+  }
+  for (const [key, entry] of state.cache) {
+    if (entry.uses > 0) {
+      continue;
+    }
+    URL.revokeObjectURL(entry.objectUrl);
+    state.cache.delete(key);
+  }
+  if (state.jobs.size > 0 || state.queue.length > 0) {
+    return;
+  }
+  state.workers.splice(0).forEach((worker) => {
+    try {
+      worker.terminate();
+    } catch (_) {}
+  });
+  state.idle.length = 0;
+}
+
+/**
+ * Terminate idle Home rescaler worker threads and free unreferenced cached blobs
+ * (e.g. when entering the player) while keeping painted uses > 0 URLs intact.
+ */
+export function suspendIdleHomeArtworkWorkers() {
+  suspendIdlePoolWorkers(pool);
+}
+
+/** Terminate idle non-Home rescaler worker threads and free unreferenced blobs. */
+export function suspendIdleArtworkWorkers() {
+  suspendIdlePoolWorkers(genericPool);
 }
 
 /** Drop the non-Home pool and its cached urls. */

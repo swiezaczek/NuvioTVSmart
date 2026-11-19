@@ -6,10 +6,23 @@ const DATABASE_NAME = "nuvio_member_asset_cache";
 const DATABASE_VERSION = 1;
 const ASSET_STORE_NAME = "assets";
 
+const MEMORY_ASSETS_MAX_ENTRIES = 40;
 const memoryAssets = new Map();
 let databasePromise = null;
 let storageWriteQueue = Promise.resolve();
 let storageGeneration = 0;
+
+function rememberMemoryAsset(key, blob) {
+  if (memoryAssets.has(key)) {
+    memoryAssets.delete(key);
+  } else if (memoryAssets.size >= MEMORY_ASSETS_MAX_ENTRIES) {
+    const oldestKey = memoryAssets.keys().next().value;
+    if (oldestKey !== undefined) {
+      memoryAssets.delete(oldestKey);
+    }
+  }
+  memoryAssets.set(key, blob);
+}
 
 function normalizeCatalogPayload(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
@@ -58,7 +71,9 @@ function isBlobLike(value) {
 
 async function readAsset(key) {
   if (memoryAssets.has(key)) {
-    return memoryAssets.get(key);
+    const cached = memoryAssets.get(key);
+    rememberMemoryAsset(key, cached);
+    return cached;
   }
   const generation = storageGeneration;
   const database = await openDatabase();
@@ -73,7 +88,7 @@ async function readAsset(key) {
         const blob = request.result?.blob;
         if (isBlobLike(blob)) {
           if (generation === storageGeneration) {
-            memoryAssets.set(key, blob);
+            rememberMemoryAsset(key, blob);
           }
           resolve(blob);
           return;
@@ -101,7 +116,7 @@ async function writeAsset(key, blob, shouldSave = null) {
     if (typeof shouldSave === "function" && !shouldSave()) {
       return false;
     }
-    memoryAssets.set(key, blob);
+    rememberMemoryAsset(key, blob);
     const database = await openDatabase();
     if (!database) {
       return true;

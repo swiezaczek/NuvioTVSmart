@@ -5,7 +5,7 @@ export function createHomeScreenMethods30() {
   const { ScreenUtils, Platform } = internals;
 
   return {
-    cleanup() {
+    cleanup({ discardPreservedDom = false } = {}) {
       this.homeRowWindow?.destroy();
       this.homeRowWindow = null;
       this.homeRowWindowRoot = null;
@@ -136,6 +136,7 @@ export function createHomeScreenMethods30() {
       this.cachedModernPortraitPosterMetrics = null;
       this.cachedModernLandscapePosterMetrics = null;
       const preserveRenderedTvHome = Boolean(
+        !discardPreservedDom &&
         (Platform.isTizen() || Platform.isWebOS()) &&
         this.hasLoadedOnce &&
         Array.isArray(this.rows) &&
@@ -182,6 +183,54 @@ export function createHomeScreenMethods30() {
         this.container.style.removeProperty("visibility");
         this.container.style.removeProperty("pointer-events");
         this.renderedMarkup = null;
+        ScreenUtils.hide(this.container);
+      }
+    },
+    resetForSignOut() {
+      const hadActiveState = Boolean(
+        this.boundHomeEventContainer ||
+        this.homeRowWindow ||
+        this.homeLazyImageHydrationRaf ||
+        this.homeDomPreserved ||
+        this.hasLoadedOnce ||
+        this.container?.childNodes?.length
+      );
+      if (hadActiveState) {
+        this.cleanup({ discardPreservedDom: true });
+      } else {
+        this.homeLoadToken = (this.homeLoadToken || 0) + 1;
+      }
+      this.releaseAllHomeLazyImages?.();
+      resetHomeArtworkRescaler();
+      this.hasLoadedOnce = false;
+      this.hasPaintedInitialHomeContent = false;
+      this.hasAppliedInitialContinueWatchingFocus = false;
+      this.homeDomPreserved = false;
+      this.rows = [];
+      this.heroCandidates = [];
+      this.heroItem = null;
+      this.continueWatchingItems = [];
+      this.sidebarProfile = null;
+      this.savedFocusStates = {};
+      this.loadedProfileId = "";
+      this.loadedWatchProgressSourceKey = "";
+      this.loadedHomeRouteInputSignature = "";
+      this.pendingHomeCatalogDescriptors = [];
+      this.lastHomeCatalogRefreshAtMs = 0;
+      this.lastHomeCatalogReturnCheckAtMs = 0;
+      this.renderedMarkup = null;
+      if (this.container) {
+        this.container.classList?.remove?.("home-dom-preserved");
+        if (this.container.style?.removeProperty) {
+          this.container.style.removeProperty("position");
+          this.container.style.removeProperty("top");
+          this.container.style.removeProperty("right");
+          this.container.style.removeProperty("bottom");
+          this.container.style.removeProperty("left");
+          this.container.style.removeProperty("visibility");
+          this.container.style.removeProperty("pointer-events");
+        }
+        this.container.innerHTML = "";
         ScreenUtils.hide(this.container);
       }
     }

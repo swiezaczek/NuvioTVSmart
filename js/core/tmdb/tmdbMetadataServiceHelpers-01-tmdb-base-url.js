@@ -86,6 +86,19 @@ export const entityBrowseCache = new Map();
 
 export const moreLikeThisCache = new Map();
 
+export function setBoundedCacheEntry(cache, key, value, maxEntries = 150) {
+  if (!(cache instanceof Map)) return;
+  if (cache.has(key)) {
+    cache.delete(key);
+  } else if (cache.size >= maxEntries) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey !== undefined) {
+      cache.delete(oldestKey);
+    }
+  }
+  cache.set(key, value);
+}
+
 export function resolveType(contentType) {
   const normalized = String(contentType || "").toLowerCase();
   if (normalized === "series" || normalized === "tv" || normalized === "show" || normalized === "tvshow") {

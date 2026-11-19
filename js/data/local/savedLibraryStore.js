@@ -42,10 +42,44 @@ function dedupeAndSort(items = []) {
   );
 }
 
+let listAllCacheRaw = null;
+let listAllCacheValue = null;
+
+function readSavedLibraryRaw() {
+  try {
+    if (typeof localStorage === "undefined") {
+      return { available: false, raw: null };
+    }
+    return { available: true, raw: localStorage.getItem(SAVED_LIBRARY_KEY) };
+  } catch (_) {
+    return { available: false, raw: null };
+  }
+}
+
 export const SavedLibraryStore = {
   listAll() {
-    const raw = LocalStore.get(SAVED_LIBRARY_KEY, []);
-    return dedupeAndSort(Array.isArray(raw) ? raw : []);
+    const { available, raw } = readSavedLibraryRaw();
+    if (available) {
+      if (raw === listAllCacheRaw && Array.isArray(listAllCacheValue)) {
+        return listAllCacheValue.map((item) => ({ ...item }));
+      }
+      let parsed = [];
+      if (raw !== null) {
+        try {
+          parsed = JSON.parse(raw);
+        } catch (_) {
+          parsed = [];
+        }
+      }
+      const items = dedupeAndSort(Array.isArray(parsed) ? parsed : []);
+      listAllCacheRaw = raw;
+      listAllCacheValue = items;
+      return items.map((item) => ({ ...item }));
+    }
+    listAllCacheRaw = null;
+    listAllCacheValue = null;
+    const fallback = LocalStore.get(SAVED_LIBRARY_KEY, []);
+    return dedupeAndSort(Array.isArray(fallback) ? fallback : []);
   },
 
   list() {

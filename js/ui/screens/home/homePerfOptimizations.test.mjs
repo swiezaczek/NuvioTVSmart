@@ -658,3 +658,213 @@ test("persistHomeCatalogSnapshot defers writes until >1500ms after last Home D-p
   context.persistFn(screen, 1, { force: true, Router: { getCurrent: () => "home" } });
   assert.equal(writes.length, 1, "snapshot writes once >1500ms after last D-pad press");
 });
+
+test("animateSpringScroll updates max when container grows mid-flight so rAF settles", async () => {
+  const rafQueue = [];
+  let fakeNow = 0;
+  const context = vm.createContext({
+    console,
+    Math,
+    Number,
+    String,
+    Boolean,
+    WeakMap,
+    performance: { now: () => fakeNow },
+    requestAnimationFrame: (cb) => {
+      rafQueue.push(cb);
+      return rafQueue.length;
+    },
+    cancelAnimationFrame: () => {},
+    isModernTvProfile: () => false,
+    getTvRuntimePerformanceProfile: () => ({}),
+    globalThis: null,
+    internals: {
+      MODERN_HOME_CONSTANTS: {
+        springScrollStiffness: 300,
+        springScrollDampingRatio: 1
+      },
+      MODERN_CAMERA_PAN_EASING: "linear"
+    }
+  });
+  context.globalThis = context;
+  await loadModuleIntoContext("./homeScreenMethods-02-restore-modern-focus-state.js", context);
+  vm.runInContext("globalThis.api = createHomeScreenMethods02();", context);
+
+  const screen = Object.assign(Object.create(context.api), {
+    shouldUseImmediateFocusScroll: () => false
+  });
+  const container = {
+    scrollLeft: 0,
+    scrollWidth: 1000,
+    clientWidth: 400
+  };
+  // First target with initial max = 600
+  screen.animateSpringScroll(container, "scrollLeft", 500);
+  // Container expands mid-flight (pagination/deferred items) and user moves further right
+  container.scrollWidth = 2000;
+  screen.animateSpringScroll(container, "scrollLeft", 1200);
+
+  let steps = 0;
+  while (rafQueue.length && steps < 300) {
+    fakeNow += 16;
+    const cb = rafQueue.shift();
+    cb(fakeNow);
+    steps += 1;
+  }
+  assert.ok(
+    steps < 300,
+    `spring scroll must settle instead of looping infinitely (ran ${steps} steps)`
+  );
+  assert.equal(container.scrollLeft, 1200);
+});
+
+test("fitSidebarLabel invalidates cache when --app-font-family changes", async () => {
+  let scrollReads = 0;
+  let currentFont = "Inter, sans-serif";
+  const context = vm.createContext({
+    console,
+    Math,
+    Number,
+    String,
+    Map,
+    document: {
+      documentElement: {
+        lang: "en",
+        style: {
+          getPropertyValue: (name) => (name === "--app-font-family" ? currentFont : "")
+        }
+      },
+      fonts: { status: "loaded" }
+    },
+    getComputedStyle: () => ({ fontSize: "40px" }),
+    I18n: { getLocale: () => "en" },
+    Router: {},
+    ProfileManager: {},
+    AvatarRepository: {},
+    MemberAccessRepository: {},
+    getTvRuntimePerformanceProfile: () => ({})
+  });
+  context.globalThis = context;
+  await loadModuleIntoContext(
+    "../../components/sidebarNavigationHelpers-01-root-sidebar-items.js",
+    context
+  );
+
+  function makeLabel() {
+    const style = {};
+    return {
+      isConnected: true,
+      textContent: "MyLongLabel",
+      className: "modern-sidebar-nav-label",
+      style,
+      clientWidth: 150,
+      get scrollWidth() {
+        scrollReads += 1;
+        const size = Number.parseFloat(style.fontSize) || 40;
+        return Math.round(size * 5);
+      },
+      getBoundingClientRect: () => ({ width: 150 })
+    };
+  }
+
+  context.fitSidebarLabel(makeLabel(), 18);
+  const afterFirst = scrollReads;
+  context.fitSidebarLabel(makeLabel(), 18);
+  assert.equal(scrollReads, afterFirst, "same font hits cache");
+
+  currentFont = "Roboto, sans-serif";
+  context.fitSidebarLabel(makeLabel(), 18);
+  assert.ok(scrollReads > afterFirst, "changing --app-font-family busts sidebar label fit cache");
+});
+
+test("resetForSignOut discards preserved TV Home DOM and resets rescaler pool", async () => {
+  let resetRescalerCalls = 0;
+  let releaseAllCalls = 0;
+  let hideCalls = 0;
+  const classes = new Set(["home-dom-preserved"]);
+  const removedProps = [];
+  const container = {
+    childNodes: [{}],
+    innerHTML: "<div>old account</div>",
+    classList: {
+      add: (c) => classes.add(c),
+      remove: (c) => classes.delete(c),
+      contains: (c) => classes.has(c)
+    },
+    style: {
+      removeProperty: (p) => removedProps.push(p)
+    }
+  };
+  const context = vm.createContext({
+    console,
+    Array,
+    Boolean,
+    String,
+    Number,
+    Set,
+    WeakMap,
+    clearTimeout,
+    cancelAnimationFrame: () => {},
+    resetHomeArtworkRescaler: () => {
+      resetRescalerCalls += 1;
+    },
+    internals: {
+      ScreenUtils: {
+        hide: () => {
+          hideCalls += 1;
+        }
+      },
+      Platform: {
+        isTizen: () => true,
+        isWebOS: () => false
+      }
+    }
+  });
+  context.globalThis = context;
+  await loadModuleIntoContext("./homeScreenMethods-30-cleanup.js", context);
+  vm.runInContext("globalThis.api = createHomeScreenMethods30();", context);
+
+  const screen = Object.assign(Object.create(context.api), {
+    container,
+    hasLoadedOnce: true,
+    hasPaintedInitialHomeContent: true,
+    homeDomPreserved: true,
+    rows: [{ id: "row1" }],
+    heroCandidates: [{ id: "h1" }],
+    heroItem: { id: "h1" },
+    loadedProfileId: "1",
+    persistCurrentFocusState: () => {},
+    cancelInitialHomeLoadTimeout: () => {},
+    cancelScheduledRender: () => {},
+    cancelModernCameraFollow: () => {},
+    endModernVerticalFastScroll: () => {},
+    stopHeroRotation: () => {},
+    cancelPendingHeroFocus: () => {},
+    cancelFocusedPosterFlow: () => {},
+    clearFocusedPosterFlowState: () => {},
+    collapseFocusedPoster: () => {},
+    clearHomeTrailerLayers: () => {},
+    teardownGridStickyHeader: () => {},
+    teardownModernTrackScrollPagination: () => {},
+    teardownContinueWatchingProgressiveRendering: () => {},
+    cancelModernSidebarPillAutoCollapse: () => {},
+    cancelPendingContinueWatchingEnter: () => {},
+    cancelPendingContinueWatchingHold: () => {},
+    destroyHomeHoldDialog: () => {},
+    unlockHomeHoldFocus: () => {},
+    releaseAllHomeLazyImages: () => {
+      releaseAllCalls += 1;
+    }
+  });
+
+  screen.resetForSignOut();
+  assert.equal(screen.homeDomPreserved, false);
+  assert.equal(screen.hasLoadedOnce, false);
+  assert.deepEqual(Array.from(screen.rows), []);
+  assert.equal(screen.heroItem, null);
+  assert.equal(container.innerHTML, "");
+  assert.equal(classes.has("home-dom-preserved"), false);
+  assert.ok(releaseAllCalls >= 1);
+  assert.ok(resetRescalerCalls >= 1);
+  assert.ok(hideCalls >= 1);
+});

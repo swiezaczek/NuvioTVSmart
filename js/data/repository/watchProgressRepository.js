@@ -765,6 +765,25 @@ async function fetchSimklProgressSnapshot() {
 // Cache for enriched metadata (5-minute TTL)
 const enrichedMetaCache = new Map();
 const ENRICHED_META_CACHE_TTL_MS = 5 * 60 * 1000;
+const ENRICHED_META_CACHE_MAX_ENTRIES = 200;
+
+function setEnrichedMetaCache(key, entry, now = Date.now()) {
+  if (enrichedMetaCache.has(key)) {
+    enrichedMetaCache.delete(key);
+  } else if (enrichedMetaCache.size >= ENRICHED_META_CACHE_MAX_ENTRIES) {
+    for (const [candidateKey, candidateEntry] of enrichedMetaCache) {
+      if (!candidateEntry || now - candidateEntry.timestamp >= ENRICHED_META_CACHE_TTL_MS) {
+        enrichedMetaCache.delete(candidateKey);
+      }
+    }
+    while (enrichedMetaCache.size >= ENRICHED_META_CACHE_MAX_ENTRIES) {
+      const oldestKey = enrichedMetaCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      enrichedMetaCache.delete(oldestKey);
+    }
+  }
+  enrichedMetaCache.set(key, entry);
+}
 
 function progressMetadataTypeCandidates(contentType) {
   const normalized = String(contentType || "")
@@ -823,7 +842,7 @@ async function batchEnrichProgressItems(items) {
           .catch(() => null)
           .then((result) => {
             if (result) {
-              enrichedMetaCache.set(cacheKey, { meta: result, timestamp: Date.now() });
+              setEnrichedMetaCache(cacheKey, { meta: result, timestamp: Date.now() });
               progressMetadataAttempts.delete(key);
             }
             return result;

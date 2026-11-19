@@ -464,6 +464,10 @@ export const PluginRuntime = {
     runtimeTestPromise = null;
   },
 
+  dropIdleWorkers() {
+    dropIdleWorkers();
+  },
+
   getActiveWorkerCount() {
     return activeWorkers.size;
   },

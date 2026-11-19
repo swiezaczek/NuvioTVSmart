@@ -47,8 +47,14 @@ export function syncHtmlSubtitleClearance(screen, { force = false } = {}) {
     refs.seekChapterTitle && !refs.seekChapterTitle.classList?.contains?.("hidden")
   );
   const progressFocused = Boolean(refs.progressShell?.classList?.contains?.("focused"));
-  const rootWidth = Number(root.clientWidth || 0);
-  const rootHeight = Number(root.clientHeight || 0);
+  const rootWidth = Math.max(
+    0,
+    Math.round(Number(globalThis.window?.innerWidth || root.clientWidth || 0))
+  );
+  const rootHeight = Math.max(
+    0,
+    Math.round(Number(globalThis.window?.innerHeight || root.clientHeight || 0))
+  );
   const assRenderer = screen.assSubtitleRenderer || null;
 
   const layoutKey = [

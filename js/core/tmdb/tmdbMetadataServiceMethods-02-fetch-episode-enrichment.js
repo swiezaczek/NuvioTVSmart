@@ -12,6 +12,7 @@ export function createTmdbMetadataServiceMethods02() {
     TMDB_BASE_URL,
     TMDB_RECOMMENDATION_MAX_ITEMS,
     moreLikeThisCache,
+    setBoundedCacheEntry,
     resolveType,
     languageBase,
     normalizeMoreLikeThisLanguage,
@@ -204,7 +205,7 @@ export function createTmdbMetadataServiceMethods02() {
           )
         ).filter(Boolean);
 
-        moreLikeThisCache.set(cacheKey, items);
+        setBoundedCacheEntry(moreLikeThisCache, cacheKey, items);
         return items;
       } catch (error) {
         console.warn("TMDB post-play recommendations failed", error);

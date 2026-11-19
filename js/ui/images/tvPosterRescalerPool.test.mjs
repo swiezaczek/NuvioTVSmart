@@ -30,8 +30,12 @@ class FakeWorker {
 }
 globalThis.Worker = FakeWorker;
 
-const { rescaleHomeArtwork, releaseHomeArtwork, resetHomeArtworkRescaler } =
-  await import("./tvPosterRescaler.js");
+const {
+  rescaleHomeArtwork,
+  releaseHomeArtwork,
+  resetHomeArtworkRescaler,
+  suspendIdleHomeArtworkWorkers
+} = await import("./tvPosterRescaler.js");
 
 function reset() {
   resetHomeArtworkRescaler();
@@ -209,4 +213,41 @@ test("a transient failure is still retried", async () => {
     drain();
     assert.equal(typeof (await second), "string");
   }
+});
+
+test("suspendIdleHomeArtworkWorkers terminates idle workers, frees uses===0 blobs, keeps uses>0 blobs, and resumes lazily", async () => {
+  reset();
+  const activePromise = rescaleHomeArtwork("https://art/kept.jpg", BOX);
+  const unusedPromise = rescaleHomeArtwork("https://art/dropped.jpg", BOX);
+  drain();
+  const keptUrl = await activePromise;
+  const droppedUrl = await unusedPromise;
+  releaseHomeArtwork(droppedUrl);
+
+  assert.ok(created.length > 0);
+  const initialWorkers = created.slice();
+  assert.equal(
+    initialWorkers.every((w) => !w.terminated),
+    true
+  );
+
+  suspendIdleHomeArtworkWorkers();
+  assert.equal(
+    initialWorkers.every((w) => w.terminated),
+    true,
+    "idle workers terminated"
+  );
+  assert.ok(revoked.includes(droppedUrl), "unused blob revoked");
+  assert.ok(!revoked.includes(keptUrl), "in-use blob preserved for retained Home DOM");
+
+  // Retained blob still resolves from cache without spawning a worker.
+  const hitBefore = created.length;
+  assert.equal(await rescaleHomeArtwork("https://art/kept.jpg", BOX), keptUrl);
+  assert.equal(created.length, hitBefore);
+
+  // A new uncached job lazily recreates workers and completes.
+  const resumedPromise = rescaleHomeArtwork("https://art/resumed.jpg", BOX);
+  assert.ok(created.length > hitBefore, "new job lazily spawns fresh worker");
+  drain();
+  assert.equal(typeof (await resumedPromise), "string");
 });

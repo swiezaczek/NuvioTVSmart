@@ -173,7 +173,10 @@ export function fitSidebarLabel(node, minFontSizePx) {
         ? String(I18n.getLocale() || "")
         : String(globalThis?.document?.documentElement?.lang || "");
     const fontsStatus = String(globalThis?.document?.fonts?.status || "");
-    cacheKey = [text, Math.round(targetWidth * 100) / 100, locale, minSize, String(node.className || ""), fontsStatus].join("\u0000");
+    const appFont = String(globalThis?.document?.documentElement?.style?.getPropertyValue?.("--app-font-family") || "");
+    cacheKey = [text, Math.round(targetWidth * 100) / 100, locale, minSize, String(node.className || ""), fontsStatus, appFont].join(
+      "\u0000"
+    );
   }
   if (cacheKey && sidebarLabelFitCache.has(cacheKey)) {
     const cachedFontSize = sidebarLabelFitCache.get(cacheKey);

@@ -253,6 +253,7 @@ export function createHomeScreenMethods02() {
       const active = existing[key];
       if (active) {
         active.target = nextValue;
+        active.max = max;
         active.stiffness = Number(options?.stiffness ?? active.stiffness ?? MODERN_HOME_CONSTANTS.springScrollStiffness);
         active.dampingRatio = Number(options?.dampingRatio ?? active.dampingRatio ?? MODERN_HOME_CONSTANTS.springScrollDampingRatio);
         active.precision = Number(options?.precision ?? active.precision ?? 0.5);
@@ -267,6 +268,7 @@ export function createHomeScreenMethods02() {
 
       const state = {
         target: nextValue,
+        max,
         position: Number(container[property] || 0),
         velocity: 0,
         raf: null,
@@ -285,7 +287,7 @@ export function createHomeScreenMethods02() {
         const acceleration = -state.stiffness * displacement - state.damping * state.velocity;
         state.velocity += acceleration * deltaSeconds;
         state.position += state.velocity * deltaSeconds;
-        const clampedPosition = Math.max(0, Math.min(max, state.position));
+        const clampedPosition = Math.max(0, Math.min(state.max, state.position));
         container[property] = clampedPosition;
 
         // Compare against in-memory clampedPosition instead of reading
