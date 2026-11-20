@@ -65,7 +65,9 @@ import { watchProgressCompletedThreshold } from "../../../domain/model/watchProg
 
 import { getTvArtworkPixelRatio, getTvHeroTransitionMode, getTvRuntimePerformanceProfile } from "../../../platform/tvRuntimePerformance.js";
 
-import { jpegDimensions } from "../../images/tvPosterRescaler.js";
+import { canUseModernTvArtworkBounding } from "../../../platform/tvPerformancePolicy.js";
+
+import { jpegDimensions, rescaleHomeLogoBlob } from "../../images/tvPosterRescaler.js";
 
 import { isFastHorizontalNavigationEnabled } from "../../../platform/sharedKeys.js";
 
@@ -259,35 +261,22 @@ function canDecodeHeroBackdropBitmap(src) {
   // screen-sized ImageBitmap mirrors Android's Coil request sized to the hero.
   return (
     Platform.isTizen() &&
-    !getTvRuntimePerformanceProfile()?.isPerformanceConstrained &&
+    canUseModernTvArtworkBounding(getTvRuntimePerformanceProfile()) &&
     typeof globalThis.fetch === "function" &&
     typeof globalThis.createImageBitmap === "function" &&
     /^https?:\/\//i.test(src)
   );
 }
 
-export function resolveHeroBackdropTargetWidth() {
-  const dpr = Math.max(1, Number(globalThis.devicePixelRatio || 1));
-  const screenWidth = Math.max(1, Math.round((globalThis.innerWidth || 1920) * dpr));
-  const prefs = typeof LayoutPreferences?.get === "function" ? LayoutPreferences.get() || {} : {};
-  if (prefs.homeLayout === "classic" || Boolean(prefs.modernHeroFullScreenBackdropEnabled)) {
-    return screenWidth;
-  }
-  // Modern compact hero media spans 68% of viewport width (1305px at 1080p).
-  return Math.max(1, Math.floor(screenWidth * 0.68));
-}
-
-export function preloadHeroBackdrop(src, options = {}) {
+export function preloadHeroBackdrop(src) {
   const normalized = String(src || "").trim();
   if (!normalized || !canDecodeHeroBackdropBitmap(normalized)) {
     return preloadImageSource(normalized).then((loaded) => ({ loaded, bitmap: null }));
   }
-  const resizeWidth = Math.max(1, Math.round(Number(options?.resizeWidth || 0) || resolveHeroBackdropTargetWidth()));
-  const cacheKey = `${resizeWidth}:${normalized}`;
-  const cached = heroBackdropBitmapCache.get(cacheKey);
+  const cached = heroBackdropBitmapCache.get(normalized);
   if (cached) {
-    heroBackdropBitmapCache.delete(cacheKey);
-    heroBackdropBitmapCache.set(cacheKey, cached);
+    heroBackdropBitmapCache.delete(normalized);
+    heroBackdropBitmapCache.set(normalized, cached);
     return cached;
   }
   if (heroBackdropBitmapCache.size >= HERO_BACKDROP_BITMAP_CACHE_LIMIT) {
@@ -297,6 +286,7 @@ export function preloadHeroBackdrop(src, options = {}) {
     // Swaps already waiting on this entry draw it before the close runs.
     oldest.then((entry) => entry.bitmap?.close?.());
   }
+  const resizeWidth = Math.max(1, Math.round((globalThis.innerWidth || 1920) * (globalThis.devicePixelRatio || 1)));
   const preload = globalThis
     .fetch(normalized, { mode: "cors", credentials: "omit" })
     .then((response) => {
@@ -309,13 +299,13 @@ export function preloadHeroBackdrop(src, options = {}) {
     .then(
       (bitmap) => ({ loaded: true, bitmap }),
       () => {
-        if (heroBackdropBitmapCache.get(cacheKey) === preload) {
-          heroBackdropBitmapCache.delete(cacheKey);
+        if (heroBackdropBitmapCache.get(normalized) === preload) {
+          heroBackdropBitmapCache.delete(normalized);
         }
         return preloadImageSource(normalized).then((loaded) => ({ loaded, bitmap: null }));
       }
     );
-  heroBackdropBitmapCache.set(cacheKey, preload);
+  heroBackdropBitmapCache.set(normalized, preload);
   return preload;
 }
 
@@ -411,7 +401,7 @@ export function heroLogoDimensions(bytes) {
 function canRescaleHeroLogo(src) {
   return Boolean(
     Platform.isTizen() &&
-    !getTvRuntimePerformanceProfile()?.isPerformanceConstrained &&
+    canUseModernTvArtworkBounding(getTvRuntimePerformanceProfile()) &&
     typeof globalThis.fetch === "function" &&
     typeof globalThis.createImageBitmap === "function" &&
     typeof globalThis.OffscreenCanvas === "function" &&
@@ -484,6 +474,36 @@ export function preloadHeroLogo(src) {
 
   const entry = { promise: null, objectUrl: "", settled: false };
   const target = heroLogoTargetSize();
+  const finishRescaledBlob = (resized) => {
+    const objectUrl = globalThis.URL.createObjectURL(resized);
+    if (heroLogoRescaleCache.get(normalized) !== entry) {
+      globalThis.URL.revokeObjectURL(objectUrl);
+      return { loaded: true, src: normalized };
+    }
+    entry.objectUrl = objectUrl;
+    entry.settled = true;
+    return { loaded: true, src: objectUrl };
+  };
+  if (typeof globalThis.Worker === "function") {
+    entry.promise = rescaleHomeLogoBlob(normalized, {
+      width: target.width,
+      height: target.height,
+      timeoutMs: HERO_IMAGE_PRELOAD_TIMEOUT_MS
+    })
+      .then((resized) => {
+        if (!resized) {
+          throw new Error("logo rescale skipped");
+        }
+        return finishRescaledBlob(resized);
+      })
+      .catch(() => {
+        entry.settled = true;
+        return fallbackSource(normalized);
+      });
+    heroLogoRescaleCache.set(normalized, entry);
+    trimHeroLogoRescaleCache();
+    return entry.promise;
+  }
   // A stalled addon CDN must not hold the logo blank forever: fall back to the
   // <img> path on the same budget as a hero image preload.
   const controller = typeof globalThis.AbortController === "function" ? new globalThis.AbortController() : null;
@@ -522,14 +542,7 @@ export function preloadHeroLogo(src) {
         const canvas = new globalThis.OffscreenCanvas(width, height);
         canvas.getContext("2d", { alpha: true }).drawImage(bitmap, 0, 0, width, height);
         const resized = await canvas.convertToBlob({ type: "image/webp", quality: 0.92 });
-        const objectUrl = globalThis.URL.createObjectURL(resized);
-        if (heroLogoRescaleCache.get(normalized) !== entry) {
-          globalThis.URL.revokeObjectURL(objectUrl);
-          return { loaded: true, src: normalized };
-        }
-        entry.objectUrl = objectUrl;
-        entry.settled = true;
-        return { loaded: true, src: objectUrl };
+        return finishRescaledBlob(resized);
       } finally {
         bitmap.close?.();
       }

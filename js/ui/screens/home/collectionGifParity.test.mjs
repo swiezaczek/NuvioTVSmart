@@ -11,6 +11,7 @@ let rescaleEnabled = false;
 let rescaleCalls = [];
 let releasedUrls = [];
 let settleRescale = null;
+let knownUnrescalable = new Set();
 
 const context = vm.createContext({
   buildModernRowKey: () => "collection:test",
@@ -23,6 +24,7 @@ const context = vm.createContext({
   Router: { getCurrent: () => route },
   shouldRescaleHomeArtwork: () => rescaleEnabled,
   shouldQueueRescale,
+  isKnownUnrescalableHomeArtwork: (url) => knownUnrescalable.has(url),
   rescaleHomeArtwork: (url, options) => {
     rescaleCalls.push({ url, options });
     return new Promise((resolve) => {
@@ -41,9 +43,11 @@ function resetRescale() {
   rescaleCalls = [];
   releasedUrls = [];
   settleRescale = null;
+  knownUnrescalable.clear();
 }
 
 function focusCard(src, { width = 220, height = 338 } = {}) {
+  let rectCalls = 0;
   class Image {
     dataset = { src };
     attributes = new Map();
@@ -58,6 +62,7 @@ function focusCard(src, { width = 220, height = 338 } = {}) {
       this.attributes.delete(key);
     }
     getBoundingClientRect() {
+      rectCalls += 1;
       return { width, height };
     }
   }
@@ -65,6 +70,7 @@ function focusCard(src, { width = 220, height = 338 } = {}) {
   const image = new Image();
   const classes = new Set(["focused"]);
   const node = {
+    isConnected: true,
     querySelector: () => image,
     classList: {
       add: (name) => classes.add(name),
@@ -72,7 +78,7 @@ function focusCard(src, { width = 220, height = 338 } = {}) {
       contains: (name) => classes.has(name)
     }
   };
-  return { image, classes, node };
+  return { image, classes, node, getRectCalls: () => rectCalls };
 }
 
 async function loadFrom(file, start, end) {
@@ -173,6 +179,7 @@ test("focused GIF loads immediately, unloads on blur and reloads on refocus", ()
   const image = new Image();
   const classes = new Set();
   const node = {
+    isConnected: true,
     querySelector: () => image,
     classList: { add: (name) => classes.add(name), remove: (name) => classes.delete(name) }
   };
@@ -304,4 +311,85 @@ test("smart TV posters are handed to the lazy hydration pass instead of loading 
   );
   route = "home";
   isTvRuntime = false;
+});
+
+test("hydrating a collection overlay tears down any previously active overlay", () => {
+  resetRescale();
+  const firstCard = focusCard("https://example.invalid/one.gif");
+  const ImageCtor = context.HTMLImageElement;
+  const secondImage = new ImageCtor();
+  secondImage.dataset.src = "https://example.invalid/two.gif";
+  const secondClasses = new Set(["focused"]);
+  const secondNode = {
+    isConnected: true,
+    querySelector: () => secondImage,
+    classList: {
+      add: (name) => secondClasses.add(name),
+      remove: (name) => secondClasses.delete(name),
+      contains: (name) => secondClasses.has(name)
+    }
+  };
+  const methods = context.createHomeScreenMethods11();
+
+  methods.hydrateCollectionFocusGif(firstCard.node, true);
+  assert.equal(methods.activeCollectionFocusGifNode, firstCard.node);
+  assert.equal(firstCard.image.getAttribute("src"), "https://example.invalid/one.gif");
+  assert.ok(firstCard.classes.has("is-focus-gif-active"));
+
+  methods.hydrateCollectionFocusGif(secondNode, true);
+  assert.equal(firstCard.image.getAttribute("src"), undefined);
+  assert.ok(!firstCard.classes.has("is-focus-gif-active"));
+  assert.equal(methods.activeCollectionFocusGifNode, secondNode);
+  assert.equal(secondImage.getAttribute("src"), "https://example.invalid/two.gif");
+  assert.ok(secondClasses.has("is-focus-gif-active"));
+});
+
+test("hydrating an overlay that already carries src restores its active class and tracking", () => {
+  resetRescale();
+  const { image, classes, node } = focusCard("https://example.invalid/existing.gif");
+  image.setAttribute("src", "https://example.invalid/existing.gif");
+  const methods = context.createHomeScreenMethods11();
+
+  methods.hydrateCollectionFocusGif(node, true);
+  assert.ok(classes.has("is-focus-gif-active"));
+  assert.equal(methods.activeCollectionFocusGifNode, node);
+  assert.equal(rescaleCalls.length, 0);
+});
+
+test("skips getBoundingClientRect for gif and known unrescalable webp overlays", () => {
+  resetRescale();
+  rescaleEnabled = true;
+  const { hydrateCollectionFocusGif } = context.createHomeScreenMethods11();
+
+  const gifCard = focusCard("https://example.invalid/focus.gif");
+  hydrateCollectionFocusGif(gifCard.node, true);
+  assert.equal(gifCard.getRectCalls(), 0);
+  assert.equal(gifCard.image.getAttribute("src"), "https://example.invalid/focus.gif");
+
+  const animatedWebp = "https://example.invalid/animated.webp";
+  knownUnrescalable.add(animatedWebp);
+  const webpCard = focusCard(animatedWebp);
+  hydrateCollectionFocusGif(webpCard.node, true);
+  assert.equal(webpCard.getRectCalls(), 0);
+  assert.equal(webpCard.image.getAttribute("src"), animatedWebp);
+  assert.equal(rescaleCalls.length, 0);
+});
+
+test("hydrating a collection card without a focus gif overlay still tears down any previous overlay", () => {
+  resetRescale();
+  const firstCard = focusCard("https://example.invalid/one.gif");
+  const methods = context.createHomeScreenMethods11();
+
+  methods.hydrateCollectionFocusGif(firstCard.node, true);
+  assert.equal(methods.activeCollectionFocusGifNode, firstCard.node);
+  assert.equal(firstCard.image.getAttribute("src"), "https://example.invalid/one.gif");
+
+  const staticCollectionNode = {
+    isConnected: true,
+    querySelector: () => null
+  };
+  methods.hydrateCollectionFocusGif(staticCollectionNode, true);
+  assert.equal(firstCard.image.getAttribute("src"), undefined);
+  assert.ok(!firstCard.classes.has("is-focus-gif-active"));
+  assert.equal(methods.activeCollectionFocusGifNode, null);
 });

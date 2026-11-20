@@ -34,7 +34,13 @@ export function createHomeScreenMethods18() {
       target.classList.add("focused");
       this.focusWithoutAutoScroll(target, { suppressDelegatedFocus: true });
       this.setCurrentFocusedNode(target);
-      const deferHomeArtworkUntilSettle = direction === "up" || direction === "down";
+      const deferHomeArtworkUntilSettle =
+        direction === "up" ||
+        direction === "down" ||
+        (this.layoutMode === "modern" &&
+          !this.isPerformanceConstrained() &&
+          !this.isLegacyTvRuntime() &&
+          (direction === "left" || direction === "right"));
       this.scheduleHomeLazyImageHydration(target, {
         deferUntilVerticalSettle: deferHomeArtworkUntilSettle,
         focusedRowOnly: this.isLegacyTvRuntime()
@@ -44,6 +50,8 @@ export function createHomeScreenMethods18() {
       }
       if (this.isCollectionFolderNode(target)) {
         this.hydrateCollectionFocusGif(target, true);
+      } else if (this.activeCollectionFocusGifNode && this.activeCollectionFocusGifNode !== target) {
+        this.hydrateCollectionFocusGif(this.activeCollectionFocusGifNode, false);
       }
       this.setSidebarExpanded(this.isSidebarNode(target));
       if (this.isMainNode(target)) {
