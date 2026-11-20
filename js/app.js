@@ -25,7 +25,6 @@ import { ProviderCredentialSyncService } from "./core/profile/providerCredential
 import { ThemeManager } from "./ui/theme/themeManager.js";
 import { renderAppShell } from "./bootstrap/renderAppShell.js";
 import { renderAddonRemotePage } from "./bootstrap/renderAddonRemotePage.js";
-import { preloadStreamBadgeImages } from "./ui/screens/stream/streamScreen.js";
 import { warmStreamingLibs } from "./runtime/loadStreamingLibs.js";
 import { runAfterFirstHomePaint } from "./runtime/startupScheduler.js";
 import { Platform } from "./platform/index.js";
@@ -468,9 +467,9 @@ async function enterWithLastProfile({ restoreWebOsRoute = false } = {}) {
     const memberAccess = MemberAccessRepository.getCachedAccess();
     ThemeManager.apply({ enforceAccess: true, access: memberAccess });
     I18n.apply();
-    // Neither the member access refresh nor the badge prerender is needed for
-    // the first Home paint; on a single-core TV they competed with the catalog
-    // rows for the main thread and the network.
+    // Member access refresh is not needed for the first Home paint; on a
+    // single-core TV it competed with the catalog rows for the main thread and
+    // the network.
     scheduleAfterFirstHomePaint(
       () => {
         void MemberAccessRepository.getAccess().catch((error) => {
@@ -478,14 +477,6 @@ async function enterWithLastProfile({ restoreWebOsRoute = false } = {}) {
         });
       },
       { delayMs: 150, idleTimeoutMs: 1500 }
-    );
-    scheduleAfterFirstHomePaint(
-      () => {
-        void preloadStreamBadgeImages().catch((error) => {
-          console.warn("Stream badge image prerender failed", error);
-        });
-      },
-      { delayMs: 750, idleTimeoutMs: 2000 }
     );
   }
   const experienceRoute = activeProfile ? await resolveExperienceRoute(activeProfile.id) : "home";

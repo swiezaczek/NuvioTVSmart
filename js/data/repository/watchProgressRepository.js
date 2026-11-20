@@ -31,6 +31,7 @@ import {
 } from "./traktActivityRefreshState.js";
 import { watchedItemIdentityValues, watchedItemsShareIdentity } from "./watchedIdentity.js";
 import { mapWithConcurrency } from "../../core/network/mapWithConcurrency.js";
+import { BoundedCache } from "../../core/util/boundedCache.js";
 import { getSyncBackoffRemainingMs } from "../../core/sync/syncBackoffPolicy.js";
 import { registerSessionTeardownHandler } from "../../core/auth/sessionLifecycle.js";
 import {
@@ -763,27 +764,8 @@ async function fetchSimklProgressSnapshot() {
 }
 
 // Cache for enriched metadata (5-minute TTL)
-const enrichedMetaCache = new Map();
+const enrichedMetaCache = new BoundedCache(200);
 const ENRICHED_META_CACHE_TTL_MS = 5 * 60 * 1000;
-const ENRICHED_META_CACHE_MAX_ENTRIES = 200;
-
-function setEnrichedMetaCache(key, entry, now = Date.now()) {
-  if (enrichedMetaCache.has(key)) {
-    enrichedMetaCache.delete(key);
-  } else if (enrichedMetaCache.size >= ENRICHED_META_CACHE_MAX_ENTRIES) {
-    for (const [candidateKey, candidateEntry] of enrichedMetaCache) {
-      if (!candidateEntry || now - candidateEntry.timestamp >= ENRICHED_META_CACHE_TTL_MS) {
-        enrichedMetaCache.delete(candidateKey);
-      }
-    }
-    while (enrichedMetaCache.size >= ENRICHED_META_CACHE_MAX_ENTRIES) {
-      const oldestKey = enrichedMetaCache.keys().next().value;
-      if (oldestKey === undefined) break;
-      enrichedMetaCache.delete(oldestKey);
-    }
-  }
-  enrichedMetaCache.set(key, entry);
-}
 
 function progressMetadataTypeCandidates(contentType) {
   const normalized = String(contentType || "")
@@ -828,6 +810,9 @@ async function batchEnrichProgressItems(items) {
     const now = Date.now();
     const cached = enrichedMetaCache.get(cacheKey);
     let meta = cached && now - cached.timestamp < ENRICHED_META_CACHE_TTL_MS ? cached.meta : null;
+    if (cached && !meta) {
+      enrichedMetaCache.delete(cacheKey);
+    }
     if (!meta) {
       let flight = progressMetadataFlights.get(key);
       if (!flight) {
@@ -842,7 +827,7 @@ async function batchEnrichProgressItems(items) {
           .catch(() => null)
           .then((result) => {
             if (result) {
-              setEnrichedMetaCache(cacheKey, { meta: result, timestamp: Date.now() });
+              enrichedMetaCache.set(cacheKey, { meta: result, timestamp: Date.now() });
               progressMetadataAttempts.delete(key);
             }
             return result;

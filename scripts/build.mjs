@@ -245,7 +245,7 @@ function insertInsetFallbacks(decl) {
   }
 }
 
-function legacyDeclarationFallbackPlugin() {
+function legacyDeclarationFallbackPlugin(seenSupportsRootBlocks = new Set()) {
   const guardedDeclarations = new WeakSet();
   const lastGuardByRule = new WeakMap();
   return {
@@ -260,6 +260,16 @@ function legacyDeclarationFallbackPlugin() {
         // substitution then invalidates the consuming property, so duplicate
         // declarations alone cannot provide a legacy fallback.
         if (decl.prop.startsWith("--") && /\b(min|max|clamp)\(/.test(decl.value)) {
+          // postcss-global-data injects base.css :root into every processed file,
+          // so an identical :root guard would otherwise be emitted for each one.
+          if (decl.parent.selector === ":root") {
+            const guardKey = `${decl.prop}|${decl.value}`;
+            if (seenSupportsRootBlocks.has(guardKey)) {
+              decl.value = legacyValue;
+              return;
+            }
+            seenSupportsRootBlocks.add(guardKey);
+          }
           const modernDecl = decl.clone();
           guardedDeclarations.add(modernDecl);
           const modernRule = decl.parent.clone({ nodes: [modernDecl] });
@@ -353,7 +363,11 @@ function flexGapFallbackPlugin() {
           if (value.includes("column")) {
             flexDirection = "column";
           }
-          if (value.includes("wrap")) {
+          // `nowrap` also contains `wrap`; check it first so row-nowrap rules
+          // do not inherit the wrap fallback margins.
+          if (value.includes("nowrap")) {
+            flexWrap = "nowrap";
+          } else if (value.includes("wrap")) {
             flexWrap = "wrap";
           }
           return;
@@ -470,7 +484,7 @@ async function buildCSS() {
           overrideBrowserslist: [`Chrome ${compatibilityPolicy.chromiumVersion}`],
           grid: "autoplace"
         }),
-        legacyDeclarationFallbackPlugin(),
+        legacyDeclarationFallbackPlugin(seenSupportsRootBlocks),
         unsupportedSelectorFallbackPlugin(),
         flexGapFallbackPlugin(),
         cssnano()
@@ -479,17 +493,7 @@ async function buildCSS() {
         to: outPath
       });
 
-      const dedupedCss = result.css.replace(
-        /@supports\s*\([^)]+\)[^{]*\{:root\{[^}]+\}\}/g,
-        (block) => {
-          if (seenSupportsRootBlocks.has(block)) {
-            return "";
-          }
-          seenSupportsRootBlocks.add(block);
-          return block;
-        }
-      );
-      bodies.push(dedupedCss);
+      bodies.push(result.css);
     }
   }
 

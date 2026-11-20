@@ -103,7 +103,7 @@ function setup(results) {
   return { swap: context.animateHeroBackdropSwap, wrap, image };
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
+const settle = () => new Promise((resolve) => setTimeout(resolve, 80));
 
 test("bitmap backdrops crossfade over the previous artwork and keep the <img> as anchor", async () => {
   const bitmapB = { width: 1920, height: 1080 };

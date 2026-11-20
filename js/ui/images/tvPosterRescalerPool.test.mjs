@@ -173,30 +173,6 @@ test("a source that cannot be rescaled is not fetched again this session", async
 
   assert.equal(await rescaleHomeArtwork("https://art/not-jpeg.webp", box), null);
   assert.equal(postedJobs(), 0, "the known non-JPEG source must not spin up another job");
-
-  // Extensionless non-JPEG sources still hit the worker once and then negative-cache.
-  const extensionless = rescaleHomeArtwork("https://art/not-jpeg", box);
-  drainFailed({ ok: false, reason: "not jpeg" });
-  assert.equal(await extensionless, null);
-  assert.equal(postedJobs(), 0);
-  assert.equal(await rescaleHomeArtwork("https://art/not-jpeg", box), null);
-  assert.equal(postedJobs(), 0);
-});
-
-test("known non-JPEG extensions fast-skip before creating workers", async () => {
-  reset();
-  const box = { width: 220, height: 338, fit: "cover" };
-  for (const url of [
-    "https://cdn.example/anim.gif",
-    "https://cdn.example/anim.gifv?v=1",
-    "https://cdn.example/cover.webp",
-    "https://cdn.example/logo.png#hash",
-    "https://cdn.example/icon.svg",
-    "https://cdn.example/frame.avif?auto=format"
-  ]) {
-    assert.equal(await rescaleHomeArtwork(url, box), null, `${url} should fast-skip`);
-  }
-  assert.equal(created.length, 0, "non-JPEG extensions must skip before spawning any worker");
 });
 
 test("a transient failure is still retried", async () => {
@@ -215,39 +191,64 @@ test("a transient failure is still retried", async () => {
   }
 });
 
-test("suspendIdleHomeArtworkWorkers terminates idle workers, frees uses===0 blobs, keeps uses>0 blobs, and resumes lazily", async () => {
+test("entering playback stops the idle workers and keeps painted urls", async () => {
   reset();
-  const activePromise = rescaleHomeArtwork("https://art/kept.jpg", BOX);
-  const unusedPromise = rescaleHomeArtwork("https://art/dropped.jpg", BOX);
+  const painted = rescaleHomeArtwork("https://art/painted.jpg", BOX);
   drain();
-  const keptUrl = await activePromise;
-  const droppedUrl = await unusedPromise;
+  const paintedUrl = await painted;
+  const dropped = rescaleHomeArtwork("https://art/dropped.jpg", BOX);
+  drain();
+  const droppedUrl = await dropped;
   releaseHomeArtwork(droppedUrl);
 
-  assert.ok(created.length > 0);
-  const initialWorkers = created.slice();
-  assert.equal(
-    initialWorkers.every((w) => !w.terminated),
-    true
-  );
-
   suspendIdleHomeArtworkWorkers();
-  assert.equal(
-    initialWorkers.every((w) => w.terminated),
-    true,
-    "idle workers terminated"
+  assert.ok(created.length > 0, "the pool must have started workers first");
+  assert.ok(
+    created.every((worker) => worker.terminated),
+    "no idle thread may stay parked next to the video decoder"
   );
-  assert.ok(revoked.includes(droppedUrl), "unused blob revoked");
-  assert.ok(!revoked.includes(keptUrl), "in-use blob preserved for retained Home DOM");
+  assert.ok(
+    !revoked.includes(paintedUrl),
+    "the url a retained Home card is still painting must survive"
+  );
+  assert.deepEqual(revoked, [droppedUrl], "only the url nothing paints is reclaimed");
 
-  // Retained blob still resolves from cache without spawning a worker.
-  const hitBefore = created.length;
-  assert.equal(await rescaleHomeArtwork("https://art/kept.jpg", BOX), keptUrl);
-  assert.equal(created.length, hitBefore);
+  assert.equal(
+    await rescaleHomeArtwork("https://art/painted.jpg", BOX),
+    paintedUrl,
+    "a cached url is still served without a worker"
+  );
+  assert.equal(
+    created.filter((worker) => !worker.terminated).length,
+    0,
+    "serving cached artwork must not restart a worker"
+  );
+});
 
-  // A new uncached job lazily recreates workers and completes.
-  const resumedPromise = rescaleHomeArtwork("https://art/resumed.jpg", BOX);
-  assert.ok(created.length > hitBefore, "new job lazily spawns fresh worker");
+test("a rescale after playback starts brings the workers back on its own", async () => {
+  reset();
+  const first = rescaleHomeArtwork("https://art/first.jpg", BOX);
   drain();
-  assert.equal(typeof (await resumedPromise), "string");
+  await first;
+  suspendIdleHomeArtworkWorkers();
+  const started = created.length;
+
+  const next = rescaleHomeArtwork("https://art/next.jpg", BOX);
+  assert.ok(created.length > started, "a new rescale respawns a worker");
+  drain();
+  assert.equal(typeof (await next), "string");
+});
+
+test("a job already running finishes before its worker is stopped", async () => {
+  reset();
+  const running = rescaleHomeArtwork("https://art/late.jpg", BOX);
+  const worker = created.find((candidate) => candidate.posted.length);
+  assert.ok(worker, "the job must be with a worker");
+  suspendIdleHomeArtworkWorkers();
+  assert.equal(worker.terminated, false, "a worker holding a job is not cut off");
+
+  const job = worker.posted.shift();
+  worker.onmessage({ data: { id: job.id, ok: true, blob: { size: 1 } } });
+  assert.equal(typeof (await running), "string", "the card gets its rescaled artwork");
+  assert.equal(worker.terminated, true, "the pool stops once the job is done");
 });

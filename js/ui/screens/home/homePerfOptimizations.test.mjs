@@ -122,7 +122,7 @@ test("shouldDeferHomeRenderForInput defers on all TV runtimes and requestBackgro
   assert.equal(renderCalls, 1, "coalesced burst must trigger exactly one render");
 });
 
-test("refreshHomeAfterRouteReturn waits ~500ms settle and respects 60s catalog freshness cooldown", async () => {
+test("refreshHomeAfterRouteReturn waits HOME_ROUTE_RETURN_SETTLE_MS settle before running watch, catalog, and pending descriptor work", async () => {
   let cwCalls = 0;
   let staleCatalogCalls = 0;
   let retryCalls = 0;
@@ -168,6 +168,7 @@ test("refreshHomeAfterRouteReturn waits ~500ms settle and respects 60s catalog f
       HERO_ROTATE_FIRST_DELAY_MS: 20000,
       HERO_ROTATE_INTERVAL_MS: 10000,
       HOME_CATALOG_REFRESH_TTL_MS: 900000,
+      HOME_ROUTE_RETURN_SETTLE_MS: 500,
       HOME_STABLE_GATE_TIMEOUT_MS: 5000,
       logHomePerf: () => {},
       homePerfNow: () => 0,
@@ -207,13 +208,13 @@ test("refreshHomeAfterRouteReturn waits ~500ms settle and respects 60s catalog f
 
   assert.ok(elapsed >= 450, `expected ~500ms settle delay, got ${elapsed}ms`);
   assert.equal(cwCalls, 1);
-  assert.equal(resumeCalls, 1, "pending deferred descriptors still resume without full reload");
+  assert.equal(resumeCalls, 1, "pending deferred descriptors resume without full reload");
   assert.equal(
     staleCatalogCalls,
-    0,
-    "60s cooldown skips catalog stale refresh on quick tab switch"
+    1,
+    "stale catalog refresh delegates directly to TTL check after settle"
   );
-  assert.equal(retryCalls, 0, "60s cooldown skips pending catalog retry on quick tab switch");
+  assert.equal(retryCalls, 1, "pending catalog rows retry after settle without extra cooldown");
 });
 
 test("handleHomeDpad checks repeatThrottleMs before isNodeWithinMainViewport", async () => {
@@ -401,6 +402,7 @@ test("enrichCurrentHeroAsync commits TMDB backdrop/logo without waiting 3500ms o
       firstNonEmpty: (...vals) => vals.find(Boolean) || "",
       resolveImdbRating: () => null,
       preloadHeroBackdrop: async () => ({ loaded: true, bitmap: null }),
+      preloadHeroLogo: async () => ({ loaded: true, displaySrc: "" }),
       preloadImageSource: async () => true,
       parseRuntimeMinutes: () => 0,
       normalizeCollectionFolderItem: (x) => x,
@@ -808,6 +810,7 @@ test("resetForSignOut discards preserved TV Home DOM and resets rescaler pool", 
     resetHomeArtworkRescaler: () => {
       resetRescalerCalls += 1;
     },
+    resetHeroLogoRescaleCache: () => {},
     internals: {
       ScreenUtils: {
         hide: () => {

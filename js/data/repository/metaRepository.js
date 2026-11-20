@@ -3,9 +3,12 @@ import { safeApiCall } from "../../core/network/safeApiCall.js";
 import { addonRepository } from "./addonRepository.js";
 import { MetaApi } from "../remote/api/metaApi.js";
 import { normalizeTmdbLogoUrl } from "../../core/tmdb/tmdbImageUrl.js";
+import { BoundedCache } from "../../core/util/boundedCache.js";
 
 const INSTALLED_ADDONS_WAIT_MS = 750;
-const META_CACHE_MAX_ENTRIES = 200;
+// Android keeps 32 entries per meta cache; each title is stored under its
+// requested and inferred types, so 200 keys hold a comparable working set.
+const MAX_META_CACHE_ENTRIES = 200;
 
 function normalizeDisplayText(value) {
   return String(value ?? "")
@@ -25,31 +28,9 @@ function firstNonBlank(...values) {
 
 class MetaRepository {
   constructor() {
-    this.metaCache = new Map();
+    this.metaCache = new BoundedCache(MAX_META_CACHE_ENTRIES);
     this.inFlightMeta = new Map();
     this.inFlightMetaAll = new Map();
-  }
-
-  getMetaCache(key) {
-    if (!this.metaCache.has(key)) {
-      return undefined;
-    }
-    const value = this.metaCache.get(key);
-    this.metaCache.delete(key);
-    this.metaCache.set(key, value);
-    return value;
-  }
-
-  setMetaCache(key, value) {
-    if (this.metaCache.has(key)) {
-      this.metaCache.delete(key);
-    } else if (this.metaCache.size >= META_CACHE_MAX_ENTRIES) {
-      const oldestKey = this.metaCache.keys().next().value;
-      if (oldestKey !== undefined) {
-        this.metaCache.delete(oldestKey);
-      }
-    }
-    this.metaCache.set(key, value);
   }
 
   async getMeta(addonBaseUrl, type, id) {
@@ -76,7 +57,7 @@ class MetaRepository {
     for (const probeType of probeTypes) {
       const probeKey = `${addonKey}:${probeType}:${normalizedId}`;
       if (this.metaCache.has(probeKey)) {
-        return { status: "success", data: this.getMetaCache(probeKey) };
+        return { status: "success", data: this.metaCache.get(probeKey) };
       }
     }
 
@@ -88,7 +69,7 @@ class MetaRepository {
     );
     const cacheKey = `${addonKey}:${effectiveType}:${normalizedId}`;
     if (this.metaCache.has(cacheKey)) {
-      return { status: "success", data: this.getMetaCache(cacheKey) };
+      return { status: "success", data: this.metaCache.get(cacheKey) };
     }
     if (this.inFlightMeta.has(cacheKey)) {
       return this.inFlightMeta.get(cacheKey);
@@ -108,7 +89,7 @@ class MetaRepository {
 
       [effectiveType, requestedType, inferredType].forEach((cacheType) => {
         if (cacheType) {
-          this.setMetaCache(`${addonKey}:${cacheType}:${normalizedId}`, meta);
+          this.metaCache.set(`${addonKey}:${cacheType}:${normalizedId}`, meta);
         }
       });
       return { status: "success", data: meta };
@@ -137,7 +118,7 @@ class MetaRepository {
     const inferredType = this.inferCanonicalType(requestedType, id);
     const cacheKey = `all:${inferredType.toLowerCase()}:${String(id || "").trim()}`;
     if (this.metaCache.has(cacheKey)) {
-      return { status: "success", data: this.getMetaCache(cacheKey) };
+      return { status: "success", data: this.metaCache.get(cacheKey) };
     }
 
     if (this.inFlightMetaAll.has(cacheKey)) {
@@ -236,7 +217,7 @@ class MetaRepository {
         }
         const result = await this.getMeta(addon.baseUrl, candidateType, id);
         if (result.status === "success") {
-          this.setMetaCache(cacheKey, result.data);
+          this.metaCache.set(cacheKey, result.data);
           return result;
         }
       }
@@ -274,6 +255,7 @@ class MetaRepository {
       const suffix = `:${candidateType}:${normalizedId}`;
       for (const [cacheKey, meta] of this.metaCache.entries()) {
         if (cacheKey.endsWith(suffix)) {
+          this.metaCache.get(cacheKey);
           return meta;
         }
       }

@@ -44,7 +44,7 @@ export function createHomeScreenMethods10() {
         }
         callback();
       };
-      const preloadDelay = Math.max(0, Math.min(120, delay - 80));
+      const preloadDelay = isRapidNav ? Math.max(0, delay - 80) : Math.max(0, Math.min(120, delay - 80));
       this.heroBackdropPreloadTimer = setTimeout(() => {
         this.heroBackdropPreloadTimer = null;
         waitForVerticalSettle(() => {

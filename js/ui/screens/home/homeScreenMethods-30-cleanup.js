@@ -1,5 +1,6 @@
 import * as internals from "./homeScreenContext.js";
 import { resetHomeArtworkRescaler } from "../../images/tvPosterRescaler.js";
+import { resetHeroLogoRescaleCache } from "./homeScreenHelpers-02-extract-release-date-text.js";
 
 export function createHomeScreenMethods30() {
   const { ScreenUtils, Platform } = internals;
@@ -46,7 +47,6 @@ export function createHomeScreenMethods30() {
       this.persistCurrentFocusState();
       this.homeLoadToken = (this.homeLoadToken || 0) + 1;
       this.homeDeferredLoadInFlightToken = null;
-      this.cancelHomeRouteReturnSettle?.();
       if (this.homeDeferredRowsFlushTimer) {
         clearTimeout(this.homeDeferredRowsFlushTimer);
         this.homeDeferredRowsFlushTimer = null;
@@ -58,11 +58,19 @@ export function createHomeScreenMethods30() {
       }
       this.pendingHomeCatalogSnapshotForce = false;
       this.cancelInitialHomeLoadTimeout();
+      if (this.homeRouteReturnRefreshTimer) {
+        clearTimeout(this.homeRouteReturnRefreshTimer);
+        this.homeRouteReturnRefreshTimer = null;
+      }
       this._trackPaginationInFlight?.clear();
       this.cancelScheduledRender();
       this.cancelModernCameraFollow({ stopAnimations: true });
       this.endModernVerticalFastScroll({ land: false });
       this.stopHeroRotation();
+      if (this.heroDescriptionAutoScrollFrame) {
+        cancelAnimationFrame(this.heroDescriptionAutoScrollFrame);
+        this.heroDescriptionAutoScrollFrame = 0;
+      }
       this.heroDescriptionAutoScroller?.stop();
       this.heroDescriptionScrollHolding = false;
       this.cancelPendingHeroFocus();
@@ -172,6 +180,7 @@ export function createHomeScreenMethods30() {
         // painted urls back, then drop the workers and every blob they produced.
         this.releaseAllHomeLazyImages();
         resetHomeArtworkRescaler();
+        resetHeroLogoRescaleCache();
         this.homeDomPreserved = false;
         this.hasPaintedInitialHomeContent = false;
         this.container.classList.remove("home-dom-preserved");
@@ -195,13 +204,13 @@ export function createHomeScreenMethods30() {
         this.hasLoadedOnce ||
         this.container?.childNodes?.length
       );
-      if (hadActiveState) {
+      if (hadActiveState && this.container) {
         this.cleanup({ discardPreservedDom: true });
       } else {
         this.homeLoadToken = (this.homeLoadToken || 0) + 1;
+        this.releaseAllHomeLazyImages?.();
+        resetHomeArtworkRescaler();
       }
-      this.releaseAllHomeLazyImages?.();
-      resetHomeArtworkRescaler();
       this.hasLoadedOnce = false;
       this.hasPaintedInitialHomeContent = false;
       this.hasAppliedInitialContinueWatchingFocus = false;
@@ -212,12 +221,12 @@ export function createHomeScreenMethods30() {
       this.continueWatchingItems = [];
       this.sidebarProfile = null;
       this.savedFocusStates = {};
+      this.clearStoredReturnFocusState?.();
       this.loadedProfileId = "";
       this.loadedWatchProgressSourceKey = "";
       this.loadedHomeRouteInputSignature = "";
       this.pendingHomeCatalogDescriptors = [];
       this.lastHomeCatalogRefreshAtMs = 0;
-      this.lastHomeCatalogReturnCheckAtMs = 0;
       this.renderedMarkup = null;
       if (this.container) {
         this.container.classList?.remove?.("home-dom-preserved");
@@ -231,7 +240,9 @@ export function createHomeScreenMethods30() {
           this.container.style.removeProperty("pointer-events");
         }
         this.container.innerHTML = "";
-        ScreenUtils.hide(this.container);
+        if (!hadActiveState) {
+          ScreenUtils.hide(this.container);
+        }
       }
     }
   };

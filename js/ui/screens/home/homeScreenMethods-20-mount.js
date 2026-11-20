@@ -32,7 +32,10 @@ export function createHomeScreenMethods20() {
       const isBackNavigation = Boolean(navigationContext?.isBackNavigation);
       this.container = document.getElementById("home");
       this.activeHomeTrailerLayers ||= new Set();
-      this.cancelHomeRouteReturnSettle?.();
+      if (this.homeRouteReturnRefreshTimer) {
+        clearTimeout(this.homeRouteReturnRefreshTimer);
+        this.homeRouteReturnRefreshTimer = null;
+      }
       this.hasUserInteractedSinceHomePaint = false;
       const restoredRouteFocusState =
         navigationContext?.isBackNavigation && navigationContext?.restoredState?.layoutMode ? navigationContext.restoredState : null;
@@ -95,7 +98,6 @@ export function createHomeScreenMethods20() {
         this.loadedHomeRouteInputSignature = "";
         this.pendingHomeCatalogDescriptors = [];
         this.lastHomeCatalogRefreshAtMs = 0;
-        this.lastHomeCatalogReturnCheckAtMs = 0;
       }
       if (returnFocusState?.layoutMode) {
         this.savedFocusStates = {

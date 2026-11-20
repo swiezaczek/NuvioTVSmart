@@ -42,44 +42,54 @@ function dedupeAndSort(items = []) {
   );
 }
 
+// Library checks and detail lookups read this list repeatedly. Memoize the
+// normalized snapshot on the exact stored string so unchanged reads skip the
+// parse and sort; any write changes the string and invalidates it.
 let listAllCacheRaw = null;
 let listAllCacheValue = null;
 
 function readSavedLibraryRaw() {
   try {
-    if (typeof localStorage === "undefined") {
-      return { available: false, raw: null };
-    }
-    return { available: true, raw: localStorage.getItem(SAVED_LIBRARY_KEY) };
+    return localStorage.getItem(SAVED_LIBRARY_KEY);
   } catch (_) {
-    return { available: false, raw: null };
+    return undefined;
   }
+}
+
+function loadSavedLibraryItems() {
+  const raw = readSavedLibraryRaw();
+  if (raw !== undefined && raw === listAllCacheRaw && Array.isArray(listAllCacheValue)) {
+    return listAllCacheValue;
+  }
+
+  let stored = [];
+  if (raw === undefined) {
+    stored = LocalStore.get(SAVED_LIBRARY_KEY, []);
+  } else if (raw !== null) {
+    try {
+      stored = JSON.parse(raw);
+    } catch (_) {
+      stored = [];
+    }
+  }
+
+  const items = dedupeAndSort(Array.isArray(stored) ? stored : []);
+  if (raw !== undefined) {
+    listAllCacheRaw = raw;
+    listAllCacheValue = items;
+  }
+  return items;
+}
+
+function writeSavedLibraryItems(items) {
+  LocalStore.set(SAVED_LIBRARY_KEY, items);
+  listAllCacheRaw = null;
+  listAllCacheValue = null;
 }
 
 export const SavedLibraryStore = {
   listAll() {
-    const { available, raw } = readSavedLibraryRaw();
-    if (available) {
-      if (raw === listAllCacheRaw && Array.isArray(listAllCacheValue)) {
-        return listAllCacheValue.map((item) => ({ ...item }));
-      }
-      let parsed = [];
-      if (raw !== null) {
-        try {
-          parsed = JSON.parse(raw);
-        } catch (_) {
-          parsed = [];
-        }
-      }
-      const items = dedupeAndSort(Array.isArray(parsed) ? parsed : []);
-      listAllCacheRaw = raw;
-      listAllCacheValue = items;
-      return items.map((item) => ({ ...item }));
-    }
-    listAllCacheRaw = null;
-    listAllCacheValue = null;
-    const fallback = LocalStore.get(SAVED_LIBRARY_KEY, []);
-    return dedupeAndSort(Array.isArray(fallback) ? fallback : []);
+    return loadSavedLibraryItems();
   },
 
   list() {
@@ -109,7 +119,7 @@ export const SavedLibraryStore = {
       0,
       1000
     );
-    LocalStore.set(SAVED_LIBRARY_KEY, dedupeAndSort(next));
+    writeSavedLibraryItems(dedupeAndSort(next));
   },
 
   findByContentId(contentId, profileId) {
@@ -123,11 +133,11 @@ export const SavedLibraryStore = {
     const next = this.listAll().filter((item) => {
       return String(item.profileId || "1") !== pid || item.contentId !== wanted;
     });
-    LocalStore.set(SAVED_LIBRARY_KEY, next);
+    writeSavedLibraryItems(next);
   },
 
   replaceAll(items = []) {
-    LocalStore.set(SAVED_LIBRARY_KEY, dedupeAndSort(Array.isArray(items) ? items : []));
+    writeSavedLibraryItems(dedupeAndSort(Array.isArray(items) ? items : []));
   },
 
   replaceForProfile(profileId, items = []) {
@@ -138,9 +148,6 @@ export const SavedLibraryStore = {
     const normalized = (Array.isArray(items) ? items : [])
       .map((item) => normalizeItem(item, pid))
       .filter((item) => Boolean(item.contentId));
-    LocalStore.set(
-      SAVED_LIBRARY_KEY,
-      dedupeAndSort([...normalized, ...keepOtherProfiles]).slice(0, 1000)
-    );
+    writeSavedLibraryItems(dedupeAndSort([...normalized, ...keepOtherProfiles]).slice(0, 1000));
   }
 };

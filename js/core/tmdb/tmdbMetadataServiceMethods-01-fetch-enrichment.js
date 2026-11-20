@@ -17,7 +17,6 @@ export function createTmdbMetadataServiceMethods01() {
     entityHeaderCache,
     entityRailCache,
     entityBrowseCache,
-    setBoundedCacheEntry,
     resolveType,
     languageBase,
     normalizeMoreLikeThisLanguage,
@@ -235,7 +234,7 @@ export function createTmdbMetadataServiceMethods01() {
         header: header || fallbackEntityHeader(kind, normalizedId, fallbackName),
         rails
       };
-      setBoundedCacheEntry(entityBrowseCache, cacheKey, data);
+      entityBrowseCache.set(cacheKey, data);
       return data;
     },
     async fetchEntityHeader({ entityKind, entityId, fallbackName = "", apiKey } = {}) {
@@ -264,7 +263,7 @@ export function createTmdbMetadataServiceMethods01() {
             secondaryLabel: String(data?.headquarters || "").trim() || null,
             description: kind === "company" ? String(data?.description || "").trim() || null : null
           };
-          setBoundedCacheEntry(entityHeaderCache, key, header);
+          entityHeaderCache.set(key, header);
           return header;
         }
       } catch (error) {
@@ -273,7 +272,7 @@ export function createTmdbMetadataServiceMethods01() {
 
       if (fallback) {
         const fallbackHeader = fallbackEntityHeader(kind, normalizedId, fallback);
-        setBoundedCacheEntry(entityHeaderCache, key, fallbackHeader);
+        entityHeaderCache.set(key, fallbackHeader);
         return fallbackHeader;
       }
       return null;
@@ -336,7 +335,7 @@ export function createTmdbMetadataServiceMethods01() {
         console.warn("TMDB entity rail load failed", error);
       }
       if (result.items.length) {
-        setBoundedCacheEntry(entityRailCache, key, result);
+        entityRailCache.set(key, result);
       }
       return result;
     },
