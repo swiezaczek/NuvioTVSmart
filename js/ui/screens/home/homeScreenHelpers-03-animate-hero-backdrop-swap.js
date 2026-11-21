@@ -233,9 +233,19 @@ export function animateHeroBackdropSwap(
   const parent = backdrop.parentElement;
   // The visible bitmap layer on Tizen; the <img> stays the hero's anchor element.
   const getCanvas = () => parent?.querySelector?.(".home-hero-backdrop-canvas:not(.home-hero-backdrop-transition-ghost)") || null;
+  const releaseCanvasLayer = (node) => {
+    if (!node) {
+      return;
+    }
+    if (String(node.tagName || "").toUpperCase() === "CANVAS") {
+      node.width = 0;
+      node.height = 0;
+    }
+    node.remove?.();
+  };
 
   const clearGhosts = () => {
-    parent?.querySelectorAll?.(".home-hero-backdrop-transition-ghost")?.forEach((node) => node.remove());
+    parent?.querySelectorAll?.(".home-hero-backdrop-transition-ghost")?.forEach(releaseCanvasLayer);
   };
 
   const finalize = () => {
@@ -266,7 +276,7 @@ export function animateHeroBackdropSwap(
   };
 
   const showImageLayer = () => {
-    getCanvas()?.remove();
+    releaseCanvasLayer(getCanvas());
     backdrop.heroBackdropCanvasSrc = "";
     backdrop.style.removeProperty("visibility");
   };
@@ -290,7 +300,7 @@ export function animateHeroBackdropSwap(
   const backdropFilter = backdrop.closest?.(".home-layout-modern") ? MODERN_HERO_CANVAS_FILTER : "";
 
   preloadHeroBackdrop(normalizedSrc).then((result) => {
-    if (Number(backdrop.heroBackdropTransitionToken || 0) !== token) {
+    if (Number(backdrop.heroBackdropTransitionToken || 0) !== token || backdrop.isConnected === false) {
       return;
     }
     const bitmap = result.bitmap;
@@ -321,7 +331,7 @@ export function animateHeroBackdropSwap(
       drawHeroBitmapToCanvas(layer, bitmap, backdropFilter);
       // Last in the wrap, so it paints above the fading ghost.
       parent.appendChild(layer);
-      previousCanvas?.remove();
+      releaseCanvasLayer(previousCanvas);
       backdrop.heroBackdropCanvasSrc = normalizedSrc;
       // Dropping src releases the full-size decode; the canvas carries the artwork.
       backdrop.removeAttribute("src");
@@ -335,7 +345,7 @@ export function animateHeroBackdropSwap(
     backdrop.setAttribute("alt", normalizedAlt);
 
     const reveal = () => {
-      if (Number(backdrop.heroBackdropTransitionToken || 0) !== token) {
+      if (Number(backdrop.heroBackdropTransitionToken || 0) !== token || backdrop.isConnected === false) {
         return;
       }
       layer.classList.add("is-visible");
@@ -345,11 +355,11 @@ export function animateHeroBackdropSwap(
       }, durationMs);
     };
     requestAnimationFrame(() => {
-      if (singleLayer) {
-        reveal();
+      if (Number(backdrop.heroBackdropTransitionToken || 0) !== token || backdrop.isConnected === false) {
         return;
       }
-      if (Number(backdrop.heroBackdropTransitionToken || 0) !== token) {
+      if (singleLayer) {
+        reveal();
         return;
       }
       requestAnimationFrame(reveal);

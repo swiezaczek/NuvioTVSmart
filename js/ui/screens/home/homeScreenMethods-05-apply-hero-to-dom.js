@@ -61,9 +61,22 @@ export function createHomeScreenMethods05() {
             backdrop.setAttribute("alt", "");
           }
         } else if (src) {
-          backdrop.setAttribute("src", src);
-          backdrop.setAttribute("alt", "");
-          backdrop.classList.remove("placeholder");
+          if (typeof document?.createElement === "function" && backdrop.parentNode) {
+            const img = document.createElement("img");
+            img.className = "home-hero-backdrop";
+            img.setAttribute("alt", "");
+            img.setAttribute("decoding", "async");
+            img.setAttribute("fetchpriority", "high");
+            backdrop.parentNode.replaceChild(img, backdrop);
+            registerHomeDomNodes([img]);
+            animateHeroBackdropSwap(img, src, display.title || "featured", heroCrossfadeMs, {
+              transitionMode: heroTransitionMode
+            });
+          } else {
+            backdrop.setAttribute("src", src);
+            backdrop.setAttribute("alt", "");
+            backdrop.classList.remove("placeholder");
+          }
         } else {
           backdrop.removeAttribute("src");
           backdrop.classList.add("placeholder");
@@ -306,11 +319,17 @@ export function createHomeScreenMethods05() {
         return this.currentFocusedNode;
       }
       const focused = this.container?.querySelector(".focusable.focused") || null;
-      this.currentFocusedNode = focused;
+      this.setCurrentFocusedNode(focused);
       return focused;
     },
     setCurrentFocusedNode(node = null) {
-      this.currentFocusedNode = node instanceof HTMLElement ? node : null;
+      const next = node instanceof HTMLElement ? node : null;
+      if (this.activeCollectionFocusGifNode && this.activeCollectionFocusGifNode !== next) {
+        // Android renders the overlay from `isFocused`; every focus move has to
+        // drop the previous card's animated overlay, whatever moved the focus.
+        this.hydrateCollectionFocusGif(this.activeCollectionFocusGifNode, false);
+      }
+      this.currentFocusedNode = next;
     },
     setFocusedNode(target, { suppressDelegatedFocus = false } = {}) {
       if (this.homeHoldFocusLocked) {

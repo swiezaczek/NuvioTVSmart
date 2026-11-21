@@ -10,8 +10,8 @@ let route = "home";
 let rescaleEnabled = false;
 let rescaleCalls = [];
 let releasedUrls = [];
-let settleRescale = null;
 let knownUnrescalable = new Set();
+let settleRescale = null;
 
 const context = vm.createContext({
   buildModernRowKey: () => "collection:test",
@@ -37,6 +37,9 @@ const context = vm.createContext({
   getTvArtworkPixelRatio: () => 2,
   internals: {}
 });
+
+class TestElement {}
+context.HTMLElement = TestElement;
 
 function resetRescale() {
   rescaleEnabled = false;
@@ -70,7 +73,6 @@ function focusCard(src, { width = 220, height = 338 } = {}) {
   const image = new Image();
   const classes = new Set(["focused"]);
   const node = {
-    isConnected: true,
     querySelector: () => image,
     classList: {
       add: (name) => classes.add(name),
@@ -108,6 +110,23 @@ await loadFrom(
   "export function createPosterCardMarkup"
 );
 await loadFrom("./homeScreenMethods-11-enrich-current-hero-async.js", "const focusGifRequests");
+
+// The focus owner is the single place every focus transfer goes through, so it
+// has to drop the previous collection overlay.
+const focusStateSource = await readFile(
+  new URL("./homeScreenMethods-05-apply-hero-to-dom.js", import.meta.url),
+  "utf8"
+);
+const focusSetterStart = focusStateSource.indexOf("setCurrentFocusedNode(node = null) {");
+const focusSetterEnd = focusStateSource.indexOf("\n    },", focusSetterStart);
+assert.ok(focusSetterStart >= 0 && focusSetterEnd > focusSetterStart);
+vm.runInContext(
+  `function setCurrentFocusedNode(node = null) {${focusStateSource.slice(
+    focusSetterStart + "setCurrentFocusedNode(node = null) {".length,
+    focusSetterEnd
+  )}}`,
+  context
+);
 
 const gif = "https://example.invalid/focus.gif";
 const cover = "https://example.invalid/cover.jpg";
@@ -179,7 +198,6 @@ test("focused GIF loads immediately, unloads on blur and reloads on refocus", ()
   const image = new Image();
   const classes = new Set();
   const node = {
-    isConnected: true,
     querySelector: () => image,
     classList: { add: (name) => classes.add(name), remove: (name) => classes.delete(name) }
   };
@@ -321,7 +339,6 @@ test("hydrating a collection overlay tears down any previously active overlay", 
   secondImage.dataset.src = "https://example.invalid/two.gif";
   const secondClasses = new Set(["focused"]);
   const secondNode = {
-    isConnected: true,
     querySelector: () => secondImage,
     classList: {
       add: (name) => secondClasses.add(name),
@@ -356,6 +373,51 @@ test("hydrating an overlay that already carries src restores its active class an
   assert.equal(rescaleCalls.length, 0);
 });
 
+test("hydrating a collection card without a focus gif overlay still tears down any previous overlay", () => {
+  resetRescale();
+  const firstCard = focusCard("https://example.invalid/one.gif");
+  const methods = context.createHomeScreenMethods11();
+
+  methods.hydrateCollectionFocusGif(firstCard.node, true);
+  assert.equal(methods.activeCollectionFocusGifNode, firstCard.node);
+  assert.equal(firstCard.image.getAttribute("src"), "https://example.invalid/one.gif");
+
+  const staticCollectionNode = {
+    querySelector: () => null
+  };
+  methods.hydrateCollectionFocusGif(staticCollectionNode, true);
+  assert.equal(firstCard.image.getAttribute("src"), undefined);
+  assert.ok(!firstCard.classes.has("is-focus-gif-active"));
+  assert.equal(methods.activeCollectionFocusGifNode, null);
+});
+
+test("any focus move away from the collection card tears its overlay down", () => {
+  resetRescale();
+  const firstCard = focusCard("https://example.invalid/one.gif");
+  Object.setPrototypeOf(firstCard.node, TestElement.prototype);
+  const methods = context.createHomeScreenMethods11();
+  methods.setCurrentFocusedNode = context.setCurrentFocusedNode;
+
+  methods.hydrateCollectionFocusGif(firstCard.node, true);
+  assert.equal(firstCard.image.getAttribute("src"), "https://example.invalid/one.gif");
+
+  // Focus lands on a regular card: the overlay of the previous card cannot
+  // stay painted just because a non-D-pad path moved the focus.
+  methods.setCurrentFocusedNode(new TestElement());
+  assert.equal(firstCard.image.getAttribute("src"), undefined);
+  assert.ok(!firstCard.classes.has("is-focus-gif-active"));
+  assert.equal(methods.activeCollectionFocusGifNode, null);
+
+  methods.hydrateCollectionFocusGif(firstCard.node, true);
+  assert.equal(firstCard.image.getAttribute("src"), "https://example.invalid/one.gif");
+
+  // Focus leaves the Home content entirely.
+  methods.setCurrentFocusedNode(null);
+  assert.equal(firstCard.image.getAttribute("src"), undefined);
+  assert.ok(!firstCard.classes.has("is-focus-gif-active"));
+  assert.equal(methods.activeCollectionFocusGifNode, null);
+});
+
 test("skips getBoundingClientRect for gif and known unrescalable webp overlays", () => {
   resetRescale();
   rescaleEnabled = true;
@@ -373,23 +435,4 @@ test("skips getBoundingClientRect for gif and known unrescalable webp overlays",
   assert.equal(webpCard.getRectCalls(), 0);
   assert.equal(webpCard.image.getAttribute("src"), animatedWebp);
   assert.equal(rescaleCalls.length, 0);
-});
-
-test("hydrating a collection card without a focus gif overlay still tears down any previous overlay", () => {
-  resetRescale();
-  const firstCard = focusCard("https://example.invalid/one.gif");
-  const methods = context.createHomeScreenMethods11();
-
-  methods.hydrateCollectionFocusGif(firstCard.node, true);
-  assert.equal(methods.activeCollectionFocusGifNode, firstCard.node);
-  assert.equal(firstCard.image.getAttribute("src"), "https://example.invalid/one.gif");
-
-  const staticCollectionNode = {
-    isConnected: true,
-    querySelector: () => null
-  };
-  methods.hydrateCollectionFocusGif(staticCollectionNode, true);
-  assert.equal(firstCard.image.getAttribute("src"), undefined);
-  assert.ok(!firstCard.classes.has("is-focus-gif-active"));
-  assert.equal(methods.activeCollectionFocusGifNode, null);
 });

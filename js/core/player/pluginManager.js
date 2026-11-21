@@ -1061,23 +1061,24 @@ async function runWithPool(task, quota, signal) {
     return await task();
   } finally {
     runningExecutions = Math.max(0, runningExecutions - 1);
-    // Keep the head of the queue in place while the pool is shrinking, so the
-    // provider order is preserved; a later completion frees its slot. Skip over
-    // any aborted queued entries so remaining plugins continue draining.
-    while (
-      queuedExecutions.length &&
-      runningExecutions < PluginRuntime.allowedConcurrency(queuedExecutions[0].quota.maxConcurrent)
-    ) {
-      const next = queuedExecutions.shift();
-      next.signal?.removeEventListener?.("abort", next.onAbort);
-      if (next.signal?.aborted) {
-        next.resolve([]);
+    while (queuedExecutions.length) {
+      const head = queuedExecutions[0];
+      if (head.signal?.aborted) {
+        queuedExecutions.shift();
+        head.signal?.removeEventListener?.("abort", head.onAbort);
+        head.resolve([]);
         continue;
       }
+      // Keep the head of the queue in place while the pool is shrinking, so the
+      // provider order is preserved; a later completion frees its slot.
+      if (runningExecutions >= PluginRuntime.allowedConcurrency(head.quota.maxConcurrent)) {
+        break;
+      }
+      const next = queuedExecutions.shift();
+      next.signal?.removeEventListener?.("abort", next.onAbort);
       runWithPool(next.task, next.quota, next.signal)
         .then(next.resolve)
         .catch(() => next.resolve([]));
-      break;
     }
   }
 }

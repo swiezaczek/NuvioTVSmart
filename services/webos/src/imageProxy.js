@@ -4,8 +4,7 @@ var http = require("http");
 var https = require("https");
 var os = require("os");
 var path = require("path");
-var urlModule = require("url");
-var URL = urlModule.URL;
+var URL = require("url").URL;
 
 var IMAGE_PROXY_PATH = "/image-proxy";
 var CACHE_DIR = path.join(os.tmpdir(), "nuvio-webos-image-proxy");
@@ -189,20 +188,20 @@ function downloadImage(validated, entry, redirectsLeft) {
   return new Promise(function (resolve, reject) {
     var target = validated.target;
     var parsed = validated.parsed;
-    var urlParsed = urlModule.parse(target);
     var transport = String(parsed.protocol || "").toLowerCase() === "http:" ? http : https;
     var requestOptions = {
-      protocol: urlParsed.protocol,
-      hostname: urlParsed.hostname,
-      port: urlParsed.port || undefined,
-      path: urlParsed.path || "/",
+      protocol: parsed.protocol,
+      hostname: String(parsed.hostname || "").replace(/^\[|\]$/g, ""),
+      port: parsed.port || undefined,
+      path: (parsed.pathname || "/") + (parsed.search || ""),
       headers: {
         Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
         "User-Agent": BROWSER_USER_AGENT
       }
     };
-    if (urlParsed.auth) {
-      requestOptions.auth = urlParsed.auth;
+    if (parsed.username || parsed.password) {
+      requestOptions.auth =
+        decodeURIComponent(parsed.username || "") + ":" + decodeURIComponent(parsed.password || "");
     }
     var request = transport.get(requestOptions, function (response) {
       var statusCode = Number(response.statusCode || 0);
@@ -212,12 +211,9 @@ function downloadImage(validated, entry, redirectsLeft) {
         response.resume();
         var nextTarget;
         try {
-          nextTarget =
-            typeof URL === "function"
-              ? new URL(redirectUrl, target).toString()
-              : urlModule.resolve(target, redirectUrl);
+          nextTarget = new URL(redirectUrl, target).toString();
         } catch (_) {
-          reject(new Error("Image redirect URL is invalid"));
+          reject(new Error("Invalid redirect URL"));
           return;
         }
         var nextValidated = validateTargetUrl(nextTarget);

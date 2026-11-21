@@ -29,6 +29,9 @@ export function createHomeScreenMethods19() {
       if (!current) {
         return false;
       }
+      if (this.isMainNode(current) && !this.shouldSuspendModernViewportFocusSync() && !this.isNodeWithinMainViewport(current)) {
+        current = this.syncMainFocusToViewport({ suppressFlows: true }) || current;
+      }
       const isSidebar = this.isSidebarNode(current);
 
       if (typeof event?.preventDefault === "function") {
@@ -38,8 +41,7 @@ export function createHomeScreenMethods19() {
       // full re-render while D-pad input is settling (see
       // shouldDeferHomeRenderForInput). One timestamp covers first presses
       // and repeats on every layout.
-      const now = Date.now();
-      this.lastHomeInputAt = now;
+      this.lastHomeInputAt = Date.now();
 
       const inputMeta = {
         repeat: Boolean(event?.repeat)
@@ -56,37 +58,14 @@ export function createHomeScreenMethods19() {
       }
 
       if (inputMeta.repeat) {
+        const now = Date.now();
         const repeatThrottleMs = this.getDirectionalRepeatThrottleMs(direction);
         const repeatTimes = this.lastDirectionalKeyAtByDirection || (this.lastDirectionalKeyAtByDirection = {});
         const lastDirectionalKeyAt = Number(repeatTimes[direction] || 0);
         if (lastDirectionalKeyAt > 0 && now - lastDirectionalKeyAt < repeatThrottleMs) {
-          event?.stopPropagation?.();
           return true;
         }
         repeatTimes[direction] = now;
-      }
-
-      if (direction === "left" || direction === "right") {
-        const prevHorizontalAt = Number(this.lastHorizontalHomeDpadAt || 0);
-        if (inputMeta.repeat || (prevHorizontalAt > 0 && now - prevHorizontalAt < 300)) {
-          this.lastRapidHorizontalNavAt = now;
-        }
-        this.lastHorizontalHomeDpadAt = now;
-      }
-
-      this.lastHomeDpadMoveAt = now;
-      const recentlyNavigatedInMain =
-        current === this.lastMainFocus &&
-        Number(this.lastHomeDpadMoveAtPrev || 0) > 0 &&
-        now - Number(this.lastHomeDpadMoveAtPrev || 0) < 1200;
-      this.lastHomeDpadMoveAtPrev = now;
-      if (
-        !recentlyNavigatedInMain &&
-        this.isMainNode(current) &&
-        !this.shouldSuspendModernViewportFocusSync() &&
-        !this.isNodeWithinMainViewport(current)
-      ) {
-        current = this.syncMainFocusToViewport({ suppressFlows: true }) || current;
       }
 
       if (!isSidebar && current.classList.contains("home-hero-card") && (direction === "left" || direction === "right")) {

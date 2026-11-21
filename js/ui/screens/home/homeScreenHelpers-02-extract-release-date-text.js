@@ -63,11 +63,15 @@ import { WatchProgressSource } from "../../../data/local/traktSettingsStore.js";
 
 import { watchProgressCompletedThreshold } from "../../../domain/model/watchProgress.js";
 
-import { getTvArtworkPixelRatio, getTvHeroTransitionMode, getTvRuntimePerformanceProfile } from "../../../platform/tvRuntimePerformance.js";
+import {
+  getTvArtworkPixelRatio,
+  getTvHeroTransitionMode,
+  getTvRuntimePerformanceProfile
+} from "../../../platform/tvRuntimePerformance.js";
 
 import { canUseModernTvArtworkBounding } from "../../../platform/tvPerformancePolicy.js";
 
-import { jpegDimensions, rescaleHomeLogoBlob } from "../../images/tvPosterRescaler.js";
+import { jpegDimensions, pngStillDimensions, rescaleHomeLogoBlob } from "../../images/tvPosterRescaler.js";
 
 import { isFastHorizontalNavigationEnabled } from "../../../platform/sharedKeys.js";
 
@@ -322,29 +326,9 @@ function uint16le(bytes, offset) {
 }
 
 function uint32le(bytes, offset) {
-  return (bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24)) >>> 0;
-}
-
-function uint32be(bytes, offset) {
-  return ((bytes[offset] << 24) | (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3]) >>> 0;
-}
-
-function pngLogoDimensions(bytes) {
-  let offset = 8;
-  while (offset + 8 <= bytes.length) {
-    const length = uint32be(bytes, offset);
-    const type = ascii(bytes, offset + 4, 4);
-    // APNG carries an acTL chunk before IDAT. createImageBitmap keeps one
-    // frame, while the <img> tag plays the animation Android keeps.
-    if (type === "acTL") {
-      return null;
-    }
-    if (type === "IDAT" || type === "IEND") {
-      break;
-    }
-    offset += 12 + length;
-  }
-  return { width: uint32be(bytes, 16), height: uint32be(bytes, 20) };
+  return (
+    (bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24)) >>> 0
+  );
 }
 
 function webpLogoDimensions(bytes) {
@@ -390,7 +374,7 @@ export function heroLogoDimensions(bytes) {
     return null;
   }
   if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
-    return pngLogoDimensions(bytes);
+    return pngStillDimensions(bytes);
   }
   if (ascii(bytes, 0, 4) === "RIFF" && ascii(bytes, 8, 4) === "WEBP") {
     return webpLogoDimensions(bytes);

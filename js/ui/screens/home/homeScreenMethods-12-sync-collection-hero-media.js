@@ -160,25 +160,6 @@ export function createHomeScreenMethods12() {
       }
       this.homeTrailerLayerCleanupTimers.delete(container);
     },
-    getTrackedTrailerLayers(activeOnly = false) {
-      if (this.activeHomeTrailerLayers instanceof Set) {
-        const layers = [];
-        this.activeHomeTrailerLayers.forEach((layer) => {
-          if (!layer || layer.isConnected === false) {
-            this.activeHomeTrailerLayers.delete(layer);
-            return;
-          }
-          if (!activeOnly || layer.classList?.contains("is-active")) {
-            layers.push(layer);
-          }
-        });
-        return layers;
-      }
-      const selector = activeOnly
-        ? ".home-hero-trailer-layer.is-active, .home-poster-trailer-layer.is-active"
-        : ".home-poster-trailer-layer, .home-hero-trailer-layer";
-      return Array.from(this.container?.querySelectorAll(selector) || []);
-    },
     clearTrailerLayer(container) {
       if (!container) {
         return;
@@ -190,7 +171,7 @@ export function createHomeScreenMethods12() {
       // avoidable on constrained TV runtimes. Keep handling active, populated,
       // and scheduled layers so trailer teardown semantics remain unchanged.
       if (!container.classList.contains("is-active") && !container.firstElementChild && !pendingCleanup) {
-        this.activeHomeTrailerLayers?.delete?.(container);
+        this.mountedHomeTrailerLayers?.delete(container);
         return;
       }
       if (pendingHide) {
@@ -219,7 +200,7 @@ export function createHomeScreenMethods12() {
       }
       container.innerHTML = "";
       container.classList.remove("is-active", "is-trailer-layer-idle-hidden");
-      this.activeHomeTrailerLayers?.delete?.(container);
+      this.mountedHomeTrailerLayers?.delete(container);
     },
     pauseTrailerLayer(container) {
       if (!container) {
@@ -268,9 +249,35 @@ export function createHomeScreenMethods12() {
       }, 520);
       this.homeTrailerLayerHideTimers.set(container, timer);
     },
+    getHomeTrailerLayers(selector, { activeOnly = false } = {}) {
+      if (this.mountedHomeTrailerLayers instanceof Set) {
+        const layers = [];
+        this.mountedHomeTrailerLayers.forEach((layer) => {
+          if (!layer || layer.isConnected === false) {
+            this.mountedHomeTrailerLayers.delete(layer);
+            return;
+          }
+          if (activeOnly && !layer.classList?.contains?.("is-active")) {
+            return;
+          }
+          layers.push(layer);
+        });
+        return layers;
+      }
+      if (
+        typeof this.container?.getElementsByTagName === "function" &&
+        this.container.getElementsByTagName("iframe").length === 0 &&
+        this.container.getElementsByTagName("video").length === 0
+      ) {
+        return [];
+      }
+      return Array.from(this.container?.querySelectorAll?.(selector) || []);
+    },
     pauseActiveTrailerLayersForNavigation() {
-      const layers = this.getTrackedTrailerLayers(true);
-      layers.forEach((layer) => {
+      const layers = this.getHomeTrailerLayers(".home-hero-trailer-layer.is-active, .home-poster-trailer-layer.is-active", {
+        activeOnly: true
+      });
+      layers?.forEach((layer) => {
         this.pauseTrailerLayer(layer);
         layer.classList.remove("is-active");
         this.scheduleTrailerLayerHide(layer);
@@ -319,11 +326,11 @@ export function createHomeScreenMethods12() {
       this.scheduleTrailerLayerHide(container);
     },
     refreshPendingHomeTrailerCleanup() {
-      const layers = this.getTrackedTrailerLayers(false);
+      const layers = this.getHomeTrailerLayers(".home-poster-trailer-layer, .home-hero-trailer-layer");
       // A YouTube iframe that has not shown a frame yet is pure boot work on the
       // app's thread: 2.4 s of long tasks on a 2025 OLED, far more on slow sets.
       // Once the user moves on nothing visible is lost by dropping it, on any TV.
-      layers.forEach((layer) => {
+      layers?.forEach((layer) => {
         const frame = layer.querySelector("iframe");
         if (!frame || frame.dataset.trailerRevealed === "true" || frame.dataset.trailerBootDrop === "true") {
           return;
@@ -340,7 +347,7 @@ export function createHomeScreenMethods12() {
       if (!this.shouldUseImmediateFocusScroll()) {
         return;
       }
-      layers.forEach((layer) => {
+      layers?.forEach((layer) => {
         // Never re-arm a pending cleanup: each later key would postpone it and
         // keep the paused player alive for the whole navigation.
         if (this.homeTrailerLayerCleanupTimers?.has?.(layer)) {
@@ -352,9 +359,9 @@ export function createHomeScreenMethods12() {
       });
     },
     clearHomeTrailerLayers() {
-      const layers = this.getTrackedTrailerLayers(false);
-      layers.forEach((layer) => this.clearTrailerLayer(layer));
-      this.activeHomeTrailerLayers?.clear?.();
+      const layers = this.getHomeTrailerLayers(".home-poster-trailer-layer, .home-hero-trailer-layer");
+      layers?.forEach((layer) => this.clearTrailerLayer(layer));
+      this.mountedHomeTrailerLayers?.clear();
     },
     setHeroTrailerActive(active = false, heroMedia = null) {
       const isActive = Boolean(active);

@@ -18,44 +18,13 @@ var MAX_SAMPLES_PER_TRACK = 1000000;
 var MAX_CUES_PER_WINDOW = 2000;
 var MAX_WINDOW_BYTES = 512 * 1024;
 var MAX_REDIRECTS = 5;
+var REQUEST_TIMEOUT_MS = 15000;
+var MAX_SAMPLE_CONCURRENCY = 4;
 
 function parserError(code, message) {
   var error = new Error(String(message || code || "TX3G parser error"));
   error.code = code || "TX3G_PARSE_FAILED";
   return error;
-}
-
-function bufferAlloc(size) {
-  if (typeof Buffer.alloc === "function") {
-    return Buffer.alloc(size);
-  }
-  var buffer = new Buffer(size);
-  buffer.fill(0);
-  return buffer;
-}
-
-function destroyStream(stream) {
-  if (stream && typeof stream.destroy === "function") {
-    stream.destroy();
-  }
-}
-
-function destroyRequest(request) {
-  if (!request) return;
-  if (typeof request.destroy === "function") {
-    request.destroy();
-    return;
-  }
-  if (typeof request.abort === "function") {
-    try {
-      request.abort();
-    } catch (_) {}
-  }
-  if (request.socket && typeof request.socket.destroy === "function") {
-    try {
-      request.socket.destroy();
-    } catch (_) {}
-  }
 }
 
 function isFiniteNumber(value) {
@@ -161,16 +130,20 @@ function findBoxTypeInBuffer(buffer, absoluteStart, type) {
 
   // A tail range is not aligned to a top-level box. Validate candidates by
   // checking the preceding size field and the complete box boundary.
-  for (var localStart = 0; localStart + 8 <= buffer.length; localStart += 1) {
-    if (buffer.toString("ascii", localStart + 4, localStart + 8) !== type) {
-      continue;
+  var searchFrom = 4;
+  while (searchFrom + 4 <= buffer.length) {
+    var typeOffset = buffer.indexOf(type, searchFrom);
+    if (typeOffset === -1) {
+      break;
     }
+    var localStart = typeOffset - 4;
     var candidate = parseBox(buffer, localStart, buffer.length);
     if (candidate && candidate.type === type) {
       candidate.absoluteStart = start + candidate.start;
       candidate.absoluteEnd = start + candidate.end;
       return candidate;
     }
+    searchFrom = typeOffset + 1;
   }
   return null;
 }
@@ -187,7 +160,40 @@ function parseContentRange(value) {
   };
 }
 
-function requestRange(targetUrl, start, end, redirectCount) {
+function mapWithConcurrency(items, concurrency, iteratee) {
+  if (!items.length) {
+    return Promise.resolve([]);
+  }
+  var limit = Math.max(1, Math.min(Number(concurrency || 1), items.length));
+  var results = new Array(items.length);
+  var nextIndex = 0;
+  var workers = [];
+
+  function runWorker() {
+    var current = nextIndex;
+    nextIndex += 1;
+    if (current >= items.length) {
+      return Promise.resolve();
+    }
+    return Promise.resolve()
+      .then(function () {
+        return iteratee(items[current], current);
+      })
+      .then(function (value) {
+        results[current] = value;
+        return runWorker();
+      });
+  }
+
+  for (var w = 0; w < limit; w += 1) {
+    workers.push(runWorker());
+  }
+  return Promise.all(workers).then(function () {
+    return results;
+  });
+}
+
+function requestRange(targetUrl, start, end, redirectCount, timeoutMs) {
   var parsed = urlModule.parse(String(targetUrl || ""));
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     return Promise.reject(parserError("INVALID_URL", "TX3G source URL must use HTTP or HTTPS"));
@@ -196,11 +202,32 @@ function requestRange(targetUrl, start, end, redirectCount) {
   var client = parsed.protocol === "https:" ? https : http;
   var requestedStart = Math.max(0, Math.floor(Number(start || 0)));
   var requestedEnd = Math.max(requestedStart, Math.floor(Number(end || 0)));
+  var effectiveTimeoutMs = Number(timeoutMs) > 0 ? Number(timeoutMs) : REQUEST_TIMEOUT_MS;
   if (requestedEnd - requestedStart + 1 > MAX_RANGE_BYTES) {
     return Promise.reject(parserError("RANGE_TOO_LARGE", "TX3G byte range exceeds safety limit"));
   }
 
   return new Promise(function (resolve, reject) {
+    var settled = false;
+    function finishResolve(value) {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    }
+    function finishReject(error) {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    }
+    function abortRequest(req) {
+      if (!req) return;
+      if (typeof req.abort === "function") {
+        req.abort();
+      } else if (typeof req.destroy === "function") {
+        req.destroy();
+      }
+    }
+
     var request = client.request(
       {
         protocol: parsed.protocol,
@@ -220,16 +247,26 @@ function requestRange(targetUrl, start, end, redirectCount) {
         if (statusCode >= 300 && statusCode < 400 && location) {
           response.resume();
           if (Number(redirectCount || 0) >= MAX_REDIRECTS) {
-            reject(parserError("TOO_MANY_REDIRECTS", "TX3G source redirected too many times"));
+            finishReject(parserError("TOO_MANY_REDIRECTS", "TX3G source redirected too many times"));
             return;
           }
-          resolve(requestRange(urlModule.resolve(targetUrl, location), requestedStart, requestedEnd, Number(redirectCount || 0) + 1));
+          Promise.resolve()
+            .then(function () {
+              return requestRange(
+                urlModule.resolve(targetUrl, location),
+                requestedStart,
+                requestedEnd,
+                Number(redirectCount || 0) + 1,
+                effectiveTimeoutMs
+              );
+            })
+            .then(finishResolve, finishReject);
           return;
         }
 
         if (statusCode < 200 || statusCode >= 300) {
           response.resume();
-          reject(parserError("HTTP_ERROR", "TX3G source returned HTTP " + statusCode));
+          finishReject(parserError("HTTP_ERROR", "TX3G source returned HTTP " + statusCode));
           return;
         }
 
@@ -237,28 +274,29 @@ function requestRange(targetUrl, start, end, redirectCount) {
         var totalBytes = 0;
         var aborted = false;
         response.on("data", function (chunk) {
-          if (aborted) {
+          if (aborted || settled) {
             return;
           }
           totalBytes += chunk.length;
           if (totalBytes > MAX_SOURCE_BYTES) {
             aborted = true;
-            destroyStream(response);
-            if (typeof response.destroy !== "function") {
-              destroyRequest(request);
+            if (typeof response.destroy === "function") {
+              response.destroy();
+            } else {
+              abortRequest(request);
             }
-            reject(parserError("SOURCE_TOO_LARGE", "TX3G source response exceeds safety limit"));
+            finishReject(parserError("SOURCE_TOO_LARGE", "TX3G source response exceeds safety limit"));
             return;
           }
           chunks.push(chunk);
         });
         response.on("error", function (error) {
           if (!aborted) {
-            reject(error);
+            finishReject(error);
           }
         });
         response.on("end", function () {
-          if (aborted) {
+          if (aborted || settled) {
             return;
           }
           var body = Buffer.concat(chunks, totalBytes);
@@ -266,7 +304,7 @@ function requestRange(targetUrl, start, end, redirectCount) {
           var contentLength = Number(response.headers && response.headers["content-length"] || 0);
           var actualStart = contentRange ? contentRange.start : statusCode === 206 ? requestedStart : 0;
           var total = contentRange && contentRange.total ? contentRange.total : statusCode === 200 ? contentLength || body.length : 0;
-          resolve({
+          finishResolve({
             body: body,
             statusCode: statusCode,
             start: actualStart,
@@ -277,13 +315,20 @@ function requestRange(targetUrl, start, end, redirectCount) {
         });
       }
     );
-    request.on("error", reject);
+    if (typeof request.setTimeout === "function") {
+      request.setTimeout(effectiveTimeoutMs, function () {
+        abortRequest(request);
+        finishReject(parserError("TIMEOUT", "TX3G byte range request timed out"));
+      });
+    }
+    request.on("error", finishReject);
     request.end();
   });
 }
 
-function RangeReader(targetUrl) {
+function RangeReader(targetUrl, options) {
   this.targetUrl = String(targetUrl || "");
+  this.requestTimeoutMs = Number(options && options.requestTimeoutMs) || REQUEST_TIMEOUT_MS;
   this.fullBody = null;
   this.total = 0;
   this.cachedRanges = [];
@@ -307,7 +352,7 @@ RangeReader.prototype.read = function (start, end) {
     }
   }
 
-  return requestRange(this.targetUrl, requestedStart, requestedEnd, 0).then(function (result) {
+  return requestRange(this.targetUrl, requestedStart, requestedEnd, 0, this.requestTimeoutMs).then(function (result) {
     if (result.statusCode === 200 && result.start === 0) {
       self.fullBody = result.body;
       self.total = result.total || result.body.length;
@@ -660,7 +705,7 @@ function decodeTx3gSample(sample) {
   }
   var text = sample.slice(2, 2 + textLength);
   if (text.length >= 2 && text[0] === 0xfe && text[1] === 0xff) {
-    var swapped = bufferAlloc(text.length - 2);
+    var swapped = Buffer.alloc(text.length - 2);
     for (var index = 2; index + 1 < text.length; index += 2) {
       swapped[index - 2] = text[index + 1];
       swapped[index - 1] = text[index];
@@ -770,7 +815,7 @@ function extractTx3gTimeline(options) {
   if (!/^https?:\/\//i.test(sourceUrl)) {
     return Promise.reject(parserError("INVALID_URL", "TX3G source URL is invalid"));
   }
-  var reader = new RangeReader(sourceUrl);
+  var reader = new RangeReader(sourceUrl, options);
   return findMoov(reader).then(function (moov) {
     var tracks = parseTracks(moov.body);
     var track = selectTimelineTrack(tracks, options && options.trackNumber);
@@ -790,7 +835,7 @@ function extractTx3gWindow(options) {
     return Promise.reject(parserError("INVALID_URL", "TX3G source URL is invalid"));
   }
 
-  var reader = new RangeReader(sourceUrl);
+  var reader = new RangeReader(sourceUrl, options);
   return findMoov(reader).then(function (moov) {
     var tracks = parseTracks(moov.body);
     var track = selectTrack(tracks, trackNumber);
@@ -809,7 +854,7 @@ function extractTx3gWindow(options) {
       }
     }
 
-    var cuePromises = selected.map(function (entry) {
+    return mapWithConcurrency(selected, MAX_SAMPLE_CONCURRENCY, function (entry) {
       var sample = track.samples[entry.index];
       if (!sample || !sample.size || !sample.offset) {
         return Promise.resolve({ entry: entry, text: "" });
@@ -817,9 +862,7 @@ function extractTx3gWindow(options) {
       return reader.read(sample.offset, sample.offset + sample.size - 1).then(function (body) {
         return { entry: entry, text: decodeTx3gSample(body) };
       });
-    });
-
-    return Promise.all(cuePromises).then(function (cues) {
+    }).then(function (cues) {
       var blocks = [];
       var outputBytes = Buffer.byteLength("WEBVTT\n\n", "utf8");
       cues.forEach(function (cue) {
@@ -866,6 +909,7 @@ module.exports = {
   extractTx3gWindow: extractTx3gWindow,
   extractTx3gTimeline: extractTx3gTimeline,
   buildTx3gTimelinePayload: buildTx3gTimelinePayload,
+  findBoxTypeInBuffer: findBoxTypeInBuffer,
   parseTracks: parseTracks,
   decodeTx3gSample: decodeTx3gSample,
   parserError: parserError

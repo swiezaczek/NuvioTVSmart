@@ -32,14 +32,13 @@ export function createHomeScreenMethods13() {
             );
           } catch (_) {}
           container.classList.add("is-active");
+          (this.mountedHomeTrailerLayers ||= new Set()).add(container);
           onReady?.();
           return;
         }
       }
       this.clearTrailerLayer(container);
       if (source.kind === "youtube" && source.embedUrl) {
-        this.activeHomeTrailerLayers ||= new Set();
-        this.activeHomeTrailerLayers.add(container);
         const frame = document.createElement("iframe");
         frame.className = "home-inline-trailer-frame";
         frame.dataset.trailerSrc = source.embedUrl;
@@ -190,11 +189,10 @@ export function createHomeScreenMethods13() {
           { once: true }
         );
         container.appendChild(frame);
+        (this.mountedHomeTrailerLayers ||= new Set()).add(container);
         return;
       }
       if (source.kind === "video" && source.url) {
-        this.activeHomeTrailerLayers ||= new Set();
-        this.activeHomeTrailerLayers.add(container);
         const shouldMute = source.muted !== false;
         const video = document.createElement("video");
         video.className = "home-inline-trailer-video";
@@ -251,6 +249,7 @@ export function createHomeScreenMethods13() {
           { once: true }
         );
         container.appendChild(video);
+        (this.mountedHomeTrailerLayers ||= new Set()).add(container);
         video.setAttribute("src", String(source.url || ""));
         try {
           video.load?.();

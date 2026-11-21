@@ -564,7 +564,7 @@ test("O(1) activeHomeTrailerLayers avoids querySelectorAll scans on cleanup and 
     querySelector: (sel) => (sel === "iframe" ? iframe : null)
   };
   const screen = Object.assign(Object.create(context.api), {
-    activeHomeTrailerLayers: new Set([layer]),
+    mountedHomeTrailerLayers: new Set([layer]),
     homeTrailerLayerCleanupTimers: new WeakMap(),
     homeTrailerLayerHideTimers: new WeakMap(),
     shouldUseImmediateFocusScroll: () => false,
@@ -580,8 +580,8 @@ test("O(1) activeHomeTrailerLayers avoids querySelectorAll scans on cleanup and 
   screen.pauseActiveTrailerLayersForNavigation();
   screen.clearHomeTrailerLayers();
 
-  assert.equal(queryAllCalls, 0, "tracked activeHomeTrailerLayers avoids full DOM scans");
-  assert.equal(screen.activeHomeTrailerLayers.size, 0);
+  assert.equal(queryAllCalls, 0, "tracked mountedHomeTrailerLayers avoids full DOM scans");
+  assert.equal(screen.mountedHomeTrailerLayers.size, 0);
 });
 
 test("persistHomeCatalogSnapshot defers writes until >1500ms after last Home D-pad press", async () => {

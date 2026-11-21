@@ -31,7 +31,7 @@ export function createHomeScreenMethods20() {
       const mountStart = HOME_PERF_DEBUG ? homePerfNow() : 0;
       const isBackNavigation = Boolean(navigationContext?.isBackNavigation);
       this.container = document.getElementById("home");
-      this.activeHomeTrailerLayers ||= new Set();
+      this.mountedHomeTrailerLayers ||= new Set();
       if (this.homeRouteReturnRefreshTimer) {
         clearTimeout(this.homeRouteReturnRefreshTimer);
         this.homeRouteReturnRefreshTimer = null;

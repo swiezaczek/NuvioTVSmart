@@ -221,7 +221,8 @@ export function artworkResizeTarget(width, height, maxDimension = 1280) {
   return null;
 }
 
-const WORKER_SOURCE = `
+/** Exported so the streaming early-abort can be exercised without a browser. */
+export const WORKER_SOURCE = `
 const sourceRect = ${computeSourceRect.toString()};
 const isJpeg = ${isJpegHeader.toString()};
 const webpInfo = ${webpArtworkInfo.toString()};
@@ -843,11 +844,6 @@ export function rescaleHomeArtwork(url, options) {
   return rescaleWithPool(getPool(), url, options);
 }
 
-/** Whether `url` already failed a Home worker check for URL-wide reasons. */
-export function isKnownUnrescalableHomeArtwork(url) {
-  return Boolean(url && pool && !pool.disposed && pool.failedUrls?.has(String(url)));
-}
-
 /**
  * Downscale a hero logo off the main thread using the existing Home rescaler
  * pool. Returns a transparent WebP Blob, or null to fall back to the original.
@@ -909,6 +905,11 @@ export function rescaleHomeLogoBlob(url, { width, height, timeoutMs = 1500 } = {
   state.queue.push(job);
   pump(state);
   return job.promise;
+}
+
+/** Whether `url` already failed a Home worker check for URL-wide reasons. */
+export function isKnownUnrescalableHomeArtwork(url) {
+  return Boolean(url && pool && !pool.disposed && pool.failedUrls?.has(String(url)));
 }
 
 /** Same contract as rescaleHomeArtwork, with its own pool for non-Home screens. */
