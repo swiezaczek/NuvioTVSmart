@@ -28,6 +28,12 @@ globalThis.document?.addEventListener?.("nuvio:media-servers-changed", () => {
   titleNames.clear();
 });
 const key = (id) => encodeURIComponent(String(id));
+// Emby spells provider keys inconsistently ("Imdb" for movies, "IMDB" for series).
+const providerId = (ids, name) => {
+  const wanted = name.toLowerCase();
+  const match = Object.keys(ids || {}).find((entry) => entry.toLowerCase() === wanted);
+  return match ? ids[match] : undefined;
+};
 const profile = () => String(ProfileManager.getActiveProfileId() || "1");
 export const isMediaServerBase = (base) => String(base || "").startsWith("nuvio-server://");
 export const parseServerItem = (id) => {
@@ -97,14 +103,34 @@ function image(connection, item, type = "Primary", parentId = null) {
     api_key: connection.token
   });
 }
+// Like the Android app, an episode in the resume row stands for its series: the
+// card carries the series id and images, with the episode overview Android keeps.
+function resumeCardItem(item) {
+  if (String(item?.Type).toLowerCase() !== "episode") return item;
+  if (!item.SeriesId) return null;
+  return {
+    Id: item.SeriesId,
+    SeriesId: item.SeriesId,
+    Name: item.SeriesName || item.Name,
+    Type: "Series",
+    Overview: item.Overview,
+    ImageTags: {
+      ...(item.SeriesPrimaryImageTag ? { Primary: item.SeriesPrimaryImageTag } : {}),
+      ...(item.ParentLogoImageTag ? { Logo: item.ParentLogoImageTag } : {})
+    },
+    BackdropImageTags: item.ParentBackdropImageTags,
+    ParentBackdropItemId: item.ParentBackdropItemId
+  };
+}
 export function mapServerItem(connection, item) {
   if (!item?.Id || item.IsMissing) return null;
   const type = mediaType(item);
   const nativeId = serverId(connection, item.Id);
-  const external = item.ProviderIds || {};
+  const imdbId = providerId(item.ProviderIds, "Imdb");
+  const tmdbId = providerId(item.ProviderIds, "Tmdb");
   const id =
     connection.useCatalogMetadata && type !== "collection"
-      ? external.Imdb || external.imdb || (external.Tmdb ? `tmdb:${external.Tmdb}` : nativeId)
+      ? imdbId || (tmdbId ? `tmdb:${tmdbId}` : nativeId)
       : nativeId;
   refs.set(`${profile()}:${connection.id}:${id}`, { connectionId: connection.id, itemId: item.Id });
   if (refs.size > 3000) refs.delete(refs.keys().next().value);
@@ -124,8 +150,8 @@ export function mapServerItem(connection, item) {
     genres: item.Genres || [],
     releaseInfo: String(item.ProductionYear || ""),
     released: item.PremiereDate,
-    imdbId: external.Imdb || external.imdb || null,
-    tmdbId: external.Tmdb || external.tmdb || null,
+    imdbId: imdbId || null,
+    tmdbId: tmdbId || null,
     imdbRating: item.CommunityRating,
     serverItem: { connectionId: connection.id, itemId: item.Id },
     userData: item.UserData || {},
@@ -394,7 +420,13 @@ export const MediaServerRepository = {
           connection,
           "resume",
           null,
-          { limit: 100, fields: LIST_FIELDS, mediaTypes: "Video" },
+          {
+            limit: 100,
+            fields: LIST_FIELDS,
+            mediaTypes: "Video",
+            imageTypeLimit: 1,
+            enableImageTypes: "Primary,Backdrop,Logo,Thumb"
+          },
           signal
         );
       } else if (catalogId.startsWith("search-")) {
@@ -483,6 +515,7 @@ export const MediaServerRepository = {
       if (profile() !== pid) return { status: "error", message: "servers_error_failed" };
       const seen = new Set();
       const items = (data?.Items || [])
+        .map((item) => (catalogId === "resume" ? resumeCardItem(item) : item))
         .map((item) => mapServerItem(connection, item))
         .filter((item) => item && !seen.has(item.id) && seen.add(item.id));
       return {
@@ -516,11 +549,17 @@ export const MediaServerRepository = {
     if (!ref) return null;
     const connection = this.connection(ref.connectionId);
     if (!connection?.enabled) return null;
-    const item = await get(connection, "item", ref.itemId, { fields: LIST_FIELDS }, signal);
+    let item = await get(connection, "item", ref.itemId, { fields: LIST_FIELDS }, signal);
     if (profile() !== pid) return null;
+    // Cards and progress saved from the resume row can still carry an episode id.
+    const fromEpisode = String(item?.Type).toLowerCase() === "episode" && Boolean(item.SeriesId);
+    if (fromEpisode) {
+      item = await get(connection, "item", item.SeriesId, { fields: LIST_FIELDS }, signal);
+      if (profile() !== pid) return null;
+    }
     const result = mapServerItem(connection, item);
     if (!result) return null;
-    result.id = id;
+    result.id = fromEpisode ? serverId(connection, item.Id) : id;
     result.videos = [];
     let stateItems = [item];
     if (result.type === "series") {
@@ -589,12 +628,7 @@ export const MediaServerRepository = {
           );
           // A title narrows the search; only provider identity can authorize playback.
           return [...unique.values()].filter(
-            (item) =>
-              String(
-                item.ProviderIds?.[external.name] ||
-                  item.ProviderIds?.[external.name.toLowerCase()] ||
-                  ""
-              ) === external.id
+            (item) => String(providerId(item.ProviderIds, external.name) || "") === external.id
           );
         };
         let exact = await lookup({ anyProviderIdEquals: `${external.name}.${external.id}` });
