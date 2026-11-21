@@ -212,10 +212,6 @@
   transition: opacity 480ms ease;
 }
 
-.home-screen-shell.home-layout-modern .home-hero-backdrop-canvas {
-  filter: none;
-}
-
 .home-screen-shell .home-hero-backdrop.home-hero-backdrop-transition-enter {
   opacity: 0;
   transition-duration: 300ms;

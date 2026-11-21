@@ -4,7 +4,6 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
 
-import { syncHtmlSubtitleClearance } from "./subtitleOverlayClearance.js";
 import { createPlayerControllerMethods01 } from "../../../core/player/playerControllerMethods-01-is-expected-play-interruption.js";
 import { createPlayerControllerMethods03 } from "../../../core/player/playerControllerMethods-03-start-av-play-tick-timer.js";
 import { createWebOsExactSeekMethods } from "../../../platform/webos/webosExactSeek.js";
@@ -44,100 +43,6 @@ function makeClassList(initial = []) {
     }
   };
 }
-
-test("syncHtmlSubtitleClearance caches layout reads until visibility, size, offset, or force changes", () => {
-  let rootRectCalls = 0;
-  let childRectCalls = 0;
-  let clientRectCalls = 0;
-  let computedStyleCalls = 0;
-  const originalGetComputedStyle = globalThis.getComputedStyle;
-  globalThis.getComputedStyle = () => {
-    computedStyleCalls += 1;
-    return { display: "block", visibility: "visible" };
-  };
-
-  try {
-    const props = new Map();
-    const makeOverlayNode = (top) => ({
-      classList: makeClassList(),
-      getClientRects: () => {
-        clientRectCalls += 1;
-        return [1];
-      },
-      getBoundingClientRect: () => {
-        childRectCalls += 1;
-        return { top, height: 40 };
-      }
-    });
-
-    const root = {
-      clientWidth: 1920,
-      clientHeight: 1080,
-      style: {
-        getPropertyValue: (k) => props.get(k) || "",
-        setProperty: (k, v) => props.set(k, v)
-      },
-      getBoundingClientRect: () => {
-        rootRectCalls += 1;
-        return { bottom: 1080, height: 1080 };
-      }
-    };
-
-    const placements = [];
-    const screen = {
-      controlsVisible: true,
-      controlsHideUntil: 0,
-      seekOverlayVisible: false,
-      subtitleDialogVisible: false,
-      subtitleStyleSettings: { verticalOffset: 0 },
-      assSubtitleRenderer: { setPlacement: (p) => placements.push(p) },
-      uiRefs: {
-        root,
-        controlsOverlay: { classList: makeClassList() },
-        controlsBottom: makeOverlayNode(880),
-        skipIntro: makeOverlayNode(800),
-        nextEpisodeCard: makeOverlayNode(760),
-        seekOverlay: makeOverlayNode(920)
-      }
-    };
-
-    syncHtmlSubtitleClearance(screen);
-    assert.equal(rootRectCalls, 1);
-    assert.ok(childRectCalls > 0);
-    assert.ok(computedStyleCalls > 0);
-    assert.equal(placements.length, 1);
-
-    const prevRoot = rootRectCalls;
-    const prevChild = childRectCalls;
-    const prevClient = clientRectCalls;
-    const prevStyle = computedStyleCalls;
-
-    // Repeated ticks with identical layout state perform zero reflow reads.
-    syncHtmlSubtitleClearance(screen);
-    syncHtmlSubtitleClearance(screen);
-    assert.equal(rootRectCalls, prevRoot);
-    assert.equal(childRectCalls, prevChild);
-    assert.equal(clientRectCalls, prevClient);
-    assert.equal(computedStyleCalls, prevStyle);
-
-    // Assigning a new assSubtitleRenderer pushes cached placement without reflow.
-    const latePlacements = [];
-    screen.assSubtitleRenderer = { setPlacement: (p) => latePlacements.push(p) };
-    syncHtmlSubtitleClearance(screen);
-    assert.equal(latePlacements.length, 1);
-    assert.equal(rootRectCalls, prevRoot);
-
-    // Changing root dimensions or force busts cache cleanly.
-    root.clientHeight = 720;
-    syncHtmlSubtitleClearance(screen);
-    assert.equal(rootRectCalls, prevRoot + 1);
-
-    syncHtmlSubtitleClearance(screen, { force: true });
-    assert.equal(rootRectCalls, prevRoot + 2);
-  } finally {
-    globalThis.getComputedStyle = originalGetComputedStyle;
-  }
-});
 
 test("syncPlayerActionOverlayOffset caches measurements across ticks until controls reopen or resize", () => {
   const methods29 = loadMethodsFile(

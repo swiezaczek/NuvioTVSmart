@@ -189,27 +189,6 @@ import {
 
 import { preloadHeroBackdrop, prepareHeroImageEnter } from "./homeScreenHelpers-02-extract-release-date-text.js";
 
-const MODERN_HERO_CANVAS_FILTER = "brightness(1.08) saturate(1.04)";
-
-function drawHeroBitmapToCanvas(canvas, bitmap, filterCss = "") {
-  if (!canvas || !bitmap) {
-    return;
-  }
-  canvas.width = bitmap.width;
-  canvas.height = bitmap.height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) {
-    return;
-  }
-  if (filterCss && "filter" in ctx) {
-    ctx.filter = filterCss;
-  }
-  ctx.drawImage(bitmap, 0, 0);
-  if (filterCss && "filter" in ctx) {
-    ctx.filter = "none";
-  }
-}
-
 export function animateHeroBackdropSwap(
   backdrop,
   nextSrc,
@@ -233,6 +212,7 @@ export function animateHeroBackdropSwap(
   const parent = backdrop.parentElement;
   // The visible bitmap layer on Tizen; the <img> stays the hero's anchor element.
   const getCanvas = () => parent?.querySelector?.(".home-hero-backdrop-canvas:not(.home-hero-backdrop-transition-ghost)") || null;
+
   const releaseCanvasLayer = (node) => {
     if (!node) {
       return;
@@ -297,8 +277,6 @@ export function animateHeroBackdropSwap(
     return;
   }
 
-  const backdropFilter = backdrop.closest?.(".home-layout-modern") ? MODERN_HERO_CANVAS_FILTER : "";
-
   preloadHeroBackdrop(normalizedSrc).then((result) => {
     if (Number(backdrop.heroBackdropTransitionToken || 0) !== token || backdrop.isConnected === false) {
       return;
@@ -325,10 +303,10 @@ export function animateHeroBackdropSwap(
     if (bitmap && parent) {
       const previousCanvas = getCanvas();
       layer = document.createElement("canvas");
-      // New canvas has not painted yet, so start with the enter class directly
-      // instead of forcing a synchronous offsetWidth reflow after appending.
-      layer.className = "home-hero-backdrop home-hero-backdrop-canvas home-hero-backdrop-transition-enter";
-      drawHeroBitmapToCanvas(layer, bitmap, backdropFilter);
+      layer.className = "home-hero-backdrop home-hero-backdrop-canvas";
+      layer.width = bitmap.width;
+      layer.height = bitmap.height;
+      layer.getContext("2d")?.drawImage(bitmap, 0, 0);
       // Last in the wrap, so it paints above the fading ghost.
       parent.appendChild(layer);
       releaseCanvasLayer(previousCanvas);
@@ -339,8 +317,8 @@ export function animateHeroBackdropSwap(
     } else {
       showImageLayer();
       backdrop.setAttribute("src", normalizedSrc);
-      prepareHeroImageEnter(layer, "home-hero-backdrop-transition-enter");
     }
+    prepareHeroImageEnter(layer, "home-hero-backdrop-transition-enter");
     backdrop.classList.remove("placeholder");
     backdrop.setAttribute("alt", normalizedAlt);
 
