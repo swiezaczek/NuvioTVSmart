@@ -63,12 +63,12 @@ export const FocusEngine = {
   init() {
     this.boundHandleKey = this.handleKey.bind(this);
     this.boundHandleKeyUp = this.handleKeyUp.bind(this);
-    this.boundResetActiveKeys = () => {
-      this.activeBackKeyIdentities.clear();
-      this.activeKeyDownStartedAt.clear();
-    };
-    this.boundHandleVisibilityReset = () => {
-      if (document.hidden) {
+    // Android drops the keys of a window that lost focus. A TV can background
+    // the app with a key still held, so its keyup never arrives; drop the
+    // tracking here too or the Back latch swallows the next Back press.
+    this.boundResetActiveKeys = this.resetActiveKeys.bind(this);
+    this.boundResetActiveKeysWhenHidden = () => {
+      if (document.hidden || document.webkitHidden) {
         this.boundResetActiveKeys();
       }
     };
@@ -77,7 +77,8 @@ export const FocusEngine = {
     document.addEventListener("keydown", this.boundHandleKey, true);
     document.addEventListener("keyup", this.boundHandleKeyUp, true);
     window.addEventListener("blur", this.boundResetActiveKeys);
-    document.addEventListener("visibilitychange", this.boundHandleVisibilityReset);
+    document.addEventListener("visibilitychange", this.boundResetActiveKeysWhenHidden);
+    document.addEventListener("webkitvisibilitychange", this.boundResetActiveKeysWhenHidden);
     if (Platform.isWebOS()) {
       document.addEventListener("mousemove", this.boundHandlePointerMove, true);
       document.addEventListener("pointermove", this.boundHandlePointerMove, true);
@@ -228,6 +229,11 @@ export const FocusEngine = {
     Promise.resolve(currentScreen.onKeyUp(normalizedEvent)).catch((error) => {
       console.warn("Screen keyup handler failed", error);
     });
+  },
+
+  resetActiveKeys() {
+    this.activeBackKeyIdentities.clear();
+    this.activeKeyDownStartedAt.clear();
   },
 
   getKeyIdentity(event) {
