@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
+import { applyTrailerCaptionParams } from "../../../core/detail/trailerCaptions.js";
 
 async function loadModuleIntoContext(relativePath, context, extraStrip = []) {
   let source = await readFile(new URL(relativePath, import.meta.url), "utf8");
@@ -289,6 +290,7 @@ test("buildYoutubeEmbedUrl omits random _cb so existingFrame reuse matches", asy
   const context = vm.createContext({
     URL,
     URLSearchParams,
+    applyTrailerCaptionParams,
     YOUTUBE_PROXY_URL: "https://proxy.example/yt.html",
     internals: {}
   });

@@ -110,6 +110,17 @@ export function createProfileSelectionScreenMethods05() {
       this.optionsProfileId = String(profile.id);
       const pinEnabled = this.isProfilePinEnabled(profile.id);
 
+      const runWithPinGate = (targetProfile, action) => {
+        if (!targetProfile) {
+          return;
+        }
+        if (this.isProfilePinEnabled(targetProfile.id)) {
+          this.openPinOverlay("verify-action", targetProfile, null, action);
+          return;
+        }
+        action();
+      };
+
       const buttons = [
         {
           label: t("profile_edit_label", {}, "Edit"),
@@ -117,7 +128,8 @@ export function createProfileSelectionScreenMethods05() {
           onAction: () => {
             this._optionsDialog?.destroy();
             this._optionsDialog = null;
-            this.openEditEditor(this.getProfileById(profile.id));
+            const p = this.getProfileById(profile.id);
+            runWithPinGate(p, () => this.openEditEditor(this.getProfileById(profile.id)));
           }
         },
         {
@@ -152,7 +164,8 @@ export function createProfileSelectionScreenMethods05() {
                 onAction: () => {
                   this._optionsDialog?.destroy();
                   this._optionsDialog = null;
-                  this.openProfileCopySourceDialog(this.getProfileById(profile.id));
+                  const p = this.getProfileById(profile.id);
+                  runWithPinGate(p, () => this.openProfileCopySourceDialog(this.getProfileById(profile.id)));
                 }
               }
             ]
@@ -270,7 +283,7 @@ export function createProfileSelectionScreenMethods05() {
       this.pendingFocusKey = profileId ? `profile:${profileId}` : this.lastProfileFocusKey || "profile:1";
       this.restoreFocus();
     },
-    openPinOverlay(type, profile, currentPin = null) {
+    openPinOverlay(type, profile, currentPin = null, onVerified = null, onCancel = null) {
       if (!profile) {
         return;
       }
@@ -285,7 +298,9 @@ export function createProfileSelectionScreenMethods05() {
       this.pinOverlayState = {
         type,
         profileId: String(profile.id),
-        currentPin: currentPin ? String(currentPin) : null
+        currentPin: currentPin ? String(currentPin) : null,
+        onVerified: typeof onVerified === "function" ? onVerified : null,
+        onCancel: typeof onCancel === "function" ? onCancel : null
       };
       this.pinOverlayRenderState = this.pinOverlayState;
       this.pinOverlayPhase = "opening";
@@ -305,7 +320,7 @@ export function createProfileSelectionScreenMethods05() {
         this.render();
       }, PROFILE_PIN_OPEN_MS);
     },
-    closePinOverlay({ focusKey = "", afterClose = null } = {}) {
+    closePinOverlay({ focusKey = "", afterClose = null, verified = false } = {}) {
       if (this.pinOverlayPhase === "closing") {
         return;
       }
@@ -318,7 +333,12 @@ export function createProfileSelectionScreenMethods05() {
         clearTimeout(this.pinTransitionTimer);
         this.pinTransitionTimer = null;
       }
-      this.pinTransitionCallback = typeof afterClose === "function" ? afterClose : null;
+      this.pinTransitionCallback =
+        typeof afterClose === "function"
+          ? afterClose
+          : !verified && typeof renderState?.onCancel === "function"
+            ? renderState.onCancel
+            : null;
       this.pinOverlayState = null;
       this.pinOverlayRenderState = renderState;
       this.pinOverlayPhase = "closing";

@@ -104,7 +104,12 @@ export function createProfileSelectionScreenMethods07() {
         return;
       }
       if (action === "open-edit-profile") {
-        this.openEditEditor(this.getProfileById(profileId));
+        const profile = this.getProfileById(profileId);
+        if (profile && this.isProfilePinEnabled?.(profile.id)) {
+          this.openPinOverlay("verify-action", profile, null, () => this.openEditEditor(this.getProfileById(profile.id)));
+          return;
+        }
+        this.openEditEditor(profile);
         return;
       }
       if (action === "open-profile-pin") {

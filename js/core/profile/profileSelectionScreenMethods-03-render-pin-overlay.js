@@ -31,6 +31,9 @@ export function createProfileSelectionScreenMethods03() {
       } else if (state.type === "verify-delete") {
         heading = PROFILE_PIN_TEXT.headingVerifyDelete(profile.name);
         support = PROFILE_PIN_TEXT.supportVerifyDelete;
+      } else if (state.type === "verify-action") {
+        heading = PROFILE_PIN_TEXT.headingVerifyAction(profile.name);
+        support = PROFILE_PIN_TEXT.supportVerifyAction;
       } else if (this.pinEntryStage === "confirm") {
         heading = PROFILE_PIN_TEXT.headingConfirm;
         support = PROFILE_PIN_TEXT.supportConfirm;

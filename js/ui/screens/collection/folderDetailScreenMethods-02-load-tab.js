@@ -199,15 +199,30 @@ export function createFolderDetailScreenMethods02() {
           rowTrack.scrollLeft = right - rowTrack.clientWidth + 40;
         }
       }
-      if (shell && (target.closest(".seeall-grid") || target.closest(".folder-detail-rows"))) {
-        const top = target.offsetTop;
-        const bottom = top + target.offsetHeight;
-        if (top < shell.scrollTop + 100) {
-          shell.scrollTop = Math.max(0, top - 100);
-        } else if (bottom > shell.scrollTop + shell.clientHeight - 100) {
-          shell.scrollTop = bottom - shell.clientHeight + 100;
+      if (
+        shell &&
+        (target.closest(".folder-detail-tab") ||
+          target.closest(".seeall-grid") ||
+          target.closest(".folder-detail-rows"))
+      ) {
+        const isTopRow =
+          Boolean(target.closest(".folder-detail-tab")) ||
+          (Number(target.dataset?.navRow ?? -1) === 0 &&
+            (Boolean(target.closest(".folder-detail-rows")) ||
+              !this.container?.querySelector(".folder-detail-tab.focusable")));
+        if (isTopRow) {
+          shell.scrollTop = 0;
+          this.savedScrollTop = 0;
+        } else {
+          const top = target.offsetTop;
+          const bottom = top + target.offsetHeight;
+          if (top < shell.scrollTop + 100) {
+            shell.scrollTop = Math.max(0, top - 100);
+          } else if (bottom > shell.scrollTop + shell.clientHeight - 100) {
+            shell.scrollTop = bottom - shell.clientHeight + 100;
+          }
+          this.savedScrollTop = shell.scrollTop;
         }
-        this.savedScrollTop = shell.scrollTop;
       }
       this.lastFocusedKey = String(target.dataset.focusKey || this.lastFocusedKey || "");
       return true;
