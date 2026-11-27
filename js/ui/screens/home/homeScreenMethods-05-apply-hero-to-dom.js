@@ -34,7 +34,10 @@ export function createHomeScreenMethods05() {
         return;
       }
 
-      const display = this.layoutMode === "modern" ? buildModernHeroPresentation(hero) : buildHeroDisplayModel(hero, this.layoutMode);
+      const display =
+        this.layoutMode === "modern"
+          ? buildModernHeroPresentation(hero, this.layoutPrefs)
+          : buildHeroDisplayModel(hero, this.layoutMode, this.layoutPrefs);
       if (!display) {
         return;
       }
