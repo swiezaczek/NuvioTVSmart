@@ -244,3 +244,291 @@ test("worker overlaps network fetches while serializing decode/encode and recove
   assert.equal(byId.get(12)?.ok, true);
   assert.equal(h.getClosedBitmaps(), 3, "every created bitmap must be closed, including errors");
 });
+
+test("rescaleHomeArtwork skips URL.createObjectURL when a single-waiter job becomes stale mid-flight, while shared jobs still resolve", async () => {
+  const posterBlobUrls = [];
+  const origWorker = globalThis.Worker;
+  const origOffscreenCanvas = globalThis.OffscreenCanvas;
+  const origCreateImageBitmap = globalThis.createImageBitmap;
+  const origCreateObjectURL = globalThis.URL.createObjectURL;
+  const origRevokeObjectURL = globalThis.URL.revokeObjectURL;
+  const origUserAgent = Object.getOwnPropertyDescriptor(globalThis.navigator, "userAgent");
+  const origDeviceMemory = Object.getOwnPropertyDescriptor(globalThis.navigator, "deviceMemory");
+  const origTizen = globalThis.tizen;
+  const origWebapis = globalThis.webapis;
+  const origBlob = globalThis.Blob;
+
+  const createdWorkers = [];
+  class FakePoolWorker {
+    constructor() {
+      this.onmessage = null;
+      this.onerror = null;
+      createdWorkers.push(this);
+    }
+    postMessage(msg) {
+      this.lastMsg = msg;
+    }
+    terminate() {}
+  }
+
+  try {
+    Object.defineProperty(globalThis.navigator, "userAgent", {
+      value:
+        "Mozilla/5.0 (SMART-TV; Linux; Tizen 9.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      configurable: true
+    });
+    Object.defineProperty(globalThis.navigator, "deviceMemory", {
+      value: 2,
+      configurable: true
+    });
+    globalThis.tizen = {};
+    globalThis.webapis = {};
+    globalThis.Worker = FakePoolWorker;
+    globalThis.OffscreenCanvas = function OffscreenCanvas() {};
+    globalThis.createImageBitmap = async () => ({ close() {} });
+    globalThis.Blob = class FakeBlob {
+      constructor(parts, opts) {
+        this.parts = parts;
+        this.type = opts?.type || "";
+        this.isWorkerSource =
+          Array.isArray(parts) &&
+          typeof parts[0] === "string" &&
+          parts[0].includes("self.onmessage");
+      }
+    };
+    globalThis.URL.createObjectURL = (blob) => {
+      if (blob?.isWorkerSource) return "blob:worker/1";
+      const id = `blob:poster/${posterBlobUrls.length + 1}`;
+      posterBlobUrls.push(id);
+      return id;
+    };
+    globalThis.URL.revokeObjectURL = () => {};
+
+    const rescaler = await import(`./tvPosterRescaler.js?stale=${Date.now()}`);
+    rescaler.resetHomeArtworkRescaler();
+
+    let staleFlag = false;
+    const stalePromise = rescaler.rescaleHomeArtwork("https://art/stale-midflight.jpg", {
+      width: 220,
+      height: 338,
+      fit: "cover",
+      isStale: () => staleFlag
+    });
+    const w1 = createdWorkers.find((w) => w.lastMsg?.url === "https://art/stale-midflight.jpg");
+    assert.ok(w1, "expected worker to receive single-waiter job");
+    staleFlag = true;
+    w1.onmessage({
+      data: { id: w1.lastMsg.id, ok: true, blob: { isPosterBlob: true } }
+    });
+    const staleResult = await stalePromise;
+    assert.equal(staleResult, null, "stale single-waiter job must resolve null");
+    assert.equal(posterBlobUrls.length, 0, "stale single-waiter job must skip URL.createObjectURL");
+
+    let waiter1Stale = false;
+    const p1 = rescaler.rescaleHomeArtwork("https://art/shared-midflight.jpg", {
+      width: 220,
+      height: 338,
+      fit: "cover",
+      isStale: () => waiter1Stale
+    });
+    const p2 = rescaler.rescaleHomeArtwork("https://art/shared-midflight.jpg", {
+      width: 220,
+      height: 338,
+      fit: "cover",
+      isStale: () => false
+    });
+    waiter1Stale = true;
+    const w2 = createdWorkers.find((w) => w.lastMsg?.url === "https://art/shared-midflight.jpg");
+    assert.ok(w2, "expected worker to receive shared job");
+    w2.onmessage({
+      data: { id: w2.lastMsg.id, ok: true, blob: { isPosterBlob: true } }
+    });
+    const [r1, r2] = await Promise.all([p1, p2]);
+    assert.equal(r1, "blob:poster/1");
+    assert.equal(r2, "blob:poster/1");
+    assert.equal(
+      posterBlobUrls.length,
+      1,
+      "multi-waiter shared job must still create one object URL"
+    );
+
+    rescaler.resetHomeArtworkRescaler();
+  } finally {
+    globalThis.Worker = origWorker;
+    globalThis.OffscreenCanvas = origOffscreenCanvas;
+    globalThis.createImageBitmap = origCreateImageBitmap;
+    globalThis.URL.createObjectURL = origCreateObjectURL;
+    globalThis.URL.revokeObjectURL = origRevokeObjectURL;
+    globalThis.Blob = origBlob;
+    if (origUserAgent) Object.defineProperty(globalThis.navigator, "userAgent", origUserAgent);
+    if (origDeviceMemory)
+      Object.defineProperty(globalThis.navigator, "deviceMemory", origDeviceMemory);
+    if (origTizen === undefined) delete globalThis.tizen;
+    else globalThis.tizen = origTizen;
+    if (origWebapis === undefined) delete globalThis.webapis;
+    else globalThis.webapis = origWebapis;
+  }
+});
+
+test("worker completions defer URL.createObjectURL and pump while .is-camera-scrolling is active, batch-flushing after clear or max-wait cap", async () => {
+  const posterBlobUrls = [];
+  const origWorker = globalThis.Worker;
+  const origOffscreenCanvas = globalThis.OffscreenCanvas;
+  const origCreateImageBitmap = globalThis.createImageBitmap;
+  const origCreateObjectURL = globalThis.URL.createObjectURL;
+  const origRevokeObjectURL = globalThis.URL.revokeObjectURL;
+  const origDocument = globalThis.document;
+  const origUserAgent = Object.getOwnPropertyDescriptor(globalThis.navigator, "userAgent");
+  const origDeviceMemory = Object.getOwnPropertyDescriptor(globalThis.navigator, "deviceMemory");
+  const origTizen = globalThis.tizen;
+  const origWebapis = globalThis.webapis;
+  const origBlob = globalThis.Blob;
+
+  const createdWorkers = [];
+  class FakePoolWorker {
+    constructor() {
+      this.onmessage = null;
+      this.onerror = null;
+      this.posted = [];
+      createdWorkers.push(this);
+    }
+    postMessage(msg) {
+      this.posted.push(msg);
+    }
+    terminate() {}
+  }
+
+  let cameraScrolling = true;
+  const querySelectors = [];
+
+  try {
+    Object.defineProperty(globalThis.navigator, "userAgent", {
+      value:
+        "Mozilla/5.0 (SMART-TV; Linux; Tizen 9.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      configurable: true
+    });
+    Object.defineProperty(globalThis.navigator, "deviceMemory", {
+      value: 2,
+      configurable: true
+    });
+    globalThis.tizen = {};
+    globalThis.webapis = {};
+    globalThis.Worker = FakePoolWorker;
+    globalThis.OffscreenCanvas = function OffscreenCanvas() {};
+    globalThis.createImageBitmap = async () => ({ close() {} });
+    globalThis.document = {
+      querySelector(selector) {
+        querySelectors.push(selector);
+        return selector === ".is-camera-scrolling" && cameraScrolling ? {} : null;
+      }
+    };
+    globalThis.Blob = class FakeBlob {
+      constructor(parts, opts) {
+        this.parts = parts;
+        this.type = opts?.type || "";
+        this.isWorkerSource =
+          Array.isArray(parts) &&
+          typeof parts[0] === "string" &&
+          parts[0].includes("self.onmessage");
+      }
+    };
+    globalThis.URL.createObjectURL = (blob) => {
+      if (blob?.isWorkerSource) return "blob:worker/1";
+      const id = `blob:poster/${posterBlobUrls.length + 1}`;
+      posterBlobUrls.push(id);
+      return id;
+    };
+    globalThis.URL.revokeObjectURL = () => {};
+
+    const rescaler = await import(`./tvPosterRescaler.js?cameraScroll=${Date.now()}`);
+    rescaler.resetHomeArtworkRescaler();
+
+    // Queue 8 jobs (3 workers x 2 slots = 6 active, 2 queued behind them).
+    const promises = Array.from({ length: 8 }, (_, index) =>
+      rescaler.rescaleHomeArtwork(`https://art/cam-${index}.jpg`, {
+        width: 220,
+        height: 338,
+        fit: "cover"
+      })
+    );
+    const activeMsgs = createdWorkers.flatMap((w) => w.posted.map((msg) => ({ w, msg })));
+    assert.equal(activeMsgs.length, 6, "6 initial slots dispatched across 3 workers");
+
+    // Settle 2 worker replies while .is-camera-scrolling is active.
+    const settledEntries = activeMsgs.slice(0, 2);
+    const settledPromiseIndices = settledEntries.map(({ msg }) =>
+      Number(msg.url.match(/cam-(\d+)\.jpg/)[1])
+    );
+    settledEntries.forEach(({ w, msg }) => {
+      w.onmessage({ data: { id: msg.id, ok: true, blob: { isPosterBlob: true } } });
+    });
+
+    assert.ok(querySelectors.includes(".is-camera-scrolling"));
+    assert.equal(
+      posterBlobUrls.length,
+      0,
+      "must not call URL.createObjectURL while .is-camera-scrolling is active"
+    );
+    assert.equal(
+      createdWorkers.reduce((sum, w) => sum + w.posted.length, 0),
+      6,
+      "must not pump queued jobs while .is-camera-scrolling is active"
+    );
+
+    // Clear .is-camera-scrolling and wait for the single 60ms batch flush.
+    cameraScrolling = false;
+    await new Promise((r) => setTimeout(r, 110));
+
+    assert.equal(
+      posterBlobUrls.length,
+      2,
+      "deferred completions must batch-flush once after .is-camera-scrolling clears"
+    );
+    assert.equal(
+      createdWorkers.reduce((sum, w) => sum + w.posted.length, 0),
+      8,
+      "queued jobs must pump once completions batch-flush"
+    );
+    const firstTwo = await Promise.all(settledPromiseIndices.map((idx) => promises[idx]));
+    assert.deepEqual(firstTwo, ["blob:poster/1", "blob:poster/2"]);
+
+    // Verify ~450ms max-wait safety cap flushes even if .is-camera-scrolling stays stuck.
+    cameraScrolling = true;
+    const settledIds = new Set(settledEntries.map(({ msg }) => msg.id));
+    const remainingMsgs = createdWorkers
+      .flatMap((w) => w.posted.map((msg) => ({ w, msg })))
+      .filter(({ msg }) => !settledIds.has(msg.id));
+    assert.equal(remainingMsgs.length, 6);
+    remainingMsgs.forEach(({ w, msg }) => {
+      w.onmessage({ data: { id: msg.id, ok: true, blob: { isPosterBlob: true } } });
+    });
+    assert.equal(posterBlobUrls.length, 2, "must still defer initially while stuck scrolling");
+
+    await new Promise((r) => setTimeout(r, 520));
+    assert.equal(
+      posterBlobUrls.length,
+      8,
+      "max-wait safety cap (~450ms) must flush stalled completions so jobs are never stranded"
+    );
+    const allResults = await Promise.all(promises);
+    assert.equal(allResults.filter(Boolean).length, 8);
+
+    rescaler.resetHomeArtworkRescaler();
+  } finally {
+    globalThis.Worker = origWorker;
+    globalThis.OffscreenCanvas = origOffscreenCanvas;
+    globalThis.createImageBitmap = origCreateImageBitmap;
+    globalThis.URL.createObjectURL = origCreateObjectURL;
+    globalThis.URL.revokeObjectURL = origRevokeObjectURL;
+    if (origDocument === undefined) delete globalThis.document;
+    else globalThis.document = origDocument;
+    globalThis.Blob = origBlob;
+    if (origUserAgent) Object.defineProperty(globalThis.navigator, "userAgent", origUserAgent);
+    if (origDeviceMemory)
+      Object.defineProperty(globalThis.navigator, "deviceMemory", origDeviceMemory);
+    if (origTizen === undefined) delete globalThis.tizen;
+    else globalThis.tizen = origTizen;
+    if (origWebapis === undefined) delete globalThis.webapis;
+    else globalThis.webapis = origWebapis;
+  }
+});

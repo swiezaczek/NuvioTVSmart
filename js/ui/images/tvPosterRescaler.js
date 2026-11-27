@@ -497,6 +497,66 @@ export function shouldRescaleHomeArtwork() {
 // would stay blank, which is worse than the oversized decode this replaces.
 const JOB_TIMEOUT_MS = 15000;
 const WORKER_JOB_SLOTS = 2;
+const CAMERA_SCROLL_POLL_MS = 60;
+const CAMERA_SCROLL_MAX_WAIT_MS = 450;
+
+function isCameraScrollingActive() {
+  try {
+    return Boolean(globalThis.document?.querySelector?.(".is-camera-scrolling"));
+  } catch (_) {
+    return false;
+  }
+}
+
+function flushPendingCompletions(state) {
+  if (!state || state.disposed) {
+    return;
+  }
+  state.flushWaitStartedAt = 0;
+  const pending = state.pendingCompletions.splice(0);
+  if (!pending.length) {
+    return;
+  }
+  for (let index = 0; index < pending.length; index += 1) {
+    const entry = pending[index];
+    if (entry.job) {
+      entry.job.settle(entry.ok ? entry.blob : null, entry.reason);
+    }
+    if (!state.suspended && state.workers.includes(entry.worker)) {
+      state.idle.push(entry.worker);
+    }
+  }
+  pump(state);
+}
+
+function scheduleCompletionFlush(state) {
+  if (!state || state.disposed) {
+    return;
+  }
+  const now = Date.now();
+  if (!state.flushWaitStartedAt) {
+    state.flushWaitStartedAt = now;
+  }
+  if (state.flushTimer) {
+    return;
+  }
+  const elapsed = now - state.flushWaitStartedAt;
+  const delay = Math.max(1, Math.min(CAMERA_SCROLL_POLL_MS, CAMERA_SCROLL_MAX_WAIT_MS - elapsed));
+  state.flushTimer = setTimeout(() => {
+    state.flushTimer = null;
+    if (!state || state.disposed) {
+      return;
+    }
+    if (
+      isCameraScrollingActive() &&
+      Date.now() - state.flushWaitStartedAt < CAMERA_SCROLL_MAX_WAIT_MS
+    ) {
+      scheduleCompletionFlush(state);
+      return;
+    }
+    flushPendingCompletions(state);
+  }, delay);
+}
 
 function createPool() {
   const workerUrl = URL.createObjectURL(new Blob([WORKER_SOURCE], { type: "text/javascript" }));
@@ -506,6 +566,9 @@ function createPool() {
     idle: [],
     queue: [],
     jobs: new Map(),
+    pendingCompletions: [],
+    flushTimer: null,
+    flushWaitStartedAt: 0,
     nextId: 1,
     cache: new Map(),
     failed: new Map(),
@@ -542,6 +605,13 @@ function spawnWorker(state) {
     if (job) {
       state.jobs.delete(id);
       clearTimeout(job.timer);
+    }
+    if (isCameraScrollingActive()) {
+      state.pendingCompletions.push({ job, worker, ok, blob, reason });
+      scheduleCompletionFlush(state);
+      return;
+    }
+    if (job) {
       job.settle(ok ? blob : null, reason);
     }
     state.idle.push(worker);
@@ -668,7 +738,7 @@ function suspendPool(state) {
   if (!state || state.disposed) {
     return;
   }
-  if (state.queue.length || state.jobs.size) {
+  if (state.queue.length || state.jobs.size || state.pendingCompletions.length) {
     // A poster is being re-encoded right now. Cut it only once the answer is
     // in, or the card would keep the oversized original instead.
     state.suspendRequested = true;
@@ -828,6 +898,10 @@ function rescaleWithPool(state, url, { width, height, fit, priority = 2, isStale
         resolve(null);
         return;
       }
+      if (job.waiters === 1 && job.isStale?.()) {
+        resolve(null);
+        return;
+      }
       const objectUrl = URL.createObjectURL(blob);
       const entry = { objectUrl, uses: job.waiters };
       state.cache.set(key, entry);
@@ -976,6 +1050,12 @@ function resetPool(state) {
     return;
   }
   state.disposed = true;
+  if (state.flushTimer) {
+    clearTimeout(state.flushTimer);
+    state.flushTimer = null;
+  }
+  state.flushWaitStartedAt = 0;
+  state.pendingCompletions.splice(0).forEach((entry) => entry.job?.settle(null, "reset"));
   state.jobs.forEach((job) => {
     clearTimeout(job.timer);
     job.settle(null, "reset");
