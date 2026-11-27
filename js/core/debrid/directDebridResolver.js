@@ -7,7 +7,6 @@ import {
   selectDebridFile
 } from "./debridFileSelection.js";
 import { resolveAlternativeHashMatches, torboxCachedEntries } from "./torboxCacheAliases.js";
-import { ProviderCredentialSyncService } from "../profile/providerCredentialSyncService.js";
 
 const RESOLVE_CACHE_TTL_MS = 15 * 60 * 1000;
 const RESOLVE_CACHE_MAX_ENTRIES = 100;
@@ -207,7 +206,7 @@ function serviceDegradedFailure(response = {}, providerName = "Debrid") {
   return failure("service_degraded", `${providerName} service returned HTTP ${status}.`);
 }
 
-async function resolveTorbox(resolve, apiKey, season, episode, allowCredentialRefresh = true) {
+async function resolveTorbox(resolve, apiKey, season, episode) {
   const magnet = buildMagnetUri(resolve);
   if (!magnet) {
     return failure("stale");
@@ -215,16 +214,6 @@ async function resolveTorbox(resolve, apiKey, season, episode, allowCredentialRe
   const create = await DebridApi.torboxCreateTorrent(apiKey, magnet);
   const torrentId = create.data?.data?.torrent_id ?? create.data?.data?.id;
   if (!create.ok || !torrentId) {
-    if (allowCredentialRefresh) {
-      const refreshedKey = await ProviderCredentialSyncService.refreshDebridApiKeyOnAuthError(
-        DEBRID_PROVIDER_IDS.TORBOX,
-        apiKey,
-        create
-      );
-      if (refreshedKey) {
-        return resolveTorbox(resolve, refreshedKey, season, episode, false);
-      }
-    }
     const degraded = serviceDegradedFailure(create, "Torbox");
     if (degraded) {
       return degraded;
@@ -236,16 +225,6 @@ async function resolveTorbox(resolve, apiKey, season, episode, allowCredentialRe
   const torrent = await DebridApi.torboxGetTorrent(apiKey, torrentId);
   const files = torrent.data?.data?.files || [];
   if (!torrent.ok || !Array.isArray(files)) {
-    if (allowCredentialRefresh) {
-      const refreshedKey = await ProviderCredentialSyncService.refreshDebridApiKeyOnAuthError(
-        DEBRID_PROVIDER_IDS.TORBOX,
-        apiKey,
-        torrent
-      );
-      if (refreshedKey) {
-        return resolveTorbox(resolve, refreshedKey, season, episode, false);
-      }
-    }
     const degraded = serviceDegradedFailure(torrent, "Torbox");
     if (degraded) {
       return degraded;
@@ -259,16 +238,6 @@ async function resolveTorbox(resolve, apiKey, season, episode, allowCredentialRe
   const link = await DebridApi.torboxRequestDownloadLink(apiKey, torrentId, file.id);
   const url = typeof link.data?.data === "string" ? link.data.data : "";
   if (!link.ok || !url) {
-    if (allowCredentialRefresh) {
-      const refreshedKey = await ProviderCredentialSyncService.refreshDebridApiKeyOnAuthError(
-        DEBRID_PROVIDER_IDS.TORBOX,
-        apiKey,
-        link
-      );
-      if (refreshedKey) {
-        return resolveTorbox(resolve, refreshedKey, season, episode, false);
-      }
-    }
     const degraded = serviceDegradedFailure(link, "Torbox");
     if (degraded) {
       return degraded;
@@ -370,17 +339,7 @@ async function getLocalTorrentCacheStatus(provider, apiKey, hash) {
     return { status: "unknown" };
   }
   if (provider.id === DEBRID_PROVIDER_IDS.TORBOX) {
-    let response = await DebridApi.torboxCheckCached(apiKey, [normalized]);
-    if (!response.ok || response.data?.success === false) {
-      const refreshedKey = await ProviderCredentialSyncService.refreshDebridApiKeyOnAuthError(
-        provider.id,
-        apiKey,
-        response
-      );
-      if (refreshedKey) {
-        response = await DebridApi.torboxCheckCached(refreshedKey, [normalized]);
-      }
-    }
+    const response = await DebridApi.torboxCheckCached(apiKey, [normalized]);
     const degraded = serviceDegradedFailure(response, "Torbox");
     if (degraded) {
       return degraded;
@@ -510,9 +469,7 @@ export const DirectDebridResolver = {
       }
     }
 
-    const effectiveSettings = DebridSettingsStore.get();
-    const effectiveApiKey = DebridProviders.apiKeyFor(effectiveSettings, provider.id) || apiKey;
-    const key = cacheKeyFor(stream, season, episode, effectiveSettings);
+    const key = cacheKeyFor(stream, season, episode, settings);
     if (key && forceRefresh) {
       resolvedCache.delete(key);
     }
@@ -533,11 +490,11 @@ export const DirectDebridResolver = {
     const task = (async () => {
       switch (provider.id) {
         case DEBRID_PROVIDER_IDS.TORBOX:
-          return resolveTorbox(resolve, effectiveApiKey, season, episode);
+          return resolveTorbox(resolve, apiKey, season, episode);
         case DEBRID_PROVIDER_IDS.PREMIUMIZE:
-          return resolvePremiumize(resolve, effectiveApiKey, season, episode, stream);
+          return resolvePremiumize(resolve, apiKey, season, episode, stream);
         case DEBRID_PROVIDER_IDS.REAL_DEBRID:
-          return resolveRealDebrid(resolve, effectiveApiKey, season, episode);
+          return resolveRealDebrid(resolve, apiKey, season, episode);
         default:
           return failure("error");
       }
@@ -548,11 +505,8 @@ export const DirectDebridResolver = {
     }
     try {
       const result = await task;
-      if (result.status === "success") {
-        const resultKey = cacheKeyFor(stream, season, episode, DebridSettingsStore.get()) || key;
-        if (resultKey) {
-          rememberResolved(resultKey, result);
-        }
+      if (key && result.status === "success") {
+        rememberResolved(key, result);
       }
       return result.status === "success"
         ? { status: "success", stream: withResolvedUrl(stream, result) }

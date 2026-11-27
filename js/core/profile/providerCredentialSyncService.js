@@ -16,23 +16,10 @@ const PENDING_KEY = "providerCredentialSyncPendingProfiles";
 const PUSH_DEBOUNCE_MS = 500;
 export const PROVIDER_CREDENTIAL_FOREGROUND_DELAY_MS = 2500;
 export const PROVIDER_CREDENTIAL_FOREGROUND_MIN_INTERVAL_MS = 60000;
-const AUTH_ERROR_REFRESH_MIN_INTERVAL_MS = 15000;
 const API_KEY_FIELD = "api_key";
 const CLIENT_ID_FIELD = "client_id";
 const MDBLIST_PROVIDER = "mdblist";
 const ANIMESKIP_PROVIDER = "animeskip";
-const authRefreshInFlight = new Map();
-const lastAuthRefreshAtMs = new Map();
-
-function isProviderAuthErrorResponse(response = null) {
-  if (!response) return false;
-  const status = Number(response?.status || 0);
-  if (status === 401 || status === 403) return true;
-  const code = String(response?.data?.error || response?.data?.code || "")
-    .trim()
-    .toUpperCase();
-  return code === "BAD_TOKEN" || code === "AUTH_ERROR" || code === "INVALID_TOKEN";
-}
 
 const pushTimers = new Map();
 let syncInFlight = Promise.resolve();
@@ -407,52 +394,9 @@ export const ProviderCredentialSyncService = {
     }
   },
 
-  async refreshDebridApiKeyOnAuthError(providerId, previousApiKey = "", response = null) {
-    if (!AuthManager.isAuthenticated || !providerId) {
-      return null;
-    }
-    if (response !== null && !isProviderAuthErrorResponse(response)) {
-      return null;
-    }
-    const normalizedProviderId = String(providerId).trim().toLowerCase();
-    const prevKey = String(previousApiKey || "").trim();
-    const existing = authRefreshInFlight.get(normalizedProviderId);
-    if (existing) {
-      return existing;
-    }
-    const now = Date.now();
-    const lastAttemptAt = Number(lastAuthRefreshAtMs.get(normalizedProviderId) || 0);
-    if (now - lastAttemptAt < AUTH_ERROR_REFRESH_MIN_INTERVAL_MS) {
-      const cachedKey = DebridProviders.apiKeyFor(DebridSettingsStore.get(), normalizedProviderId);
-      return cachedKey && cachedKey !== prevKey ? cachedKey : null;
-    }
-    lastAuthRefreshAtMs.set(normalizedProviderId, now);
-    const task = (async () => {
-      try {
-        await this.syncFromRemote(ProfileManager.getActiveProfileId());
-        const refreshedKey = DebridProviders.apiKeyFor(
-          DebridSettingsStore.get(),
-          normalizedProviderId
-        );
-        return refreshedKey && refreshedKey !== prevKey ? refreshedKey : null;
-      } catch (error) {
-        console.warn("Provider API key refresh after auth error failed", error);
-        return null;
-      } finally {
-        if (authRefreshInFlight.get(normalizedProviderId) === task) {
-          authRefreshInFlight.delete(normalizedProviderId);
-        }
-      }
-    })();
-    authRefreshInFlight.set(normalizedProviderId, task);
-    return task;
-  },
-
   stop({ waitForInFlight = false } = {}) {
     const pending = waitForInFlight ? [...activeOperations] : [];
     lifecycleGeneration += 1;
-    authRefreshInFlight.clear();
-    lastAuthRefreshAtMs.clear();
     pushTimers.forEach((timerId) => clearTimeout(timerId));
     pushTimers.clear();
     this.cancelForegroundPull();
