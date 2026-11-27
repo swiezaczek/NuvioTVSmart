@@ -293,15 +293,21 @@ export function createHomeScreenMethods02() {
         tweenMap.set(container, tweenState);
       }
 
+      const isTvRuntime = Boolean(getTvRuntimePerformanceProfile()?.isTvRuntime);
+      const useFastTvSpring = isTvRuntime && options?.stiffness == null;
       const springMap = this.springScrollAnimations || (this.springScrollAnimations = new WeakMap());
       const existing = springMap.get(container) || {};
       const active = existing[key];
       if (active) {
         active.target = nextValue;
-        active.stiffness = Number(options?.stiffness ?? active.stiffness ?? MODERN_HOME_CONSTANTS.springScrollStiffness);
-        active.dampingRatio = Number(options?.dampingRatio ?? active.dampingRatio ?? MODERN_HOME_CONSTANTS.springScrollDampingRatio);
-        active.precision = Number(options?.precision ?? active.precision ?? 1);
-        active.velocityEpsilon = Number(options?.velocityEpsilon ?? active.velocityEpsilon ?? 12);
+        active.stiffness = Number(
+          options?.stiffness ?? (useFastTvSpring ? 2000 : (active.stiffness ?? MODERN_HOME_CONSTANTS.springScrollStiffness))
+        );
+        active.dampingRatio = Number(
+          options?.dampingRatio ?? (useFastTvSpring ? 1.0 : (active.dampingRatio ?? MODERN_HOME_CONSTANTS.springScrollDampingRatio))
+        );
+        active.precision = Number(options?.precision ?? (useFastTvSpring ? 2 : (active.precision ?? 1)));
+        active.velocityEpsilon = Number(options?.velocityEpsilon ?? (useFastTvSpring ? 70 : (active.velocityEpsilon ?? 12)));
         active.damping = 2 * active.dampingRatio * Math.sqrt(active.stiffness);
         if (Math.abs(nextValue - active.position) > 1) {
           markCameraScrollActive(container);
@@ -310,8 +316,8 @@ export function createHomeScreenMethods02() {
         return;
       }
 
-      const stiffness = Number(options?.stiffness ?? MODERN_HOME_CONSTANTS.springScrollStiffness);
-      const dampingRatio = Number(options?.dampingRatio ?? MODERN_HOME_CONSTANTS.springScrollDampingRatio);
+      const stiffness = Number(options?.stiffness ?? (useFastTvSpring ? 2000 : MODERN_HOME_CONSTANTS.springScrollStiffness));
+      const dampingRatio = Number(options?.dampingRatio ?? (useFastTvSpring ? 1.0 : MODERN_HOME_CONSTANTS.springScrollDampingRatio));
       const initialPosition = Number(container[property] || 0);
 
       const state = {
@@ -324,8 +330,8 @@ export function createHomeScreenMethods02() {
         stiffness,
         dampingRatio,
         damping: 2 * dampingRatio * Math.sqrt(stiffness),
-        precision: Number(options?.precision ?? 1),
-        velocityEpsilon: Number(options?.velocityEpsilon ?? 12)
+        precision: Number(options?.precision ?? (useFastTvSpring ? 2 : 1)),
+        velocityEpsilon: Number(options?.velocityEpsilon ?? (useFastTvSpring ? 70 : 12))
       };
 
       const tick = (now) => {
@@ -338,10 +344,17 @@ export function createHomeScreenMethods02() {
         }
         const deltaSeconds = Math.min(0.034, Math.max(0.001, (now - state.lastTime) / 1000));
         state.lastTime = now;
-        const displacement = state.position - Number(state.target || 0);
-        const acceleration = -state.stiffness * displacement - state.damping * state.velocity;
-        state.velocity += acceleration * deltaSeconds;
-        state.position += state.velocity * deltaSeconds;
+        const targetPos = Number(state.target || 0);
+        // Sub-step integration so high-stiffness TV springs stay critically
+        // damped with zero overshoot even on 34 ms frame drops.
+        const subSteps = Math.max(1, Math.ceil(deltaSeconds / 0.004));
+        const stepSeconds = deltaSeconds / subSteps;
+        for (let step = 0; step < subSteps; step += 1) {
+          const displacement = state.position - targetPos;
+          const acceleration = -state.stiffness * displacement - state.damping * state.velocity;
+          state.velocity += acceleration * stepSeconds;
+          state.position += state.velocity * stepSeconds;
+        }
         const nextRounded = Math.round(state.position);
 
         // Reading scroll position after writing it can flush layout. Check

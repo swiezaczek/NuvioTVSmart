@@ -13,7 +13,7 @@ const source02 = strip(
   )
 );
 
-function buildHarness({ stiffness = 180, dampingRatio = 0.95 } = {}) {
+function buildHarness({ stiffness = 180, dampingRatio = 0.95, isTvRuntime = true } = {}) {
   let nextRaf = 1;
   let now = 0;
   const scheduledRafs = new Map();
@@ -26,9 +26,9 @@ function buildHarness({ stiffness = 180, dampingRatio = 0.95 } = {}) {
       findHomeFocusIdentityMatch: () => null,
       MODERN_CAMERA_PAN_EASING: (t) => t
     },
-    isModernTvProfile: () => true,
+    isModernTvProfile: () => isTvRuntime,
     getTvRuntimePerformanceProfile: () => ({
-      isTvRuntime: true,
+      isTvRuntime,
       isPerformanceConstrained: false,
       isLegacyTvRuntime: false
     }),
@@ -120,30 +120,31 @@ function createTrackedContainer({
   return { container, classes, classEvents, xWrites, yWrites };
 }
 
-test("animateSpringScroll writes only changed integer offsets and settles without tail drag", () => {
-  const { screen, scheduledRafs, stepFrame } = buildHarness();
+test("TV animateSpringScroll settles a 443px move in <= 12 frames (<= 200ms) with integer-only writes and 0 overshoot", () => {
+  const { screen, scheduledRafs, stepFrame } = buildHarness({ isTvRuntime: true });
   const { container, xWrites } = createTrackedContainer({ initialClasses: ["home-track"] });
 
-  screen.animateSpringScroll(container, "x", 224);
+  screen.animateSpringScroll(container, "x", 443);
   assert.equal(scheduledRafs.size, 1);
   assert.equal(xWrites.length, 0);
 
   let frames = 0;
-  while (scheduledRafs.size && frames < 120) {
-    stepFrame(16);
+  while (scheduledRafs.size && frames < 60) {
+    stepFrame(16.7);
     frames += 1;
   }
 
   assert.equal(scheduledRafs.size, 0, "spring must finish scheduling rAF");
-  assert.equal(container.scrollLeft, 224);
-  assert.ok(frames <= 42, `expected <= 42 frames without tail drag, got ${frames}`);
-  assert.ok(xWrites.length > 0 && xWrites.length <= 36, `unexpected write count ${xWrites.length}`);
+  assert.equal(container.scrollLeft, 443);
+  assert.ok(frames <= 12, `expected <= 12 frames (~185ms) on TV, got ${frames}`);
+  assert.ok(xWrites.length > 0 && xWrites.length <= 12, `unexpected write count ${xWrites.length}`);
   for (let i = 0; i < xWrites.length; i += 1) {
     assert.equal(
       Number.isInteger(xWrites[i]),
       true,
       `scrollLeft write #${i} must be integer, got ${xWrites[i]}`
     );
+    assert.ok(xWrites[i] >= 0 && xWrites[i] <= 443, `overshoot detected: ${xWrites[i]}`);
     if (i > 0) {
       assert.notEqual(
         xWrites[i],
@@ -152,10 +153,45 @@ test("animateSpringScroll writes only changed integer offsets and settles withou
       );
     }
   }
+
+  // Verify sub-stepped TV spring also has zero overshoot under 34ms frame drops.
+  const dropHarness = buildHarness({ isTvRuntime: true });
+  const dropTarget = createTrackedContainer({ initialClasses: ["home-track"] });
+  dropHarness.screen.animateSpringScroll(dropTarget.container, "x", 443);
+  let dropFrames = 0;
+  while (dropHarness.scheduledRafs.size && dropFrames < 40) {
+    dropHarness.stepFrame(34);
+    dropFrames += 1;
+  }
+  assert.equal(dropTarget.container.scrollLeft, 443);
+  assert.ok(
+    dropTarget.xWrites.every((v) => v >= 0 && v <= 443),
+    "no overshoot on 34ms frames"
+  );
+});
+
+test("non-TV animateSpringScroll writes only changed integer offsets and settles without tail drag", () => {
+  const { screen, scheduledRafs, stepFrame } = buildHarness({ isTvRuntime: false });
+  const { container, xWrites } = createTrackedContainer({ initialClasses: ["home-track"] });
+
+  screen.animateSpringScroll(container, "x", 224);
+  let frames = 0;
+  while (scheduledRafs.size && frames < 120) {
+    stepFrame(16);
+    frames += 1;
+  }
+
+  assert.equal(scheduledRafs.size, 0);
+  assert.equal(container.scrollLeft, 224);
+  assert.ok(frames <= 42, `expected <= 42 frames without tail drag, got ${frames}`);
+  assert.ok(xWrites.every((v) => Number.isInteger(v)));
+  for (let i = 1; i < xWrites.length; i += 1) {
+    assert.notEqual(xWrites[i], xWrites[i - 1]);
+  }
 });
 
 test("animateSpringScroll preserves camera-scrolling hint on active moves, clears on settle, and skips zero-delta springs", () => {
-  const { screen, scheduledRafs, stepFrame } = buildHarness();
+  const { screen, scheduledRafs, stepFrame } = buildHarness({ isTvRuntime: true });
 
   const track = createTrackedContainer({ initialClasses: ["home-track"] });
   screen.animateSpringScroll(track.container, "x", 224);
@@ -184,11 +220,11 @@ test("animateSpringScroll preserves camera-scrolling hint on active moves, clear
 });
 
 test("animateSpringScroll updates target mid-flight with integer-only writes", () => {
-  const { screen, scheduledRafs, stepFrame } = buildHarness();
+  const { screen, scheduledRafs, stepFrame } = buildHarness({ isTvRuntime: true });
   const { container, xWrites } = createTrackedContainer();
 
   screen.animateSpringScroll(container, "x", 224);
-  for (let i = 0; i < 6; i += 1) stepFrame(16);
+  for (let i = 0; i < 4; i += 1) stepFrame(16);
   screen.animateSpringScroll(container, "x", 480);
 
   let frames = 0;
@@ -205,7 +241,7 @@ test("animateSpringScroll updates target mid-flight with integer-only writes", (
   }
 });
 
-test("homeRowWindow uses bounded 75% rootMargin and prefers entry.boundingClientRect height", () => {
+test("homeRowWindow keeps 150% rootMargin and prefers entry.boundingClientRect height", () => {
   const observerCalls = [];
   class IntersectionObserver {
     constructor(callback, options) {
@@ -238,7 +274,7 @@ test("homeRowWindow uses bounded 75% rootMargin and prefers entry.boundingClient
 
   const rowWindow = createHomeRowWindow({ root: {}, scope: { IntersectionObserver } });
   rowWindow.observe([section]);
-  assert.equal(observerCalls[0].options.rootMargin, "75% 0px");
+  assert.equal(observerCalls[0].options.rootMargin, "150% 0px");
 
   observerCalls[0].callback([
     { target: section, isIntersecting: false, boundingClientRect: { height: 392 } }
@@ -246,4 +282,33 @@ test("homeRowWindow uses bounded 75% rootMargin and prefers entry.boundingClient
   assert.equal(domRectReads, 0, "must reuse entry.boundingClientRect.height when provided");
   assert.equal(classes.has(HOME_ROW_PARKED_CLASS), true);
   assert.equal(section.style.height, "392px");
+});
+
+test("Home focus CSS strips non-composited card paint transitions and persists modern viewport layer", async () => {
+  const [css14, css17, css18] = await Promise.all([
+    readFile(new URL("../../../../css/components-14.css", import.meta.url), "utf8"),
+    readFile(new URL("../../../../css/components-17.css", import.meta.url), "utf8"),
+    readFile(new URL("../../../../css/components-18.css", import.meta.url), "utf8")
+  ]);
+
+  const cardRule = css14.match(/\.home-screen-shell \.home-content-card \{[^}]*\}/)?.[0] || "";
+  assert.match(cardRule, /transition:\s*transform 120ms ease-out;/);
+  assert.doesNotMatch(cardRule, /border-color\s+120ms/);
+
+  const frameRule14 = css14.match(/\.home-screen-shell \.home-poster-frame \{[^}]*\}/)?.[0] || "";
+  assert.match(frameRule14, /transition:\s*none;/);
+
+  const cwMediaRule = css14.match(/\.home-screen-shell \.home-continue-media \{[^}]*\}/)?.[0] || "";
+  assert.match(cwMediaRule, /transition:\s*none;/);
+
+  const frameRule18 =
+    css18.match(/\.home-screen-shell\.home-layout-modern \.home-poster-frame \{[^}]*\}/)?.[0] || "";
+  assert.match(frameRule18, /transition:\s*height 180ms ease-out;/);
+  assert.doesNotMatch(frameRule18, /border-color|box-shadow|background-color/);
+
+  const viewportRule17 =
+    css17.match(
+      /\.home-screen-shell\.home-layout-modern \.home-modern-rows-viewport \{[^}]*\}/
+    )?.[0] || "";
+  assert.match(viewportRule17, /will-change:\s*scroll-position;/);
 });

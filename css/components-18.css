@@ -3,11 +3,7 @@
   height: var(--home-poster-height);
   aspect-ratio: auto;
   border-radius: var(--home-poster-radius);
-  transition:
-    height 180ms ease-out,
-    border-color 120ms ease,
-    box-shadow 120ms ease,
-    background-color 120ms ease;
+  transition: height 180ms ease-out;
 }
 
 .home-screen-shell.home-layout-modern .home-poster-card.focused .home-poster-frame {

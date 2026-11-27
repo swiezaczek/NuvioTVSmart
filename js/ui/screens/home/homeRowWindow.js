@@ -7,9 +7,9 @@ export const HOME_ROW_PARKED_CLASS = "home-row-parked";
 export const HOME_ROW_WINDOW_SELECTOR = ".home-row-continue, .home-modern-row";
 // Classic and Grid scroll .home-main (Android: LazyColumn / LazyVerticalGrid).
 export const HOME_LEGACY_ROW_WINDOW_SELECTOR = ".home-row, .home-grid-section";
-// 75% of the rows viewport on each side keeps ~1-2 rows mounted ahead while
-// cutting off-screen card/layer count during compositor commits.
-const DEFAULT_ROOT_MARGIN = "75% 0px";
+// 150% of the rows viewport on each side keeps about two rows mounted ahead so
+// vertical D-pad moves rarely force synchronous ensureReady()/refresh() rebuilds.
+const DEFAULT_ROOT_MARGIN = "150% 0px";
 
 export function isHomeRowWindowSupported(scope = globalThis) {
   return (

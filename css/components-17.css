@@ -47,6 +47,7 @@
   overflow-x: hidden;
   scrollbar-width: none;
   scroll-padding-top: 0;
+  will-change: scroll-position;
   transition: opacity 480ms ease;
 }
 

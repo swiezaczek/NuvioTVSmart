@@ -101,9 +101,7 @@
   border: 2px solid transparent;
   background: transparent;
   overflow: visible;
-  transition:
-    transform 120ms ease-out,
-    border-color 120ms ease;
+  transition: transform 120ms ease-out;
 }
 
 .home-screen-shell .home-content-card.focused {
@@ -136,10 +134,7 @@
   border-radius: calc(var(--home-poster-radius) - 2px);
   background-color: transparent;
   overflow: hidden;
-  transition:
-    border-color 140ms ease,
-    box-shadow 140ms ease,
-    background-color 140ms ease;
+  transition: none;
 }
 
 .home-screen-shell .home-poster-card.focused .home-poster-frame {
@@ -385,10 +380,7 @@
     linear-gradient(145deg, #393939, #111);
   background-position: center;
   background-size: cover;
-  transition:
-    border-color 140ms ease,
-    box-shadow 140ms ease,
-    background-color 140ms ease;
+  transition: none;
 }
 
 .home-screen-shell .home-continue-bg {
