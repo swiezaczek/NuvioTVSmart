@@ -7,9 +7,9 @@ import {
 import { flushContinueWatchingEnrichmentCache } from "./homeScreenHelpers-10-get-cached-continue-watching-enrichment.js";
 import * as internals from "./homeScreenContext.js";
 
-const CW_INPUT_QUIET_MS = 900;
+const CW_INPUT_QUIET_MS = 1800;
 
-async function waitForHomeInputQuiet(screen, shouldContinue) {
+export async function waitForHomeInputQuiet(screen, shouldContinue) {
   if (typeof setTimeout !== "function") {
     return !shouldContinue || shouldContinue();
   }

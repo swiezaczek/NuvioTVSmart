@@ -254,8 +254,17 @@ test("CW enrichment batch persistence, external invalidation guard, visibility f
     );
     assert.equal(saved["movie:tt203::"], undefined, "skipped item must not be saved");
 
-    // 5. Post-paint input-quiet yield guard: defers CW fetch + NextUp while D-pad is active (<900ms),
+    // 5. Post-paint input-quiet yield guard: defers CW fetch + NextUp while D-pad is active (<1800ms),
     // extends wait if input arrives mid-sleep, and aborts cleanly when shouldContinue flips false.
+    const cwLoadSource = await readFile(
+      new URL("./homeContinueWatchingLoad.js", import.meta.url),
+      "utf8"
+    );
+    assert.ok(
+      cwLoadSource.includes("waitForHomeInputQuiet(this, isCurrentHomeContinueWatchingLoad)"),
+      "homeContinueWatchingLoad must yield for input quiet after enrichContinueWatching before persisting/rendering"
+    );
+
     const quietContext = vm.createContext({
       console,
       Promise,
@@ -305,6 +314,7 @@ test("CW enrichment batch persistence, external invalidation guard, visibility f
       `${raw27}\nglobalThis.createMethods = createHomeScreenMethods27;`,
       quietContext
     );
+    assert.equal(typeof quietContext.waitForHomeInputQuiet, "function");
 
     const quietFetchedAt = [];
     let nextUpStartedAt = 0;
@@ -331,7 +341,7 @@ test("CW enrichment batch persistence, external invalidation guard, visibility f
       }
     });
 
-    // Simulate a follow-up D-pad press 100ms in; fetch must wait >= 900ms after that latest press.
+    // Simulate a follow-up D-pad press 100ms in; fetch must wait >= 1800ms after that latest press.
     const startAt = Date.now();
     setTimeout(() => {
       quietScreen.lastHomeInputAt = Date.now();
@@ -341,12 +351,12 @@ test("CW enrichment batch persistence, external invalidation guard, visibility f
     });
     assert.equal(quietFetchedAt.length, 1);
     assert.ok(
-      quietFetchedAt[0].at - startAt >= 950,
-      `CW fetch must wait for 900ms input quiet (elapsed=${quietFetchedAt[0].at - startAt}ms)`
+      quietFetchedAt[0].at - startAt >= 1840,
+      `CW fetch must wait for 1800ms input quiet (elapsed=${quietFetchedAt[0].at - startAt}ms)`
     );
     assert.ok(
-      nextUpStartedAt - startAt >= 950,
-      `buildNextUpItems must wait for 900ms input quiet (elapsed=${nextUpStartedAt - startAt}ms)`
+      nextUpStartedAt - startAt >= 1840,
+      `buildNextUpItems must wait for 1800ms input quiet (elapsed=${nextUpStartedAt - startAt}ms)`
     );
 
     // Abort during quiet wait when shouldContinue flips false.

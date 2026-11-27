@@ -1,5 +1,6 @@
 import * as internals from "./homeScreenContext.js";
 import { stabilizeImmediateContinueWatchingItems } from "./continueWatchingStability.js";
+import { waitForHomeInputQuiet } from "./homeScreenMethods-27-enrich-continue-watching.js";
 
 export function startHomeContinueWatchingLoad(context) {
   const {
@@ -256,6 +257,9 @@ export function startHomeContinueWatchingLoad(context) {
           shouldContinue: isCurrentHomeContinueWatchingLoad
         });
         if (!isCurrentHomeContinueWatchingLoad()) {
+          return;
+        }
+        if (!(await waitForHomeInputQuiet(this, isCurrentHomeContinueWatchingLoad)) || !isCurrentHomeContinueWatchingLoad()) {
           return;
         }
         const nextDisplayStrict = buildVisibleContinueWatchingItems(enriched, {
