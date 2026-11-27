@@ -298,3 +298,190 @@ test("hero backdrop (<canvas> and <img>) and logo transitions never force synchr
   await flushRafs();
   assert.equal(reusedCanvas.classList.contains("is-visible"), true);
 });
+
+test("preloadHeroBackdrop bypasses CPU resizeWidth for <=1920px headers, uses transferable Worker when available, and falls back in-thread", async () => {
+  const prevNavigatorUa = Object.getOwnPropertyDescriptor(globalThis.navigator, "userAgent");
+  const prevNavigatorMem = Object.getOwnPropertyDescriptor(globalThis.navigator, "deviceMemory");
+  const prevTizen = globalThis.tizen;
+  const prevLocalStorage = globalThis.localStorage;
+  const prevFetch = globalThis.fetch;
+  const prevCreateImageBitmap = globalThis.createImageBitmap;
+  const prevWorker = globalThis.Worker;
+  const prevBlob = globalThis.Blob;
+  const prevCreateObjectUrl = globalThis.URL.createObjectURL;
+  const prevRevokeObjectUrl = globalThis.URL.revokeObjectURL;
+  const prevInnerWidth = globalThis.innerWidth;
+  const prevDpr = globalThis.devicePixelRatio;
+  const prevImage = globalThis.Image;
+
+  const makeJpegBytes = (width, height) => {
+    const app0 = [0xff, 0xe0, 0x00, 0x10, ...new Array(14).fill(0)];
+    const sof = [
+      0xff,
+      0xc0,
+      0x00,
+      0x11,
+      0x08,
+      (height >> 8) & 0xff,
+      height & 0xff,
+      (width >> 8) & 0xff,
+      width & 0xff,
+      0x03,
+      0x01,
+      0x22,
+      0x00,
+      0x02,
+      0x11,
+      0x01,
+      0x03,
+      0x11,
+      0x01
+    ];
+    return new Uint8Array([0xff, 0xd8, ...app0, ...sof, 0xff, 0xd9]);
+  };
+
+  const makeByteBlob = (bytes) => ({
+    size: bytes.byteLength,
+    slice(start, end) {
+      const sliced = bytes.slice(start, end);
+      return {
+        async arrayBuffer() {
+          return sliced.buffer.slice(sliced.byteOffset, sliced.byteOffset + sliced.byteLength);
+        }
+      };
+    },
+    async arrayBuffer() {
+      return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    }
+  });
+
+  try {
+    Object.defineProperty(globalThis.navigator, "userAgent", {
+      value:
+        "Mozilla/5.0 (SMART-TV; Linux; Tizen 9.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      configurable: true
+    });
+    Object.defineProperty(globalThis.navigator, "deviceMemory", { value: 2, configurable: true });
+    globalThis.tizen = {};
+    globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+    globalThis.innerWidth = 1920;
+    globalThis.devicePixelRatio = 1;
+
+    const createImageBitmapCalls = [];
+    const jpeg1280 = makeJpegBytes(1280, 720);
+    const jpeg3840 = makeJpegBytes(3840, 2160);
+
+    globalThis.fetch = async (url) => ({
+      ok: true,
+      async blob() {
+        return makeByteBlob(url.includes("4k") ? jpeg3840 : jpeg1280);
+      }
+    });
+    globalThis.createImageBitmap = async (_blob, opts) => {
+      createImageBitmapCalls.push(opts ?? null);
+      return { width: opts?.resizeWidth || 1280, height: 720, close() {} };
+    };
+
+    // 1. In-thread path (no Worker): 1280x720 skips resizeWidth; 3840x2160 passes low-quality resizeWidth.
+    delete globalThis.Worker;
+    const modNoWorker = await import(
+      `./homeScreenHelpers-02-extract-release-date-text.js?noworker=${Date.now()}`
+    );
+    const res1280 = await modNoWorker.preloadHeroBackdrop("https://art/w1280.jpg");
+    assert.equal(res1280.loaded, true);
+    assert.equal(res1280.bitmap.width, 1280);
+    assert.equal(
+      createImageBitmapCalls[0],
+      null,
+      "<=1920px header must call createImageBitmap(blob) with no resize options"
+    );
+
+    const res4k = await modNoWorker.preloadHeroBackdrop("https://art/4k.jpg");
+    assert.equal(res4k.loaded, true);
+    assert.deepEqual(
+      createImageBitmapCalls[1],
+      { resizeWidth: 1920, resizeQuality: "low" },
+      ">1920px header must downscale with resizeWidth and low quality"
+    );
+
+    // 2. Worker transferable path + Worker-throw fallback path.
+    const workerScripts = [];
+    let failWorkerCtor = false;
+    const fakeWorkerPosts = [];
+    class FakeBackdropWorker {
+      constructor(url) {
+        if (failWorkerCtor) throw new Error("worker blocked");
+        this.url = url;
+        this.onmessage = null;
+        this.onerror = null;
+      }
+      postMessage(msg) {
+        fakeWorkerPosts.push(msg);
+        const w = msg.url.includes("4k") ? 1920 : 1280;
+        queueMicrotask(() => {
+          this.onmessage?.({
+            data: { id: msg.id, ok: true, bitmap: { width: w, height: 720, close() {} } }
+          });
+        });
+      }
+      terminate() {}
+    }
+    globalThis.Worker = FakeBackdropWorker;
+    globalThis.Blob = class FakeBlob {
+      constructor(parts) {
+        this.parts = parts;
+      }
+    };
+    globalThis.URL.createObjectURL = (blob) => {
+      workerScripts.push(String(blob?.parts?.[0] || ""));
+      return "blob:hero-worker/1";
+    };
+    globalThis.URL.revokeObjectURL = () => {};
+
+    const modWorker = await import(
+      `./homeScreenHelpers-02-extract-release-date-text.js?worker=${Date.now()}`
+    );
+    const workerRes = await modWorker.preloadHeroBackdrop("https://art/worker-1280.jpg");
+    assert.equal(workerRes.loaded, true);
+    assert.equal(workerRes.bitmap.width, 1280);
+    assert.equal(fakeWorkerPosts.length, 1);
+    assert.equal(fakeWorkerPosts[0].resizeWidth, 1920);
+    assert.ok(
+      workerScripts[0].includes("self.postMessage({ id, ok: true, bitmap }, [bitmap])"),
+      "worker source must transfer ImageBitmap zero-copy"
+    );
+    assert.ok(
+      workerScripts[0].includes('resizeQuality: "low"'),
+      "worker source must use resizeQuality low when downscaling"
+    );
+
+    // Worker constructor failure falls back cleanly to in-thread decode.
+    failWorkerCtor = true;
+    const modFallback = await import(
+      `./homeScreenHelpers-02-extract-release-date-text.js?fallback=${Date.now()}`
+    );
+    const fallbackRes = await modFallback.preloadHeroBackdrop("https://art/fallback-1280.jpg");
+    assert.equal(fallbackRes.loaded, true);
+    assert.equal(fallbackRes.bitmap.width, 1280);
+    assert.equal(createImageBitmapCalls.length, 3);
+  } finally {
+    if (prevNavigatorUa) Object.defineProperty(globalThis.navigator, "userAgent", prevNavigatorUa);
+    if (prevNavigatorMem)
+      Object.defineProperty(globalThis.navigator, "deviceMemory", prevNavigatorMem);
+    if (prevTizen === undefined) delete globalThis.tizen;
+    else globalThis.tizen = prevTizen;
+    if (prevLocalStorage === undefined) delete globalThis.localStorage;
+    else globalThis.localStorage = prevLocalStorage;
+    globalThis.fetch = prevFetch;
+    globalThis.createImageBitmap = prevCreateImageBitmap;
+    if (prevWorker === undefined) delete globalThis.Worker;
+    else globalThis.Worker = prevWorker;
+    globalThis.Blob = prevBlob;
+    globalThis.URL.createObjectURL = prevCreateObjectUrl;
+    globalThis.URL.revokeObjectURL = prevRevokeObjectUrl;
+    globalThis.innerWidth = prevInnerWidth;
+    globalThis.devicePixelRatio = prevDpr;
+    if (prevImage === undefined) delete globalThis.Image;
+    else globalThis.Image = prevImage;
+  }
+});

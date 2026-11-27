@@ -268,6 +268,183 @@ function canDecodeHeroBackdropBitmap(src) {
   );
 }
 
+const HERO_BACKDROP_HEADER_SLICE_BYTES = 65536;
+
+const HERO_BACKDROP_WORKER_SOURCE = `
+function ascii(b, o, n) {
+  let s = "";
+  for (let i = 0; i < n; i += 1) s += String.fromCharCode(b[o + i] || 0);
+  return s;
+}
+function u16be(b, o) { return (b[o] << 8) | b[o + 1]; }
+function u16le(b, o) { return b[o] | (b[o + 1] << 8); }
+function u32be(b, o) { return ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0; }
+function u32le(b, o) { return (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0; }
+function headerWidth(bytes) {
+  if (!bytes || bytes.length < 24) return 0;
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+    return u32be(bytes, 16);
+  }
+  if (ascii(bytes, 0, 4) === "RIFF" && ascii(bytes, 8, 4) === "WEBP") {
+    let off = 12;
+    while (off + 8 <= bytes.length) {
+      const t = ascii(bytes, off, 4);
+      const sz = u32le(bytes, off + 4);
+      const d = off + 8;
+      if (t === "VP8X") return 1 + (bytes[d + 4] | (bytes[d + 5] << 8) | (bytes[d + 6] << 16));
+      if (t === "VP8L") return 1 + (u32le(bytes, d + 1) & 0x3fff);
+      if (t === "VP8 " && bytes[d + 3] === 0x9d && bytes[d + 4] === 0x01 && bytes[d + 5] === 0x2a) {
+        return u16le(bytes, d + 6) & 0x3fff;
+      }
+      off = d + sz + (sz & 1);
+    }
+    return 0;
+  }
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) {
+    let off = 2;
+    while (off + 9 < bytes.length) {
+      if (bytes[off] !== 0xff) { off += 1; continue; }
+      const m = bytes[off + 1];
+      if (m === 0xd8 || m === 0xd9 || (m >= 0xd0 && m <= 0xd7) || m === 0x01) { off += 2; continue; }
+      const seg = u16be(bytes, off + 2);
+      if (seg < 2 || off + 2 + seg > bytes.length) break;
+      if ((m >= 0xc0 && m <= 0xc3) || (m >= 0xc5 && m <= 0xc7) || (m >= 0xc9 && m <= 0xcb) || (m >= 0xcd && m <= 0xcf)) {
+        return u16be(bytes, off + 7);
+      }
+      off += 2 + seg;
+    }
+  }
+  return 0;
+}
+self.onmessage = async (event) => {
+  const { id, url, resizeWidth } = event.data || {};
+  try {
+    const res = await fetch(url, { mode: "cors", credentials: "omit" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const blob = await res.blob();
+    const headBuf = typeof blob.slice === "function"
+      ? await blob.slice(0, ${HERO_BACKDROP_HEADER_SLICE_BYTES}).arrayBuffer()
+      : await blob.arrayBuffer();
+    const naturalWidth = headerWidth(new Uint8Array(headBuf));
+    const bitmap = naturalWidth > 0 && naturalWidth <= resizeWidth
+      ? await createImageBitmap(blob)
+      : await createImageBitmap(blob, { resizeWidth, resizeQuality: "low" });
+    self.postMessage({ id, ok: true, bitmap }, [bitmap]);
+  } catch (_) {
+    self.postMessage({ id, ok: false });
+  }
+};
+`;
+
+let heroBackdropWorker = null;
+let heroBackdropWorkerUrl = "";
+let heroBackdropWorkerNextId = 1;
+const heroBackdropWorkerJobs = new Map();
+
+function resetHeroBackdropWorker(err = null) {
+  const pending = Array.from(heroBackdropWorkerJobs.values());
+  heroBackdropWorkerJobs.clear();
+  if (heroBackdropWorker) {
+    try {
+      heroBackdropWorker.terminate?.();
+    } catch (_) {}
+    heroBackdropWorker = null;
+  }
+  if (heroBackdropWorkerUrl) {
+    try {
+      globalThis.URL?.revokeObjectURL?.(heroBackdropWorkerUrl);
+    } catch (_) {}
+    heroBackdropWorkerUrl = "";
+  }
+  pending.forEach((job) => job.reject(err || new Error("hero backdrop worker reset")));
+}
+
+function getHeroBackdropWorker() {
+  if (heroBackdropWorker) {
+    return heroBackdropWorker;
+  }
+  if (typeof globalThis.Worker !== "function" || typeof globalThis.URL?.createObjectURL !== "function" || typeof Blob === "undefined") {
+    return null;
+  }
+  let workerUrl = "";
+  try {
+    workerUrl = globalThis.URL.createObjectURL(new Blob([HERO_BACKDROP_WORKER_SOURCE], { type: "text/javascript" }));
+    const worker = new globalThis.Worker(workerUrl);
+    worker.onmessage = (event) => {
+      const { id, ok, bitmap } = event.data || {};
+      const job = heroBackdropWorkerJobs.get(id);
+      if (!job) {
+        bitmap?.close?.();
+        return;
+      }
+      heroBackdropWorkerJobs.delete(id);
+      if (ok && bitmap) {
+        job.resolve(bitmap);
+      } else {
+        job.reject(new Error("hero backdrop worker decode failed"));
+      }
+    };
+    worker.onerror = () => {
+      resetHeroBackdropWorker(new Error("hero backdrop worker error"));
+    };
+    heroBackdropWorker = worker;
+    heroBackdropWorkerUrl = workerUrl;
+    return worker;
+  } catch (_) {
+    if (workerUrl) {
+      try {
+        globalThis.URL?.revokeObjectURL?.(workerUrl);
+      } catch (__) {}
+    }
+    return null;
+  }
+}
+
+async function readBackdropNaturalWidth(blob) {
+  try {
+    const buffer =
+      typeof blob?.slice === "function" ? await blob.slice(0, HERO_BACKDROP_HEADER_SLICE_BYTES).arrayBuffer() : await blob?.arrayBuffer?.();
+    if (!buffer) {
+      return 0;
+    }
+    const dims = heroLogoDimensions(new Uint8Array(buffer));
+    return Number(dims?.width || 0);
+  } catch (_) {
+    return 0;
+  }
+}
+
+async function decodeHeroBackdropBitmapInThread(url, resizeWidth) {
+  const response = await globalThis.fetch(url, { mode: "cors", credentials: "omit" });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  const blob = await response.blob();
+  const naturalWidth = await readBackdropNaturalWidth(blob);
+  if (naturalWidth > 0 && naturalWidth <= resizeWidth) {
+    return globalThis.createImageBitmap(blob);
+  }
+  return globalThis.createImageBitmap(blob, { resizeWidth, resizeQuality: "low" });
+}
+
+function decodeHeroBackdropBitmap(url, resizeWidth) {
+  const worker = getHeroBackdropWorker();
+  if (!worker) {
+    return decodeHeroBackdropBitmapInThread(url, resizeWidth);
+  }
+  return new Promise((resolve, reject) => {
+    const id = heroBackdropWorkerNextId++;
+    heroBackdropWorkerJobs.set(id, { resolve, reject });
+    try {
+      worker.postMessage({ id, url, resizeWidth });
+    } catch (error) {
+      heroBackdropWorkerJobs.delete(id);
+      resetHeroBackdropWorker(error);
+      decodeHeroBackdropBitmapInThread(url, resizeWidth).then(resolve, reject);
+    }
+  });
+}
+
 export function preloadHeroBackdrop(src) {
   const normalized = String(src || "").trim();
   if (!normalized || !canDecodeHeroBackdropBitmap(normalized)) {
@@ -287,24 +464,15 @@ export function preloadHeroBackdrop(src) {
     oldest.then((entry) => entry.bitmap?.close?.());
   }
   const resizeWidth = Math.max(1, Math.round((globalThis.innerWidth || 1920) * (globalThis.devicePixelRatio || 1)));
-  const preload = globalThis
-    .fetch(normalized, { mode: "cors", credentials: "omit" })
-    .then((response) => {
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+  const preload = decodeHeroBackdropBitmap(normalized, resizeWidth).then(
+    (bitmap) => ({ loaded: true, bitmap }),
+    () => {
+      if (heroBackdropBitmapCache.get(normalized) === preload) {
+        heroBackdropBitmapCache.delete(normalized);
       }
-      return response.blob();
-    })
-    .then((blob) => globalThis.createImageBitmap(blob, { resizeWidth, resizeQuality: "medium" }))
-    .then(
-      (bitmap) => ({ loaded: true, bitmap }),
-      () => {
-        if (heroBackdropBitmapCache.get(normalized) === preload) {
-          heroBackdropBitmapCache.delete(normalized);
-        }
-        return preloadImageSource(normalized).then((loaded) => ({ loaded, bitmap: null }));
-      }
-    );
+      return preloadImageSource(normalized).then((loaded) => ({ loaded, bitmap: null }));
+    }
+  );
   heroBackdropBitmapCache.set(normalized, preload);
   return preload;
 }
