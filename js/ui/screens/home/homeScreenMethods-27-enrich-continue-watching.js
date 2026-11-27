@@ -7,6 +7,30 @@ import {
 import { flushContinueWatchingEnrichmentCache } from "./homeScreenHelpers-10-get-cached-continue-watching-enrichment.js";
 import * as internals from "./homeScreenContext.js";
 
+const CW_INPUT_QUIET_MS = 900;
+
+async function waitForHomeInputQuiet(screen, shouldContinue) {
+  if (typeof setTimeout !== "function") {
+    return !shouldContinue || shouldContinue();
+  }
+  const isPostPaint = screen?.hasPaintedInitialHomeContent === true || screen?.isInitialHomeLoading === false;
+  if (!isPostPaint) {
+    return !shouldContinue || shouldContinue();
+  }
+  while (!shouldContinue || shouldContinue()) {
+    const lastInputAt = Number(screen?.lastHomeInputAt || 0);
+    if (!(lastInputAt > 0)) {
+      return true;
+    }
+    const remainingMs = CW_INPUT_QUIET_MS - (Date.now() - lastInputAt);
+    if (remainingMs <= 0) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, remainingMs));
+  }
+  return false;
+}
+
 export function createHomeScreenMethods27() {
   const {
     Router,
@@ -71,6 +95,9 @@ export function createHomeScreenMethods27() {
               !needsServerSeriesIdentity &&
               !needsContinueWatchingMetadataRefresh([cachedItem])
             ) {
+              return cachedItem;
+            }
+            if (!(await waitForHomeInputQuiet(this, shouldContinue))) {
               return cachedItem;
             }
             try {
@@ -176,12 +203,17 @@ export function createHomeScreenMethods27() {
               episodeTitle: firstNonEmpty(cachedItem.episodeTitle, cachedItem.subtitle)
             };
           }),
-          this.buildNextUpItems({
-            allProgress: options?.allProgress || [],
-            inProgressItems: items || [],
-            nextUpProgressCandidates: options?.nextUpProgressCandidates || [],
-            watchedItems: options?.watchedItems || []
-          })
+          (async () => {
+            if (!(await waitForHomeInputQuiet(this, shouldContinue))) {
+              return [];
+            }
+            return this.buildNextUpItems({
+              allProgress: options?.allProgress || [],
+              inProgressItems: items || [],
+              nextUpProgressCandidates: options?.nextUpProgressCandidates || [],
+              watchedItems: options?.watchedItems || []
+            });
+          })()
         ]);
       } finally {
         flushContinueWatchingEnrichmentCache();

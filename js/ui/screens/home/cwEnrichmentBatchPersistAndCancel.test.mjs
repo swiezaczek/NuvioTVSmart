@@ -253,6 +253,130 @@ test("CW enrichment batch persistence, external invalidation guard, visibility f
       "in-flight item cancelled before commit must not be saved"
     );
     assert.equal(saved["movie:tt203::"], undefined, "skipped item must not be saved");
+
+    // 5. Post-paint input-quiet yield guard: defers CW fetch + NextUp while D-pad is active (<900ms),
+    // extends wait if input arrives mid-sleep, and aborts cleanly when shouldContinue flips false.
+    const quietContext = vm.createContext({
+      console,
+      Promise,
+      Set,
+      Map,
+      Math,
+      Number,
+      String,
+      Array,
+      Object,
+      Boolean,
+      setTimeout,
+      clearTimeout,
+      flushContinueWatchingEnrichmentCache,
+      resolveContinueWatchingEpisodeRating: async () => null,
+      dedupeContinueWatchingInProgress: (list) => list,
+      isServerContentId: () => false,
+      resolveContinueWatchingSeriesContentId: (id) => id,
+      internals: {
+        Router: { getCurrent: () => "home" },
+        mapWithConcurrency,
+        TmdbService: {},
+        TmdbMetadataService: {},
+        TmdbSettingsStore: { get: () => ({ enabled: false }) },
+        TMDB_API_KEY: "",
+        CW_MAX_ENRICHMENT_CONCURRENCY: 1,
+        CW_MAX_VISIBLE_ITEMS: 30,
+        firstNonEmpty: (...vals) => vals.find((v) => v != null && String(v).trim() !== "") || "",
+        prettyId: (id) => id,
+        resolveImdbRating: () => null,
+        parseRuntimeMinutes: () => 100,
+        isCollectionFolderItem: () => false,
+        normalizeCollectionFolderItem: (x) => x,
+        normalizeHomeRowItem: (_r, x) => x,
+        withTimeout: (p) => p,
+        isSeriesTypeForContinueWatching: () => false,
+        findEpisodeEntry: () => null,
+        sortContinueWatchingItemsForDisplay: (list) => list,
+        normalizeCatalogItem: (x) => x,
+        isCloudContinueWatchingItem: () => false,
+        needsContinueWatchingMetadataRefresh: () => true,
+        applyCachedContinueWatchingEnrichment: (x) => x,
+        saveContinueWatchingEnrichment
+      }
+    });
+    vm.runInContext(
+      `${raw27}\nglobalThis.createMethods = createHomeScreenMethods27;`,
+      quietContext
+    );
+
+    const quietFetchedAt = [];
+    let nextUpStartedAt = 0;
+    const quietScreen = Object.assign(Object.create(quietContext.createMethods()), {
+      layoutPrefs: {},
+      hasPaintedInitialHomeContent: true,
+      lastHomeInputAt: Date.now(),
+      async fetchMetaForContinueWatching(_type, contentId) {
+        quietFetchedAt.push({ contentId, at: Date.now() });
+        return {
+          id: contentId,
+          type: "movie",
+          name: `Title ${contentId}`,
+          poster: `https://img/${contentId}.jpg`,
+          background: `https://img/${contentId}-bg.jpg`
+        };
+      },
+      async enrichContinueWatchingMetaWithTmdb(meta) {
+        return meta;
+      },
+      async buildNextUpItems() {
+        nextUpStartedAt = Date.now();
+        return [];
+      }
+    });
+
+    // Simulate a follow-up D-pad press 100ms in; fetch must wait >= 900ms after that latest press.
+    const startAt = Date.now();
+    setTimeout(() => {
+      quietScreen.lastHomeInputAt = Date.now();
+    }, 100);
+    await quietScreen.enrichContinueWatching([makeItem("tt301", "Quiet")], {
+      shouldContinue: () => true
+    });
+    assert.equal(quietFetchedAt.length, 1);
+    assert.ok(
+      quietFetchedAt[0].at - startAt >= 950,
+      `CW fetch must wait for 900ms input quiet (elapsed=${quietFetchedAt[0].at - startAt}ms)`
+    );
+    assert.ok(
+      nextUpStartedAt - startAt >= 950,
+      `buildNextUpItems must wait for 900ms input quiet (elapsed=${nextUpStartedAt - startAt}ms)`
+    );
+
+    // Abort during quiet wait when shouldContinue flips false.
+    let abortAllow = true;
+    const abortedFetches = [];
+    let abortedNextUpCalled = false;
+    const abortScreen = Object.assign(Object.create(quietContext.createMethods()), {
+      layoutPrefs: {},
+      isInitialHomeLoading: false,
+      lastHomeInputAt: Date.now(),
+      async fetchMetaForContinueWatching(_type, contentId) {
+        abortedFetches.push(contentId);
+        return null;
+      },
+      async enrichContinueWatchingMetaWithTmdb(meta) {
+        return meta;
+      },
+      async buildNextUpItems() {
+        abortedNextUpCalled = true;
+        return [];
+      }
+    });
+    setTimeout(() => {
+      abortAllow = false;
+    }, 50);
+    await abortScreen.enrichContinueWatching([makeItem("tt302", "Aborted")], {
+      shouldContinue: () => abortAllow
+    });
+    assert.deepEqual(abortedFetches, [], "aborted quiet wait must not fetch CW metadata");
+    assert.equal(abortedNextUpCalled, false, "aborted quiet wait must not run buildNextUpItems");
   } finally {
     globalThis.localStorage = prevStorage;
     globalThis.document = prevDocument;
