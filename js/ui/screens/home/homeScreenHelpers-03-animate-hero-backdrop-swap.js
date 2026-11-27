@@ -187,7 +187,11 @@ import {
   uniqueNonEmptyValues
 } from "./homeUtils.js";
 
-import { preloadHeroBackdrop, prepareHeroImageEnter } from "./homeScreenHelpers-02-extract-release-date-text.js";
+import {
+  preloadHeroBackdrop,
+  prepareHeroImageEnter,
+  restoreHeroImageTransition
+} from "./homeScreenHelpers-02-extract-release-date-text.js";
 
 export function animateHeroBackdropSwap(
   backdrop,
@@ -231,6 +235,9 @@ export function animateHeroBackdropSwap(
   const finalize = () => {
     if (Number(backdrop.heroBackdropTransitionToken || 0) !== token) {
       return;
+    }
+    if (typeof restoreHeroImageTransition === "function") {
+      restoreHeroImageTransition(backdrop);
     }
     backdrop.classList.remove("home-hero-backdrop-transition-enter", "is-visible");
     getCanvas()?.classList?.remove("home-hero-backdrop-transition-enter", "is-visible");
@@ -303,7 +310,7 @@ export function animateHeroBackdropSwap(
     if (bitmap && parent) {
       const previousCanvas = getCanvas();
       layer = document.createElement("canvas");
-      layer.className = "home-hero-backdrop home-hero-backdrop-canvas";
+      layer.className = "home-hero-backdrop home-hero-backdrop-canvas home-hero-backdrop-transition-enter";
       layer.width = bitmap.width;
       layer.height = bitmap.height;
       layer.getContext("2d")?.drawImage(bitmap, 0, 0);
@@ -317,14 +324,17 @@ export function animateHeroBackdropSwap(
     } else {
       showImageLayer();
       backdrop.setAttribute("src", normalizedSrc);
+      prepareHeroImageEnter(layer, "home-hero-backdrop-transition-enter");
     }
-    prepareHeroImageEnter(layer, "home-hero-backdrop-transition-enter");
     backdrop.classList.remove("placeholder");
     backdrop.setAttribute("alt", normalizedAlt);
 
     const reveal = () => {
       if (Number(backdrop.heroBackdropTransitionToken || 0) !== token || backdrop.isConnected === false) {
         return;
+      }
+      if (layer === backdrop && typeof restoreHeroImageTransition === "function") {
+        restoreHeroImageTransition(layer);
       }
       layer.classList.add("is-visible");
       ghost?.classList?.add("is-fading-out");
@@ -336,7 +346,7 @@ export function animateHeroBackdropSwap(
       if (Number(backdrop.heroBackdropTransitionToken || 0) !== token || backdrop.isConnected === false) {
         return;
       }
-      if (singleLayer) {
+      if (singleLayer && layer === backdrop && typeof restoreHeroImageTransition !== "function") {
         reveal();
         return;
       }

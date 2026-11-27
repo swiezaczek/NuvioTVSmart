@@ -620,17 +620,30 @@ export function preloadHeroAssets(hero, layoutMode = "modern") {
 }
 
 export function prepareHeroImageEnter(image, enterClass) {
-  // A reused image is already opaque. Without an immediate reset, changing src
-  // flashes the new artwork while CSS starts fading from 1 towards 0; the next
-  // animation frame then reverses that fade instead of entering from 0.
-  const transition = image.style.getPropertyValue("transition");
-  const priority = image.style.getPropertyPriority("transition");
+  // A reused image is already opaque. Suppress transitions while resetting to
+  // opacity 0 so Frame 1 commits the hidden enter state naturally without a
+  // synchronous offsetWidth layout flush, then restore on reveal/finalize.
+  if (!image.__heroTransitionSuppressed) {
+    image.__heroSavedTransition = {
+      value: image.style.getPropertyValue("transition"),
+      priority: image.style.getPropertyPriority("transition")
+    };
+    image.__heroTransitionSuppressed = true;
+  }
   image.style.setProperty("transition", "none", "important");
   image.classList.remove("is-visible");
   image.classList.add(enterClass);
-  void image.offsetWidth;
-  if (transition) {
-    image.style.setProperty("transition", transition, priority);
+}
+
+export function restoreHeroImageTransition(image) {
+  if (!image?.__heroTransitionSuppressed) {
+    return;
+  }
+  const saved = image.__heroSavedTransition;
+  delete image.__heroTransitionSuppressed;
+  delete image.__heroSavedTransition;
+  if (saved?.value) {
+    image.style.setProperty("transition", saved.value, saved.priority || "");
   } else {
     image.style.removeProperty("transition");
   }
