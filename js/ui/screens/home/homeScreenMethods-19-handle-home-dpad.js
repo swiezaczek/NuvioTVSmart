@@ -272,8 +272,12 @@ export function createHomeScreenMethods19() {
             if (track?.matches?.(".home-track, .home-grid-track") && this.shouldUseBoundedHomeImageHydration()) {
               const anchor = track.querySelector(".focusable.focused") || track.querySelector(".focusable");
               if (anchor) {
+                const deferTrackHydration = Boolean(
+                  this.layoutMode === "modern" && (this.isScrollAnimationActive?.(track, "x") || this.isModernHydrationScrollActive?.())
+                );
                 this.scheduleHomeLazyImageHydration(anchor, {
                   viewportChanged: true,
+                  deferUntilVerticalSettle: deferTrackHydration,
                   focusedRowOnly: this.isLegacyTvRuntime()
                 });
               }

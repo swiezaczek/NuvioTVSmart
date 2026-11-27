@@ -109,20 +109,30 @@ export function createHomeScreenMethods24() {
       // poster decodes while the spring was still running, which is the same
       // decode burst the immediate-scroll policy already avoided.
       if (deferUntilVerticalSettle && !legacyFocusedRowPass && this.shouldUseBoundedHomeImageHydration() && this.layoutMode === "modern") {
+        this.pendingHomeLazyImageSettleRefreshIndex = Boolean(this.pendingHomeLazyImageSettleRefreshIndex || refreshIndex);
+        this.pendingHomeLazyImageSettleViewportChanged = Boolean(this.pendingHomeLazyImageSettleViewportChanged || viewportChanged);
         if (this.homeLazyImageHydrationSettleTimer) {
           clearTimeout(this.homeLazyImageHydrationSettleTimer);
         }
         const target = anchorNode instanceof HTMLElement ? anchorNode : null;
+        const targetTrack = target?.closest?.(".home-track, .home-grid-track") || null;
         const hydrationDelayMs = this.shouldUseImmediateFocusScroll()
           ? MODERN_HOME_CONSTANTS.smartTvLazyHydrationDebounceMs
           : MODERN_HOME_CONSTANTS.verticalScrollSettlePollMs;
         const retryAfterVerticalSettle = () => {
           this.homeLazyImageHydrationSettleTimer = null;
-          if (this.isModernHydrationScrollActive()) {
+          if (this.isModernHydrationScrollActive() || (targetTrack && this.isScrollAnimationActive?.(targetTrack, "x"))) {
             this.homeLazyImageHydrationSettleTimer = setTimeout(retryAfterVerticalSettle, MODERN_HOME_CONSTANTS.verticalScrollSettlePollMs);
             return;
           }
-          this.scheduleHomeLazyImageHydration(target, { refreshIndex });
+          const settledRefreshIndex = Boolean(this.pendingHomeLazyImageSettleRefreshIndex);
+          const settledViewportChanged = Boolean(this.pendingHomeLazyImageSettleViewportChanged);
+          this.pendingHomeLazyImageSettleRefreshIndex = false;
+          this.pendingHomeLazyImageSettleViewportChanged = false;
+          this.scheduleHomeLazyImageHydration(target, {
+            refreshIndex: settledRefreshIndex,
+            viewportChanged: settledViewportChanged
+          });
         };
         this.homeLazyImageHydrationSettleTimer = setTimeout(retryAfterVerticalSettle, hydrationDelayMs);
         return;
@@ -131,6 +141,11 @@ export function createHomeScreenMethods24() {
         clearTimeout(this.homeLazyImageHydrationSettleTimer);
         this.homeLazyImageHydrationSettleTimer = null;
       }
+      if (this.pendingHomeLazyImageSettleRefreshIndex) {
+        this.homeLazyImageHydrationNeedsIndexRefresh = true;
+      }
+      this.pendingHomeLazyImageSettleRefreshIndex = false;
+      this.pendingHomeLazyImageSettleViewportChanged = false;
       if (this.modernVerticalFastScrollState) {
         return;
       }
@@ -207,6 +222,38 @@ export function createHomeScreenMethods24() {
       if (!imageRows.length) {
         return;
       }
+      const isHorizontalOnlyPass = Boolean(
+        sameAnchorRow && useBoundedTvHydration && !forceFullScan && !refreshIndex && !includeNeighborRows
+      );
+      const candidateRows = [];
+      imageRows.forEach((entry) => {
+        const { row } = entry;
+        if (row instanceof HTMLElement && !row.isConnected) {
+          return;
+        }
+        const isFocusedRow = Boolean(anchorRow && row === anchorRow);
+        if (focusedRowOnly && anchorRow && !isFocusedRow) {
+          return;
+        }
+        if (isHorizontalOnlyPass && !isFocusedRow) {
+          return;
+        }
+        // Keep every image the row still owns so eviction can hand its artwork
+        // back later. Only detached nodes leave the index; a loaded poster is
+        // the whole point of the sweep.
+        entry.images = entry.images.filter((image) => image.isConnected);
+        const images = entry.images.filter((image) => image.dataset.src);
+        if (!images.length) {
+          return;
+        }
+        candidateRows.push({ row, isFocusedRow, images });
+      });
+      if (!candidateRows.length) {
+        if (!isHorizontalOnlyPass && getTvRuntimePerformanceProfile().isTvRuntime && Router.getCurrent() === "home") {
+          this.scheduleHomeLazyImageEviction(anchorNode);
+        }
+        return;
+      }
       const viewport =
         this.container.querySelector(".home-modern-rows-viewport") || this.container.querySelector(".home-main") || this.container;
       const viewportRect = viewport.getBoundingClientRect();
@@ -234,24 +281,7 @@ export function createHomeScreenMethods24() {
         ? Math.max(constrained ? 96 : 560, Math.round(Number(anchorNode?.offsetWidth || 0) * (constrained ? 0.65 : 2.5)))
         : horizontalMargin;
       const pendingLoads = [];
-      imageRows.forEach((entry) => {
-        const { row } = entry;
-        if (row instanceof HTMLElement && !row.isConnected) {
-          return;
-        }
-        const isFocusedRow = Boolean(anchorRow && row === anchorRow);
-        if (focusedRowOnly && anchorRow && !isFocusedRow) {
-          return;
-        }
-        if (sameAnchorRow && useBoundedTvHydration && !forceFullScan && !refreshIndex && !includeNeighborRows && !isFocusedRow) {
-          return;
-        }
-        // Keep every image the row still owns so eviction can hand its artwork
-        // back later. Only detached nodes leave the index; a loaded poster is
-        // the whole point of the sweep.
-        entry.images = entry.images.filter((image) => image.isConnected);
-        const images = entry.images.filter((image) => image.dataset.src);
-        if (!images.length) return;
+      candidateRows.forEach(({ row, isFocusedRow, images }) => {
         // Android's LazyRow loads the visible cards plus a small prefetch
         // neighborhood, not every item in the focused row. Keep the same
         // bounded behavior on Smart-TV runtimes; older/browser fallback paths
@@ -326,7 +356,7 @@ export function createHomeScreenMethods24() {
       // not only when focus moves, so a row-change gate left artwork behind.
       // The sweep measures rows rather than images, which keeps it cheap enough
       // for the D-pad hot path.
-      if (getTvRuntimePerformanceProfile().isTvRuntime && Router.getCurrent() === "home") {
+      if (!isHorizontalOnlyPass && getTvRuntimePerformanceProfile().isTvRuntime && Router.getCurrent() === "home") {
         this.scheduleHomeLazyImageEviction(anchorNode);
       }
     },
