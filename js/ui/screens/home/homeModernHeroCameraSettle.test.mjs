@@ -540,7 +540,7 @@ test("TV browsing cadence stretches hero delay, pushes preloadDelay past 370ms, 
   assert.equal(firstPreloadTimer?.delay, 370);
   assert.equal(firstCommitTimer?.delay, 450);
 
-  // Follow-up browsing key within 1400ms stretches delay to 1150ms and preloadDelay to 1070ms.
+  // Follow-up browsing key within 1400ms uses 620ms delay and 540ms preloadDelay (mid-gap between 900-1100ms keys, >= 370ms quiet).
   harness.advanceNow(900);
   harness.screen.lastHomeInputAt = 10900;
   harness.screen.scheduleModernHeroUpdate(harness.card);
@@ -550,8 +550,8 @@ test("TV browsing cadence stretches hero delay, pushes preloadDelay past 370ms, 
   const browseCommitTimer = Array.from(harness.scheduler.timers.values()).find(
     (entry) => entry.id === harness.screen.heroFocusDelayTimer
   );
-  assert.equal(browsePreloadTimer?.delay, 1070);
-  assert.equal(browseCommitTimer?.delay, 1150);
+  assert.equal(browsePreloadTimer?.delay, 540);
+  assert.equal(browseCommitTimer?.delay, 620);
 
   // Even after input quiet passes, active horizontal track scroll keeps hero preload/commit deferred.
   harness.advanceNow(400);

@@ -5,7 +5,7 @@ import { getTvRuntimePerformanceProfile } from "../../../platform/tvRuntimePerfo
 const MODERN_TV_HERO_ENRICH_SETTLE_DELAY_MS = 500;
 const MODERN_TV_HERO_PACE_QUIET_MS = 370;
 const MODERN_TV_HERO_BROWSE_WINDOW_MS = 1400;
-const MODERN_TV_HERO_BROWSE_SETTLE_DELAY_MS = 1150;
+const MODERN_TV_HERO_BROWSE_SETTLE_DELAY_MS = 620;
 
 export function createHomeScreenMethods10() {
   const { MODERN_HOME_CONSTANTS, shouldEnrichModernHero, preloadHeroAssets, buildHeroIdentity } = internals;
