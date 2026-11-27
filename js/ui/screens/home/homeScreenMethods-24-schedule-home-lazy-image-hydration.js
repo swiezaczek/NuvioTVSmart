@@ -50,16 +50,6 @@ export function createHomeScreenMethods24() {
         return;
       }
       const anchorRow = anchorNode instanceof HTMLElement ? anchorNode.closest(HOME_LAZY_IMAGE_ROW_SELECTOR) : null;
-      const anchorTrack = anchorRow?.querySelector?.(".home-track") || null;
-      const anchorTrackScrollLeft = Number(anchorTrack?.scrollLeft || 0);
-      const prevTrackScrollLeft = Number(this.lastHomeLazyImageHydrationTrackScrollLeft ?? anchorTrackScrollLeft);
-      const rowScrolledHorizontally =
-        anchorRow instanceof HTMLElement &&
-        anchorRow === this.lastHomeLazyImageHydrationAnchorRow &&
-        Math.abs(anchorTrackScrollLeft - prevTrackScrollLeft) >= 80;
-      const anchorImagePending = Boolean(
-        anchorNode?.querySelector?.(".content-poster[data-src], .home-poster-landscape-logo[data-src], .home-continue-bg[data-src]")
-      );
       const legacyFocusedRowPass = Boolean(this.isLegacyTvRuntime() && focusedRowOnly && anchorRow instanceof HTMLElement);
       if (legacyFocusedRowPass) {
         if (this.homeLazyImageNeighborTimer) {
@@ -81,11 +71,15 @@ export function createHomeScreenMethods24() {
         !this.homeLazyImageHydrationRaf &&
         !includeNeighborRows &&
         !viewportChanged &&
-        !rowScrolledHorizontally &&
-        !(this.shouldUseBoundedHomeImageHydration() && (anchorImagePending || Boolean(anchorRow.querySelector?.("[data-src]"))))
+        !(
+          this.shouldUseBoundedHomeImageHydration() &&
+          anchorNode?.querySelector?.(".content-poster[data-src], .home-poster-landscape-logo[data-src], .home-continue-bg[data-src]")
+        )
       ) {
         // Avoid scheduling another animation-frame callback until the DOM,
-        // viewport, or focused row scroll changes.
+        // viewport, or focused image changes. Smart-TV bounded hydration may
+        // leave a later horizontal target pending, so that target is allowed to
+        // request a second pass.
         return;
       }
       if (anchorNode instanceof HTMLElement) {
@@ -214,7 +208,6 @@ export function createHomeScreenMethods24() {
         return;
       }
       this.lastHomeLazyImageHydrationAnchorRow = anchorRow;
-      this.lastHomeLazyImageHydrationTrackScrollLeft = Number(anchorRow?.querySelector?.(".home-track")?.scrollLeft || 0);
       const imageRows =
         refreshIndex || !Array.isArray(this.homeLazyImageHydrationIndex)
           ? this.buildHomeLazyImageHydrationIndex()
@@ -271,15 +264,11 @@ export function createHomeScreenMethods24() {
       const constrained = this.isPerformanceConstrained();
       // Android prefetches the visible window plus a small row/card neighborhood.
       // Keep the browser's DOM-mounted rows from turning every vertical focus
-      // move into a burst of eager image requests, while modern non-constrained
-      // TVs hydrate 2-3 incoming horizontal cards ahead so scrolled rows never
-      // expose blank placeholders under focus.
-      const verticalMargin = useBoundedTvHydration ? (constrained ? 480 : 680) : constrained ? 720 : 1200;
-      const horizontalMargin = useBoundedTvHydration ? (constrained ? 320 : 560) : constrained ? 520 : 1000;
+      // move into a burst of eager image requests.
+      const verticalMargin = useBoundedTvHydration ? 480 : constrained ? 720 : 1200;
+      const horizontalMargin = useBoundedTvHydration ? 320 : constrained ? 520 : 1000;
       const focusedRow = Boolean(anchorRow && anchorRow === anchorNode?.closest?.(HOME_LAZY_IMAGE_ROW_SELECTOR));
-      const focusedRowMargin = focusedRow
-        ? Math.max(constrained ? 96 : 560, Math.round(Number(anchorNode?.offsetWidth || 0) * (constrained ? 0.65 : 2.5)))
-        : horizontalMargin;
+      const focusedRowMargin = focusedRow ? Math.max(96, Math.round(Number(anchorNode?.offsetWidth || 0) * 0.65)) : horizontalMargin;
       const pendingLoads = [];
       candidateRows.forEach(({ row, isFocusedRow, images }) => {
         // Android's LazyRow loads the visible cards plus a small prefetch
@@ -296,26 +285,36 @@ export function createHomeScreenMethods24() {
           }
         }
         const canRescale = !this.isLegacyTvRuntime() && shouldRescaleHomeArtwork();
-        images.forEach((image) => {
+        const isHorizontalTrackRow = Boolean(
+          row instanceof HTMLElement && row.querySelector?.(".home-track") && !row.querySelector?.(".home-grid-track")
+        );
+        let passedLeftEdge = false;
+        for (let index = 0; index < images.length; index += 1) {
+          const image = images[index];
           if (!(image instanceof HTMLImageElement) || !image.isConnected) {
-            return;
+            continue;
           }
           const src = String(image.dataset.src || "").trim();
           if (!src) {
             image.removeAttribute("data-src");
-            return;
+            continue;
           }
           let rect = null;
           if (!shouldHydrateFocusedRowImmediately) {
             const imageHorizontalMargin = isFocusedRow ? focusedRowMargin : horizontalMargin;
             rect = image.getBoundingClientRect();
-            const isNearViewport =
-              rect.bottom >= visibleRect.top - verticalMargin &&
-              rect.top <= visibleRect.bottom + verticalMargin &&
-              rect.right >= visibleRect.left - imageHorizontalMargin &&
-              rect.left <= visibleRect.right + imageHorizontalMargin;
-            if (!isNearViewport) {
-              return;
+            const isVerticalNear = rect.bottom >= visibleRect.top - verticalMargin && rect.top <= visibleRect.bottom + verticalMargin;
+            if (!isVerticalNear) {
+              continue;
+            }
+            if (rect.right >= visibleRect.left - imageHorizontalMargin) {
+              passedLeftEdge = true;
+            }
+            if (rect.left > visibleRect.right + imageHorizontalMargin) {
+              if (isHorizontalTrackRow && passedLeftEdge) {
+                break;
+              }
+              continue;
             }
           }
           // Pre-read rescaler geometry before any DOM attribute mutations so the
@@ -342,7 +341,7 @@ export function createHomeScreenMethods24() {
             rect,
             fit
           });
-        });
+        }
       });
       // Complete geometry reads before changing image layout/loading state.
       if (this.isLegacyTvRuntime()) {
@@ -365,7 +364,6 @@ export function createHomeScreenMethods24() {
       // deferring to the browser's own lazy heuristic.
       image.loading = "eager";
       image.removeAttribute("data-src");
-      image.decoding = "async";
       // Only posters and Continue Watching card backdrops are worth rescaling.
       // Logos carry transparency a JPEG would flatten, and they are small
       // enough not to matter.

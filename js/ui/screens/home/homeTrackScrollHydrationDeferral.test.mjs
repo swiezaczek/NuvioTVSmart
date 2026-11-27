@@ -465,3 +465,126 @@ test("hydrateHomeLazyImages skips layout reads on no-op passes and skips evictio
   );
   assert.equal(evictionCalls, 1, "full scan still runs scheduleHomeLazyImageEviction");
 });
+
+test("scheduleHomeLazyImageHydration avoids eager anchor querySelector and hydrateHomeLazyImages breaks early on right-hand offscreen .home-track cards", () => {
+  const { context } = buildCombinedHarness({ useManualRaf: true });
+  const viewport = {
+    getBoundingClientRect: () => ({
+      top: 0,
+      bottom: 1080,
+      left: 0,
+      right: 1920,
+      width: 1920,
+      height: 1080
+    })
+  };
+
+  let anchorQueryCalls = 0;
+  const rowA = new context.HTMLElement();
+  rowA.isConnected = true;
+  rowA.getBoundingClientRect = () => ({ top: 400, bottom: 720, left: 0, right: 1920 });
+  rowA.querySelector = (sel) => (sel === ".home-track" ? {} : null);
+
+  const rowB = new context.HTMLElement();
+  rowB.isConnected = true;
+
+  const anchor = new context.HTMLElement();
+  anchor.isConnected = true;
+  anchor.offsetWidth = 220;
+  anchor.closest = (sel) => (sel === ROW_SELECTOR ? rowA : null);
+  anchor.querySelector = () => {
+    anchorQueryCalls += 1;
+    return null;
+  };
+
+  const makeLazyCard = (src, left, top = 400) => {
+    const img = new context.HTMLImageElement();
+    const attrs = new Map();
+    img.isConnected = true;
+    img.dataset = { src };
+    img.loading = "";
+    img.rectReads = 0;
+    img.classList = { contains: (name) => name === "content-poster" };
+    img.closest = (sel) => (sel === ROW_SELECTOR ? rowA : null);
+    img.getBoundingClientRect = () => {
+      img.rectReads += 1;
+      return { top, bottom: top + 320, left, right: left + 220, width: 220, height: 320 };
+    };
+    img.getAttribute = (n) => (attrs.has(n) ? attrs.get(n) : null);
+    img.removeAttribute = (n) => {
+      attrs.delete(n);
+      if (n === "data-src") delete img.dataset.src;
+    };
+    Object.defineProperty(img, "src", {
+      get: () => attrs.get("src") || "",
+      set: (v) => attrs.set("src", v)
+    });
+    return img;
+  };
+
+  // Horizontal .home-track: 1 on-screen card + 1 offscreen-right cutoff card + 3 further-right cards.
+  const visible = makeLazyCard("https://art/0.jpg", 120);
+  const cutoff = makeLazyCard("https://art/1.jpg", 2500);
+  const tail1 = makeLazyCard("https://art/2.jpg", 2800);
+  const tail2 = makeLazyCard("https://art/3.jpg", 3100);
+  const tail3 = makeLazyCard("https://art/4.jpg", 3400);
+
+  const screen = Object.assign(Object.create(context.hydrationApi), {
+    container: {
+      querySelector: (sel) => (sel === ".home-modern-rows-viewport" ? viewport : null),
+      querySelectorAll: () => [visible, cutoff, tail1, tail2, tail3]
+    },
+    homeLazyImageHydrationIndex: [{ row: rowA, images: [visible, cutoff, tail1, tail2, tail3] }],
+    lastHomeLazyImageHydrationAnchorRow: rowB,
+    layoutMode: "modern",
+    isPerformanceConstrained: () => false,
+    isLegacyTvRuntime: () => false,
+    isSidebarFocusActive: () => false,
+    shouldUseImmediateFocusScroll: () => false,
+    isModernHydrationScrollActive: () => false,
+    isScrollAnimationActive: () => false
+  });
+
+  // Moving onto rowA (different from last anchor rowB): must not touch anchor.querySelector.
+  screen.scheduleHomeLazyImageHydration(anchor, { deferUntilVerticalSettle: true });
+  assert.equal(
+    anchorQueryCalls,
+    0,
+    "cross-row / deferred scheduling must not call anchorNode.querySelector"
+  );
+  if (screen.homeLazyImageHydrationSettleTimer) {
+    clearTimeout(screen.homeLazyImageHydrationSettleTimer);
+    screen.homeLazyImageHydrationSettleTimer = null;
+  }
+
+  screen.hydrateHomeLazyImages(anchor, { forceFullScan: true });
+  assert.equal(visible.src, "https://art/0.jpg");
+  assert.equal(visible.rectReads, 1);
+  assert.equal(cutoff.rectReads, 1, "first offscreen-right card is measured to detect cutoff");
+  assert.equal(
+    tail1.rectReads,
+    0,
+    "subsequent .home-track cards beyond right cutoff must not be measured"
+  );
+  assert.equal(tail2.rectReads, 0);
+  assert.equal(tail3.rectReads, 0);
+
+  // Wrapped .home-grid-track row must continue measuring wrapped lines below an offscreen-right card.
+  const gridRow = new context.HTMLElement();
+  gridRow.isConnected = true;
+  gridRow.getBoundingClientRect = () => ({ top: 100, bottom: 900, left: 0, right: 1920 });
+  gridRow.querySelector = (sel) => (sel === ".home-grid-track" ? {} : null);
+
+  const g0 = makeLazyCard("https://art/g0.jpg", 120, 120);
+  const g1OffscreenRight = makeLazyCard("https://art/g1.jpg", 2500, 120);
+  const g2WrappedNextLine = makeLazyCard("https://art/g2.jpg", 120, 500);
+  screen.homeLazyImageHydrationIndex = [
+    { row: gridRow, images: [g0, g1OffscreenRight, g2WrappedNextLine] }
+  ];
+  screen.lastHomeLazyImageHydrationAnchorRow = null;
+  screen.hydrateHomeLazyImages(null, { forceFullScan: true });
+  assert.equal(g0.src, "https://art/g0.jpg");
+  assert.equal(g1OffscreenRight.src, "");
+  assert.equal(g2WrappedNextLine.rectReads, 1, ".home-grid-track must keep measuring wrapped rows");
+  assert.equal(g2WrappedNextLine.src, "https://art/g2.jpg");
+});
