@@ -199,18 +199,11 @@ export function createFolderDetailScreenMethods02() {
           rowTrack.scrollLeft = right - rowTrack.clientWidth + 40;
         }
       }
-      if (
-        shell &&
-        (target.closest(".folder-detail-tab") ||
-          target.closest(".seeall-grid") ||
-          target.closest(".folder-detail-rows"))
-      ) {
-        const isTopRow =
-          Boolean(target.closest(".folder-detail-tab")) ||
-          (Number(target.dataset?.navRow ?? -1) === 0 &&
-            (Boolean(target.closest(".folder-detail-rows")) ||
-              !this.container?.querySelector(".folder-detail-tab.focusable")));
-        if (isTopRow) {
+      const focusOnTab = target.closest(".folder-detail-tab");
+      if (shell && (focusOnTab || target.closest(".seeall-grid") || target.closest(".folder-detail-rows"))) {
+        // Android TV keeps the folder header and tab bar fully visible: the first
+        // row and the tabs snap to the top instead of using the 100px scroll margin.
+        if (focusOnTab || Number(target.dataset.navRow) === 0) {
           shell.scrollTop = 0;
           this.savedScrollTop = 0;
         } else {
