@@ -398,7 +398,7 @@ test("worker completions defer URL.createObjectURL and pump while .is-camera-scr
     terminate() {}
   }
 
-  let cameraScrolling = true;
+  let cameraScrolling = false;
   const querySelectors = [];
 
   try {
@@ -443,7 +443,7 @@ test("worker completions defer URL.createObjectURL and pump while .is-camera-scr
     const rescaler = await import(`./tvPosterRescaler.js?cameraScroll=${Date.now()}`);
     rescaler.resetHomeArtworkRescaler();
 
-    // Queue 8 jobs (3 workers x 2 slots = 6 active, 2 queued behind them).
+    // Queue 8 jobs while idle (3 workers x 2 slots = 6 active, 2 queued behind them).
     const promises = Array.from({ length: 8 }, (_, index) =>
       rescaler.rescaleHomeArtwork(`https://art/cam-${index}.jpg`, {
         width: 220,
@@ -454,7 +454,8 @@ test("worker completions defer URL.createObjectURL and pump while .is-camera-scr
     const activeMsgs = createdWorkers.flatMap((w) => w.posted.map((msg) => ({ w, msg })));
     assert.equal(activeMsgs.length, 6, "6 initial slots dispatched across 3 workers");
 
-    // Settle 2 worker replies while .is-camera-scrolling is active.
+    // Enter .is-camera-scrolling and settle 2 worker replies.
+    cameraScrolling = true;
     const settledEntries = activeMsgs.slice(0, 2);
     const settledPromiseIndices = settledEntries.map(({ msg }) =>
       Number(msg.url.match(/cam-(\d+)\.jpg/)[1])
@@ -504,7 +505,7 @@ test("worker completions defer URL.createObjectURL and pump while .is-camera-scr
     });
     assert.equal(posterBlobUrls.length, 2, "must still defer initially while stuck scrolling");
 
-    await new Promise((r) => setTimeout(r, 520));
+    await new Promise((r) => setTimeout(r, 560));
     assert.equal(
       posterBlobUrls.length,
       8,
@@ -533,7 +534,7 @@ test("worker completions defer URL.createObjectURL and pump while .is-camera-scr
   }
 });
 
-test("worker completions defer past 380ms keydown pace window and chunk flushes at 4 per frame", async () => {
+test("worker completions and pump defer past 380ms keydown pace window and chunk flushes at 2 per frame", async () => {
   const posterBlobUrls = [];
   const origWorker = globalThis.Worker;
   const origOffscreenCanvas = globalThis.OffscreenCanvas;
@@ -649,15 +650,49 @@ test("worker completions defer past 380ms keydown pace window and chunk flushes 
     await new Promise((r) => setTimeout(r, 250));
     assert.equal(posterBlobUrls.length, 0, "must defer completions inside 380ms keydown window");
 
-    // After 380ms clears, first tick flushes max 4 completions and schedules rAF for the remaining 2.
+    // After 380ms clears, first tick flushes max 2 completions and schedules rAF for each 2-item slice.
     await new Promise((r) => setTimeout(r, 190));
-    assert.equal(posterBlobUrls.length, 4, "first flush tick must cap at 4 completions");
-    assert.equal(chunkRafCallbacks.length, 1, "remaining 2 completions must wait for next rAF");
+    assert.equal(posterBlobUrls.length, 2, "first flush tick must cap at 2 completions");
+    assert.equal(chunkRafCallbacks.length, 1, "remaining completions must wait for next rAF");
 
     chunkRafCallbacks.shift()();
-    assert.equal(posterBlobUrls.length, 6, "second chunk flushes remaining 2 completions");
+    assert.equal(posterBlobUrls.length, 4, "second chunk flushes next 2 completions");
+    assert.equal(chunkRafCallbacks.length, 1, "final 2 completions must wait for next rAF");
+
+    chunkRafCallbacks.shift()();
+    assert.equal(posterBlobUrls.length, 6, "third chunk flushes remaining 2 completions");
+    assert.equal(chunkRafCallbacks.length, 0);
     const settled = await Promise.all(promises2);
     assert.equal(settled.filter(Boolean).length, 6);
+
+    // Also verify pump() itself defers new worker dispatch while inside the 380ms keydown window.
+    const countBeforeDefer = createdWorkers.reduce((sum, w) => sum + w.posted.length, 0);
+    keydownHandler();
+    const deferredPumpPromise = rescaler.rescaleHomeArtwork("https://art/pump-deferred.jpg", {
+      width: 220,
+      height: 338,
+      fit: "cover"
+    });
+    assert.equal(
+      createdWorkers.reduce((sum, w) => sum + w.posted.length, 0),
+      countBeforeDefer,
+      "pump() must defer worker dispatch during 380ms keydown window"
+    );
+    await new Promise((r) => setTimeout(r, 420));
+    assert.equal(
+      createdWorkers.reduce((sum, w) => sum + w.posted.length, 0),
+      countBeforeDefer + 1,
+      "pump() must dispatch queued job once 380ms keydown window clears"
+    );
+    const deferredMsg = createdWorkers
+      .slice(-3)
+      .flatMap((w) => w.posted.map((msg) => ({ w, msg })))
+      .find(({ msg }) => msg.url === "https://art/pump-deferred.jpg");
+    assert.ok(deferredMsg);
+    deferredMsg.w.onmessage({
+      data: { id: deferredMsg.msg.id, ok: true, blob: { isPosterBlob: true } }
+    });
+    assert.equal(await deferredPumpPromise, "blob:poster/7");
 
     rescaler.resetHomeArtworkRescaler();
   } finally {

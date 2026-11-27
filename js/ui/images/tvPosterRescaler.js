@@ -501,7 +501,7 @@ const CAMERA_SCROLL_POLL_MS = 60;
 const CAMERA_SCROLL_MAX_WAIT_MS = 450;
 const DPAD_PACE_QUIET_MS = 380;
 const DPAD_PACE_MAX_WAIT_MS = 650;
-const MAX_COMPLETIONS_PER_FRAME = 4;
+const MAX_COMPLETIONS_PER_FRAME = 2;
 
 let lastDpadKeydownAt = 0;
 let keydownListenerBound = false;
@@ -566,7 +566,10 @@ function scheduleNextCompletionChunk(state) {
       scheduleCompletionFlush(state);
       return;
     }
-    flushPendingCompletions(state);
+    flushPendingCompletions(state, {
+      bypassDeferral:
+        Boolean(state.flushWaitStartedAt) && Date.now() - state.flushWaitStartedAt >= maxWaitMs
+    });
   };
   if (typeof globalThis.requestAnimationFrame === "function") {
     state.chunkRaf = globalThis.requestAnimationFrame(() => {
@@ -581,7 +584,7 @@ function scheduleNextCompletionChunk(state) {
   }
 }
 
-function flushPendingCompletions(state) {
+function flushPendingCompletions(state, { bypassDeferral = false } = {}) {
   if (!state || state.disposed) {
     return;
   }
@@ -589,6 +592,7 @@ function flushPendingCompletions(state) {
   if (!batch.length) {
     state.flushWaitStartedAt = 0;
     state.flushWaitingOnKeydown = false;
+    pump(state, { bypassDeferral });
     return;
   }
   for (let index = 0; index < batch.length; index += 1) {
@@ -600,7 +604,7 @@ function flushPendingCompletions(state) {
       state.idle.push(entry.worker);
     }
   }
-  pump(state);
+  pump(state, { bypassDeferral });
   if (state.pendingCompletions.length) {
     scheduleNextCompletionChunk(state);
   } else {
@@ -648,7 +652,9 @@ function scheduleCompletionFlush(state) {
       scheduleCompletionFlush(state);
       return;
     }
-    flushPendingCompletions(state);
+    flushPendingCompletions(state, {
+      bypassDeferral: Date.now() - state.flushWaitStartedAt >= activeMaxWait
+    });
   }, delay);
 }
 
@@ -757,7 +763,21 @@ function retireWorker(state, worker, reason) {
   pump(state);
 }
 
-function pump(state) {
+function pump(state, { bypassDeferral = false } = {}) {
+  if (!bypassDeferral && shouldDeferCompletionFlush()) {
+    if (state.queue.length) {
+      scheduleCompletionFlush(state);
+    }
+    if (
+      state.suspendRequested &&
+      !state.queue.length &&
+      !state.jobs.size &&
+      !state.pendingCompletions.length
+    ) {
+      suspendWorkers(state);
+    }
+    return;
+  }
   if (state.suspended && state.queue.length) {
     resumeWorkers(state);
   }
