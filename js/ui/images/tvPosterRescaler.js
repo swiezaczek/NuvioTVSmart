@@ -499,6 +499,30 @@ const JOB_TIMEOUT_MS = 15000;
 const WORKER_JOB_SLOTS = 2;
 const CAMERA_SCROLL_POLL_MS = 60;
 const CAMERA_SCROLL_MAX_WAIT_MS = 450;
+const DPAD_PACE_QUIET_MS = 380;
+const DPAD_PACE_MAX_WAIT_MS = 650;
+const MAX_COMPLETIONS_PER_FRAME = 4;
+
+let lastDpadKeydownAt = 0;
+let keydownListenerBound = false;
+
+function ensureDpadKeydownListener() {
+  if (keydownListenerBound) {
+    return;
+  }
+  try {
+    if (typeof globalThis.addEventListener === "function") {
+      globalThis.addEventListener(
+        "keydown",
+        () => {
+          lastDpadKeydownAt = Date.now();
+        },
+        { passive: true, capture: true }
+      );
+      keydownListenerBound = true;
+    }
+  } catch (_) {}
+}
 
 function isCameraScrollingActive() {
   try {
@@ -508,17 +532,67 @@ function isCameraScrollingActive() {
   }
 }
 
+function isDpadPaceActive() {
+  return lastDpadKeydownAt > 0 && Date.now() - lastDpadKeydownAt < DPAD_PACE_QUIET_MS;
+}
+
+function shouldDeferCompletionFlush() {
+  return isCameraScrollingActive() || isDpadPaceActive();
+}
+
+function scheduleNextCompletionChunk(state) {
+  if (
+    !state ||
+    state.disposed ||
+    state.chunkTimer ||
+    state.chunkRaf ||
+    state.flushTimer ||
+    !state.pendingCompletions.length
+  ) {
+    return;
+  }
+  const onTick = () => {
+    if (!state || state.disposed || !state.pendingCompletions.length) {
+      return;
+    }
+    const maxWaitMs =
+      state.flushWaitingOnKeydown || isDpadPaceActive()
+        ? DPAD_PACE_MAX_WAIT_MS
+        : CAMERA_SCROLL_MAX_WAIT_MS;
+    if (
+      shouldDeferCompletionFlush() &&
+      (!state.flushWaitStartedAt || Date.now() - state.flushWaitStartedAt < maxWaitMs)
+    ) {
+      scheduleCompletionFlush(state);
+      return;
+    }
+    flushPendingCompletions(state);
+  };
+  if (typeof globalThis.requestAnimationFrame === "function") {
+    state.chunkRaf = globalThis.requestAnimationFrame(() => {
+      state.chunkRaf = 0;
+      onTick();
+    });
+  } else {
+    state.chunkTimer = setTimeout(() => {
+      state.chunkTimer = null;
+      onTick();
+    }, 16);
+  }
+}
+
 function flushPendingCompletions(state) {
   if (!state || state.disposed) {
     return;
   }
-  state.flushWaitStartedAt = 0;
-  const pending = state.pendingCompletions.splice(0);
-  if (!pending.length) {
+  const batch = state.pendingCompletions.splice(0, MAX_COMPLETIONS_PER_FRAME);
+  if (!batch.length) {
+    state.flushWaitStartedAt = 0;
+    state.flushWaitingOnKeydown = false;
     return;
   }
-  for (let index = 0; index < pending.length; index += 1) {
-    const entry = pending[index];
+  for (let index = 0; index < batch.length; index += 1) {
+    const entry = batch[index];
     if (entry.job) {
       entry.job.settle(entry.ok ? entry.blob : null, entry.reason);
     }
@@ -527,6 +601,12 @@ function flushPendingCompletions(state) {
     }
   }
   pump(state);
+  if (state.pendingCompletions.length) {
+    scheduleNextCompletionChunk(state);
+  } else {
+    state.flushWaitStartedAt = 0;
+    state.flushWaitingOnKeydown = false;
+  }
 }
 
 function scheduleCompletionFlush(state) {
@@ -537,20 +617,34 @@ function scheduleCompletionFlush(state) {
   if (!state.flushWaitStartedAt) {
     state.flushWaitStartedAt = now;
   }
+  const scrollActive = isCameraScrollingActive();
+  const dpadActive = isDpadPaceActive();
+  if (dpadActive) {
+    state.flushWaitingOnKeydown = true;
+  }
   if (state.flushTimer) {
     return;
   }
+  const maxWaitMs = state.flushWaitingOnKeydown ? DPAD_PACE_MAX_WAIT_MS : CAMERA_SCROLL_MAX_WAIT_MS;
   const elapsed = now - state.flushWaitStartedAt;
-  const delay = Math.max(1, Math.min(CAMERA_SCROLL_POLL_MS, CAMERA_SCROLL_MAX_WAIT_MS - elapsed));
+  const remainingCap = Math.max(1, maxWaitMs - elapsed);
+  let delay = 1;
+  if (scrollActive) {
+    delay = Math.min(CAMERA_SCROLL_POLL_MS, remainingCap);
+  } else if (dpadActive) {
+    const remainingKeyMs = Math.max(1, DPAD_PACE_QUIET_MS - (now - lastDpadKeydownAt));
+    delay = Math.min(remainingKeyMs, remainingCap);
+  }
   state.flushTimer = setTimeout(() => {
     state.flushTimer = null;
     if (!state || state.disposed) {
       return;
     }
-    if (
-      isCameraScrollingActive() &&
-      Date.now() - state.flushWaitStartedAt < CAMERA_SCROLL_MAX_WAIT_MS
-    ) {
+    const activeMaxWait =
+      state.flushWaitingOnKeydown || isDpadPaceActive()
+        ? DPAD_PACE_MAX_WAIT_MS
+        : CAMERA_SCROLL_MAX_WAIT_MS;
+    if (shouldDeferCompletionFlush() && Date.now() - state.flushWaitStartedAt < activeMaxWait) {
       scheduleCompletionFlush(state);
       return;
     }
@@ -559,6 +653,7 @@ function scheduleCompletionFlush(state) {
 }
 
 function createPool() {
+  ensureDpadKeydownListener();
   const workerUrl = URL.createObjectURL(new Blob([WORKER_SOURCE], { type: "text/javascript" }));
   const state = {
     workerUrl,
@@ -569,6 +664,9 @@ function createPool() {
     pendingCompletions: [],
     flushTimer: null,
     flushWaitStartedAt: 0,
+    flushWaitingOnKeydown: false,
+    chunkTimer: null,
+    chunkRaf: 0,
     nextId: 1,
     cache: new Map(),
     failed: new Map(),
@@ -606,7 +704,7 @@ function spawnWorker(state) {
       state.jobs.delete(id);
       clearTimeout(job.timer);
     }
-    if (isCameraScrollingActive()) {
+    if (shouldDeferCompletionFlush()) {
       state.pendingCompletions.push({ job, worker, ok, blob, reason });
       scheduleCompletionFlush(state);
       return;
@@ -1054,7 +1152,16 @@ function resetPool(state) {
     clearTimeout(state.flushTimer);
     state.flushTimer = null;
   }
+  if (state.chunkTimer) {
+    clearTimeout(state.chunkTimer);
+    state.chunkTimer = null;
+  }
+  if (state.chunkRaf && typeof globalThis.cancelAnimationFrame === "function") {
+    globalThis.cancelAnimationFrame(state.chunkRaf);
+    state.chunkRaf = 0;
+  }
   state.flushWaitStartedAt = 0;
+  state.flushWaitingOnKeydown = false;
   state.pendingCompletions.splice(0).forEach((entry) => entry.job?.settle(null, "reset"));
   state.jobs.forEach((job) => {
     clearTimeout(job.timer);

@@ -532,3 +532,155 @@ test("worker completions defer URL.createObjectURL and pump while .is-camera-scr
     else globalThis.webapis = origWebapis;
   }
 });
+
+test("worker completions defer past 380ms keydown pace window and chunk flushes at 4 per frame", async () => {
+  const posterBlobUrls = [];
+  const origWorker = globalThis.Worker;
+  const origOffscreenCanvas = globalThis.OffscreenCanvas;
+  const origCreateImageBitmap = globalThis.createImageBitmap;
+  const origCreateObjectURL = globalThis.URL.createObjectURL;
+  const origRevokeObjectURL = globalThis.URL.revokeObjectURL;
+  const origDocument = globalThis.document;
+  const origAddEventListener = globalThis.addEventListener;
+  const origRaf = globalThis.requestAnimationFrame;
+  const origCancelRaf = globalThis.cancelAnimationFrame;
+  const origUserAgent = Object.getOwnPropertyDescriptor(globalThis.navigator, "userAgent");
+  const origDeviceMemory = Object.getOwnPropertyDescriptor(globalThis.navigator, "deviceMemory");
+  const origTizen = globalThis.tizen;
+  const origWebapis = globalThis.webapis;
+  const origBlob = globalThis.Blob;
+
+  const createdWorkers = [];
+  class FakePoolWorker {
+    constructor() {
+      this.onmessage = null;
+      this.onerror = null;
+      this.posted = [];
+      createdWorkers.push(this);
+    }
+    postMessage(msg) {
+      this.posted.push(msg);
+    }
+    terminate() {}
+  }
+
+  let keydownHandler = null;
+  let addKeydownListenerCalls = 0;
+  const chunkRafCallbacks = [];
+
+  try {
+    Object.defineProperty(globalThis.navigator, "userAgent", {
+      value:
+        "Mozilla/5.0 (SMART-TV; Linux; Tizen 9.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      configurable: true
+    });
+    Object.defineProperty(globalThis.navigator, "deviceMemory", {
+      value: 2,
+      configurable: true
+    });
+    globalThis.tizen = {};
+    globalThis.webapis = {};
+    globalThis.Worker = FakePoolWorker;
+    globalThis.OffscreenCanvas = function OffscreenCanvas() {};
+    globalThis.createImageBitmap = async () => ({ close() {} });
+    globalThis.document = { querySelector: () => null };
+    globalThis.addEventListener = (type, fn) => {
+      if (type === "keydown") {
+        addKeydownListenerCalls += 1;
+        keydownHandler = fn;
+      }
+    };
+    globalThis.requestAnimationFrame = (cb) => {
+      chunkRafCallbacks.push(cb);
+      return chunkRafCallbacks.length;
+    };
+    globalThis.cancelAnimationFrame = () => {};
+    globalThis.Blob = class FakeBlob {
+      constructor(parts, opts) {
+        this.parts = parts;
+        this.type = opts?.type || "";
+        this.isWorkerSource =
+          Array.isArray(parts) &&
+          typeof parts[0] === "string" &&
+          parts[0].includes("self.onmessage");
+      }
+    };
+    globalThis.URL.createObjectURL = (blob) => {
+      if (blob?.isWorkerSource) return "blob:worker/1";
+      const id = `blob:poster/${posterBlobUrls.length + 1}`;
+      posterBlobUrls.push(id);
+      return id;
+    };
+    globalThis.URL.revokeObjectURL = () => {};
+
+    const rescaler = await import(`./tvPosterRescaler.js?keydownChunk=${Date.now()}`);
+    rescaler.resetHomeArtworkRescaler();
+
+    const promises = Array.from({ length: 6 }, (_, index) =>
+      rescaler.rescaleHomeArtwork(`https://art/chunk-${index}.jpg`, {
+        width: 220,
+        height: 338,
+        fit: "cover"
+      })
+    );
+    assert.equal(addKeydownListenerCalls, 1, "must bind passive keydown listener once");
+    assert.equal(typeof keydownHandler, "function");
+
+    // Recreate pool to verify idempotency of keydown listener registration.
+    rescaler.resetHomeArtworkRescaler();
+    const promises2 = Array.from({ length: 6 }, (_, index) =>
+      rescaler.rescaleHomeArtwork(`https://art/chunk2-${index}.jpg`, {
+        width: 220,
+        height: 338,
+        fit: "cover"
+      })
+    );
+    assert.equal(addKeydownListenerCalls, 1, "keydown listener registration must be idempotent");
+    await Promise.all(promises);
+
+    // Trigger keydown while .is-camera-scrolling is already false; completions must still defer 380ms.
+    keydownHandler();
+    const msgs = createdWorkers.slice(-3).flatMap((w) => w.posted.map((msg) => ({ w, msg })));
+    assert.equal(msgs.length, 6);
+    msgs.forEach(({ w, msg }) => {
+      w.onmessage({ data: { id: msg.id, ok: true, blob: { isPosterBlob: true } } });
+    });
+
+    await new Promise((r) => setTimeout(r, 250));
+    assert.equal(posterBlobUrls.length, 0, "must defer completions inside 380ms keydown window");
+
+    // After 380ms clears, first tick flushes max 4 completions and schedules rAF for the remaining 2.
+    await new Promise((r) => setTimeout(r, 190));
+    assert.equal(posterBlobUrls.length, 4, "first flush tick must cap at 4 completions");
+    assert.equal(chunkRafCallbacks.length, 1, "remaining 2 completions must wait for next rAF");
+
+    chunkRafCallbacks.shift()();
+    assert.equal(posterBlobUrls.length, 6, "second chunk flushes remaining 2 completions");
+    const settled = await Promise.all(promises2);
+    assert.equal(settled.filter(Boolean).length, 6);
+
+    rescaler.resetHomeArtworkRescaler();
+  } finally {
+    globalThis.Worker = origWorker;
+    globalThis.OffscreenCanvas = origOffscreenCanvas;
+    globalThis.createImageBitmap = origCreateImageBitmap;
+    globalThis.URL.createObjectURL = origCreateObjectURL;
+    globalThis.URL.revokeObjectURL = origRevokeObjectURL;
+    if (origDocument === undefined) delete globalThis.document;
+    else globalThis.document = origDocument;
+    if (origAddEventListener === undefined) delete globalThis.addEventListener;
+    else globalThis.addEventListener = origAddEventListener;
+    if (origRaf === undefined) delete globalThis.requestAnimationFrame;
+    else globalThis.requestAnimationFrame = origRaf;
+    if (origCancelRaf === undefined) delete globalThis.cancelAnimationFrame;
+    else globalThis.cancelAnimationFrame = origCancelRaf;
+    globalThis.Blob = origBlob;
+    if (origUserAgent) Object.defineProperty(globalThis.navigator, "userAgent", origUserAgent);
+    if (origDeviceMemory)
+      Object.defineProperty(globalThis.navigator, "deviceMemory", origDeviceMemory);
+    if (origTizen === undefined) delete globalThis.tizen;
+    else globalThis.tizen = origTizen;
+    if (origWebapis === undefined) delete globalThis.webapis;
+    else globalThis.webapis = origWebapis;
+  }
+});
