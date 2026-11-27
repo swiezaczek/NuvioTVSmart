@@ -30,6 +30,8 @@ import {
   TraktAuthService
 } from "../../../data/repository/traktAuthService.js";
 import { moviePostPlayTriggerSeconds } from "../../../core/player/skipIntervalRules.js";
+import { trailerCaptionOptions } from "../../../core/detail/trailerCaptions.js";
+import { resolveVetroDirectTrailer } from "../../../core/detail/vetroTrailerResolver.js";
 
 // These values are the Android TV PostPlayRecommendation constants expressed
 // in the same units used by the browser player.
@@ -756,6 +758,8 @@ function projectRecommendation({
     // button appears only after that same asynchronous phase completes.
     trailerYtId: "",
     trailerVideoUrl: "",
+    trailerStreamType: "",
+    trailerSubtitles: [],
     trailerKind: "",
     mdbListRatings: null,
     showStandardRatings: showStandardDetailRatings(
@@ -1640,7 +1644,7 @@ export class PostPlayRecommendationController {
   async loadRecommendationTrailer(recommendation = {}) {
     const tmdbId = resolveTmdbIdFromValue(recommendation.tmdbId);
     if (!POST_PLAY_IN_APP_TRAILER_PLAYBACK_ENABLED || !tmdbId) {
-      return { ytId: "", url: "" };
+      return { ytId: "", url: "", streamType: "", subtitles: [] };
     }
     const settings = TmdbSettingsStore.get();
     const candidates = await TmdbMetadataService.fetchTrailerCandidates({
@@ -1649,7 +1653,22 @@ export class PostPlayRecommendationController {
       language: settings.language
     });
     const trailer = resolveTrailerAsset(candidates);
-    return { ytId: trailer.ytId, url: trailer.url };
+    if (trailer.ytId) {
+      const { captionsLanguage } = trailerCaptionOptions(PlayerSettingsStore.get() || {});
+      const directSource = await resolveVetroDirectTrailer({
+        ytId: trailer.ytId,
+        captionsLanguage
+      });
+      if (directSource?.kind === "video" && directSource.url) {
+        return {
+          ytId: trailer.ytId,
+          url: directSource.url,
+          streamType: directSource.streamType || "mp4",
+          subtitles: Array.isArray(directSource.subtitles) ? directSource.subtitles : []
+        };
+      }
+    }
+    return { ytId: trailer.ytId, url: trailer.url, streamType: "", subtitles: [] };
   }
 
   async loadRecommendationDetails(index, recommendation, token = this.pipelineToken) {
@@ -1703,8 +1722,8 @@ export class PostPlayRecommendationController {
       const trailerPromise = withTimeout(
         Promise.resolve().then(() => this.loadRecommendationTrailer(recommendation)),
         POST_PLAY_RECOMMENDATION_TRAILER_TIMEOUT_MS,
-        { ytId: "", url: "" }
-      ).catch(() => ({ ytId: "", url: "" }));
+        { ytId: "", url: "", streamType: "", subtitles: [] }
+      ).catch(() => ({ ytId: "", url: "", streamType: "", subtitles: [] }));
       const ratingsJob = ratingsPromise
         .then((ratings) => {
           const next = updateRecommendation((current) => ({
@@ -1727,7 +1746,9 @@ export class PostPlayRecommendationController {
             ...current,
             trailerYtId: firstNonBlank(trailer?.ytId),
             trailerVideoUrl: firstNonBlank(trailer?.url),
-            trailerKind: trailer?.ytId ? "youtube" : trailer?.url ? "direct" : "",
+            trailerStreamType: firstNonBlank(trailer?.streamType),
+            trailerSubtitles: Array.isArray(trailer?.subtitles) ? trailer.subtitles : [],
+            trailerKind: trailer?.url ? "direct" : trailer?.ytId ? "youtube" : "",
             detailsLoaded: true
           }));
           if (next && this.state.recommendationIndex === index) {
@@ -1770,6 +1791,8 @@ export class PostPlayRecommendationController {
           ),
           trailerYtId: "",
           trailerVideoUrl: "",
+          trailerStreamType: "",
+          trailerSubtitles: [],
           trailerKind: "",
           detailsLoaded: true
         };

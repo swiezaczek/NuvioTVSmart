@@ -314,3 +314,5 @@ export {
   readSettingsUiState,
   isAppearanceThemeFocusKey
 } from "./settingsScreenHelpers-10-create-default-expanded-state.js";
+
+export { resetVetroTrailerResolverCircuitBreaker } from "../../../core/detail/vetroTrailerResolver.js";

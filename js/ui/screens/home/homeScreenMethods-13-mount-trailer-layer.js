@@ -7,7 +7,11 @@ export function createHomeScreenMethods13() {
     resolveTrailerSource,
     withTimeout,
     resolveTrailerMetaWithTmdbFallback,
-    LayoutPreferences
+    LayoutPreferences,
+    homeTrailerCaptionOptions,
+    applyTrailerAudioPreferences,
+    resolveVetroDirectTrailer,
+    attachTrailerVideoStream
   } = internals;
 
   return {
@@ -140,7 +144,7 @@ export function createHomeScreenMethods13() {
           }
           if (data.type === "firstFrame") {
             frame.dataset.ambientTrailerPlaying = String(frame.dataset.ambientTrailerLooped !== "true");
-            reveal(150);
+            reveal(0);
             return;
           }
           const state = data.type === "state" && data.state && typeof data.state === "object" ? data.state : null;
@@ -162,7 +166,7 @@ export function createHomeScreenMethods13() {
             );
           }
           if (state && Number(state.currentTime || 0) > 0 && state.paused === false) {
-            reveal(150);
+            reveal(0);
           } else if (state && state.controllable === false && state.loading === false) {
             reveal(1200);
           }
@@ -207,43 +211,114 @@ export function createHomeScreenMethods13() {
         video.autoplay = true;
         video.loop = true;
         video.playsInline = true;
-        video.defaultMuted = shouldMute;
-        video.muted = shouldMute;
+        video.defaultMuted = true;
+        video.muted = true;
         video.preload = "auto";
         video.setAttribute("autoplay", "");
         video.setAttribute("loop", "");
         video.setAttribute("playsinline", "");
         video.setAttribute("webkit-playsinline", "");
-        if (shouldMute) {
-          video.setAttribute("muted", "");
-        } else {
-          video.removeAttribute("muted");
-        }
+        video.setAttribute("muted", "");
         try {
-          video.volume = shouldMute ? 0 : 1;
+          video.volume = 0;
         } catch (_) {}
         try {
           video.disableRemotePlayback = true;
         } catch (_) {}
 
         let didActivate = false;
+        let fatalFallbackTriggered = false;
+        const triggerFallbackYoutube = () => {
+          if (fatalFallbackTriggered || didActivate || !source.fallbackYoutube || !container.isConnected) {
+            return;
+          }
+          if (video.parentElement && video.parentElement !== container) {
+            return;
+          }
+          fatalFallbackTriggered = true;
+          const fallbackSource =
+            typeof applyTrailerAudioPreferences === "function"
+              ? applyTrailerAudioPreferences(source.fallbackYoutube, this.layoutPrefs)
+              : source.fallbackYoutube;
+          if (fallbackSource) {
+            this.mountTrailerLayer(container, fallbackSource, onReady);
+          }
+        };
         const activate = () => {
-          if (didActivate) {
+          if (didActivate || video.isConnected === false || (video.parentElement && video.parentElement !== container)) {
             return;
           }
           didActivate = true;
           container.classList.add("is-active");
+          if (!shouldMute) {
+            let policyReverted = false;
+            const revertToMuted = () => {
+              if (policyReverted) {
+                return;
+              }
+              policyReverted = true;
+              video.muted = true;
+              video.setAttribute?.("muted", "");
+              try {
+                video.volume = 0;
+              } catch (_) {}
+              const retryPlay = video.play?.();
+              if (retryPlay?.catch) {
+                retryPlay.catch(() => {});
+              }
+            };
+            const onPolicyPause = () => {
+              if (video.isConnected === false || !container.classList?.contains?.("is-active")) {
+                return;
+              }
+              revertToMuted();
+            };
+            video.addEventListener("pause", onPolicyPause, { once: true });
+            const policyTimer = setTimeout(() => {
+              video.removeEventListener?.("pause", onPolicyPause);
+            }, 120);
+            video.muted = false;
+            video.removeAttribute?.("muted");
+            try {
+              video.volume = 1;
+            } catch (_) {}
+            if (video.paused) {
+              clearTimeout(policyTimer);
+              video.removeEventListener?.("pause", onPolicyPause);
+              revertToMuted();
+            }
+          }
           onReady?.();
         };
-        ["playing", "canplay", "loadeddata", "loadedmetadata", "timeupdate"].forEach((eventName) => {
-          video.addEventListener(eventName, activate, { once: true });
-        });
+        const tryActivateOnPlaybackFrame = () => {
+          if (didActivate) {
+            return;
+          }
+          if (Number(video.readyState || 0) >= 2 && !video.paused) {
+            activate();
+          }
+        };
+        if (typeof video.requestVideoFrameCallback === "function") {
+          video.requestVideoFrameCallback(() => {
+            activate();
+          });
+        } else {
+          video.addEventListener("playing", tryActivateOnPlaybackFrame);
+        }
         let lastVideoTime = 0;
         video.addEventListener("timeupdate", () => {
+          if (typeof video.requestVideoFrameCallback !== "function" || Number(video.currentTime || 0) > 0) {
+            tryActivateOnPlaybackFrame();
+          }
           if (video.currentTime + 1 < lastVideoTime) {
             video.dataset.ambientTrailerLooped = "true";
           }
           lastVideoTime = video.currentTime;
+          this.trackHomeTrailerHandoff?.(container, source, {
+            currentTime: video.currentTime,
+            muted: shouldMute ? true : video.muted,
+            paused: video.paused
+          });
         });
         video.addEventListener(
           "error",
@@ -253,26 +328,37 @@ export function createHomeScreenMethods13() {
               code: video.error?.code || 0,
               message: video.error?.message || ""
             });
+            triggerFallbackYoutube();
           },
           { once: true }
         );
         container.appendChild(video);
         (this.mountedHomeTrailerLayers ||= new Set()).add(container);
-        video.setAttribute("src", String(source.url || ""));
-        try {
-          video.load?.();
-        } catch (_) {}
-        const playAttempt = video.play?.();
-        if (playAttempt?.then) {
-          playAttempt.then(activate).catch((error) => {
-            console.warn("Home inline MP4 hero video autoplay failed", error);
+        const captionOptions = typeof homeTrailerCaptionOptions === "function" ? homeTrailerCaptionOptions() : {};
+        if (typeof attachTrailerVideoStream === "function") {
+          void attachTrailerVideoStream(video, source, {
+            captionsEnabled: captionOptions.captionsEnabled === true,
+            onFatalError: triggerFallbackYoutube
           });
         } else {
-          setTimeout(() => {
-            if (video.isConnected && !didActivate && Number(video.readyState || 0) >= 2) {
-              activate();
-            }
-          }, 500);
+          video.setAttribute("src", String(source.url || ""));
+          try {
+            video.load?.();
+          } catch (_) {}
+        }
+        if (source.streamType !== "dash" && source.streamType !== "hls") {
+          const playAttempt = video.play?.();
+          if (playAttempt?.catch) {
+            playAttempt.catch((error) => {
+              console.warn("Home inline MP4 hero video autoplay failed", error);
+            });
+          } else {
+            setTimeout(() => {
+              if (video.isConnected && !didActivate && Number(video.readyState || 0) >= 2 && !video.paused) {
+                activate();
+              }
+            }, 500);
+          }
         }
       }
     },
@@ -371,13 +457,28 @@ export function createHomeScreenMethods13() {
           withTimeout(resolveTrailerMetaWithTmdbFallback(itemMeta, itemType), 2200, null),
           addonMetaPromise
         ]);
-        if (inlineSource) {
-          return inlineSource;
+        const youtubeSource =
+          inlineSource ||
+          inlineFallbackSource ||
+          (result?.status === "success" ? resolveTrailerSource({ ...(result?.data || {}), id: itemId, type: itemType }) : null);
+        if (
+          youtubeSource?.kind === "youtube" &&
+          youtubeSource.ytId &&
+          typeof resolveVetroDirectTrailer === "function"
+        ) {
+          const captionOptions = typeof homeTrailerCaptionOptions === "function" ? homeTrailerCaptionOptions() : {};
+          const directSource = await resolveVetroDirectTrailer({
+            ytId: youtubeSource.ytId,
+            captionsLanguage: captionOptions.captionsLanguage || ""
+          });
+          if (directSource?.kind === "video" && directSource.url) {
+            return {
+              ...directSource,
+              fallbackYoutube: youtubeSource
+            };
+          }
         }
-        if (inlineFallbackSource) {
-          return inlineFallbackSource;
-        }
-        return result?.status === "success" ? resolveTrailerSource({ ...(result?.data || {}), id: itemId, type: itemType }) : null;
+        return youtubeSource;
       } catch (error) {
         console.warn("Home trailer preview lookup failed", error);
         return null;
@@ -414,12 +515,15 @@ export function createHomeScreenMethods13() {
       const card = container?.closest?.(".home-poster-card") || null;
       const heroState = this.heroTrailerPlaybackState;
       const itemKey = card ? this.getFocusedPosterFlowKey(card) : String(heroState?.key || "");
-      if (!itemKey || !source?.ytId) {
+      const ytId = String(source?.ytId || "");
+      const url = String(source?.url || "");
+      if (!itemKey || (!ytId && !url)) {
         return;
       }
       this.homeTrailerHandoff = {
         itemKey,
-        ytId: String(source.ytId || ""),
+        ytId,
+        url,
         currentTime: Math.max(0, Number(state?.currentTime || 0)),
         muted: state?.muted === true,
         paused: state?.paused !== false,
@@ -440,6 +544,7 @@ export function createHomeScreenMethods13() {
       }
       return {
         ytId: handoff.ytId,
+        ...(handoff.url ? { url: handoff.url } : {}),
         currentTime: handoff.currentTime,
         muted: handoff.muted === true
       };

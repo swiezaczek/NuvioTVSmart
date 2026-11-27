@@ -4,7 +4,15 @@ import { shouldContinueTrailerInBackgroundOnBack } from "../../../core/detail/tr
 import { focusWithoutScroll } from "../../navigation/focusWithoutScroll.js";
 
 export function createMetaDetailsScreenMethods19() {
-  const { Router, t, escapeHtml, buildInlineYoutubePlayerUrl, LayoutPreferences, PlayerSettingsStore } = internals;
+  const {
+    Router,
+    t,
+    escapeHtml,
+    buildInlineYoutubePlayerUrl,
+    LayoutPreferences,
+    PlayerSettingsStore,
+    attachTrailerVideoStream
+  } = internals;
 
   return {
     toggleActiveTrailerPlayback() {
@@ -248,22 +256,49 @@ export function createMetaDetailsScreenMethods19() {
       }
       layer.innerHTML = `
           <div class="detail-trailer-media" data-trailer-media>
-            <video class="detail-trailer-video" autoplay playsinline preload="auto"${this.trailerMuted ? " muted" : ""}>
-              <source src="${this.trailerSource.url}" />
-            </video>
+            <video class="detail-trailer-video" crossorigin="anonymous" autoplay muted playsinline preload="auto"></video>
           </div>
           ${controlsMarkup}
         `;
       this.cacheTrailerRefs();
+      const mountedVideo = this.trailerUiRefs?.video || null;
+      if (mountedVideo) {
+        mountedVideo.defaultMuted = true;
+        mountedVideo.muted = true;
+        try {
+          mountedVideo.volume = 0;
+        } catch (_) {}
+      }
       if (this.trailerPlaybackMode === "manual") {
         focusWithoutScroll(this.trailerUiRefs?.overlay);
       }
-      this.applyTrailerVideoSubtitleState(this.trailerUiRefs?.video || null);
-      this.bindTrailerVideoEvents(this.trailerUiRefs?.video || null);
+      if (mountedVideo) {
+        const domGeneration = this.trailerDomGeneration;
+        if (typeof attachTrailerVideoStream === "function") {
+          void attachTrailerVideoStream(mountedVideo, this.trailerSource, {
+            captionsEnabled: Boolean(this.trailerSubtitlesEnabled),
+            onFatalError: () => {
+              if (!this.isTrailerPlaying || Number(this.trailerDomGeneration || 0) !== domGeneration) {
+                return;
+              }
+              if (!this.trailerVisualReady && this.trailerSource?.fallbackYoutube) {
+                this.trailerSource = this.trailerSource.fallbackYoutube;
+                this.syncTrailerDom();
+                return;
+              }
+              this.stopTrailerPlayback();
+            }
+          });
+        } else {
+          mountedVideo.setAttribute?.("src", String(this.trailerSource.url || ""));
+        }
+      }
+      this.applyTrailerVideoSubtitleState(mountedVideo);
+      this.bindTrailerVideoEvents(mountedVideo);
       if (Number(this.trailerPendingSeekSeconds || 0) > 0) {
         const pendingSeek = Number(this.trailerPendingSeekSeconds);
         this.trailerPendingSeekSeconds = 0;
-        const video = this.trailerUiRefs?.video || null;
+        const video = mountedVideo;
         if (video) {
           const applySeek = () => {
             try {
@@ -277,9 +312,11 @@ export function createMetaDetailsScreenMethods19() {
           }
         }
       }
-      const playAttempt = this.trailerUiRefs?.video?.play?.();
-      if (playAttempt?.catch) {
-        playAttempt.catch(() => {});
+      if (this.trailerSource.streamType !== "dash" && this.trailerSource.streamType !== "hls") {
+        const playAttempt = mountedVideo?.play?.();
+        if (playAttempt?.catch) {
+          playAttempt.catch(() => {});
+        }
       }
       if (this.trailerPlaybackMode === "manual") {
         this.startTrailerProgressTimer();

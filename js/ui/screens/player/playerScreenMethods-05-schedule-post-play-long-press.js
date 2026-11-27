@@ -2,7 +2,15 @@
 import * as internals from "./playerScreenContext.js";
 
 export function createPlayerScreenMethods05() {
-  const { PlayerController, buildInlineYoutubePlayerUrl, POST_PLAY_LONG_PRESS_DELAY_MS } = internals;
+  const {
+    PlayerController,
+    PlayerSettingsStore,
+    buildInlineYoutubePlayerUrl,
+    POST_PLAY_LONG_PRESS_DELAY_MS,
+    trailerCaptionOptions,
+    attachTrailerVideoStream,
+    destroyTrailerVideoStream
+  } = internals;
 
   return {
     schedulePostPlayLongPress() {
@@ -27,8 +35,13 @@ export function createPlayerScreenMethods05() {
         clearTimeout(this.postPlayTrailerExitTimer);
         this.postPlayTrailerExitTimer = null;
       }
+      if (this.postPlayPendingCleanupFn) {
+        const flush = this.postPlayPendingCleanupFn;
+        this.postPlayPendingCleanupFn = null;
+        flush();
+      }
     },
-    startPostPlayTrailer(recommendation = {}, { auto = false } = {}) {
+    startPostPlayTrailer(recommendation = {}, { auto = false, preferYoutubeFallback = false } = {}) {
       this.stopPostPlayTrailer();
       this.clearPostPlayTrailerExitTimer();
       try {
@@ -46,6 +59,65 @@ export function createPlayerScreenMethods05() {
       const mediaMount = this.uiRefs?.postPlay?.querySelector(".player-post-play-trailer-media");
       if (!mediaMount) {
         this.postPlayRecommendationController?.onTrailerEnded?.();
+        return;
+      }
+      if (recommendation.trailerVideoUrl && !preferYoutubeFallback) {
+        const video = document.createElement("video");
+        video.className = "player-post-play-trailer-video is-loading";
+        video.crossOrigin = "anonymous";
+        video.autoplay = true;
+        video.controls = false;
+        video.playsInline = true;
+        video.preload = "auto";
+        const markReady = () => video.classList.add("is-ready");
+        video.addEventListener("loadeddata", markReady, { once: true });
+        video.addEventListener("canplay", markReady, { once: true });
+        video.addEventListener("playing", markReady, { once: true });
+        video.addEventListener("ended", () => {
+          if (generation === this.postPlayTrailerGeneration) {
+            this.postPlayRecommendationController?.onTrailerEnded?.();
+          }
+        });
+        mediaMount.replaceChildren(video);
+        this.postPlayTrailerMedia = { kind: "direct", node: video, auto };
+        const onFatalError = () => {
+          if (generation !== this.postPlayTrailerGeneration) {
+            return;
+          }
+          if (recommendation.trailerYtId) {
+            this.startPostPlayTrailer(recommendation, { auto, preferYoutubeFallback: true });
+            return;
+          }
+          this.postPlayRecommendationController?.onTrailerEnded?.();
+        };
+        if (typeof attachTrailerVideoStream === "function") {
+          const captions =
+            typeof trailerCaptionOptions === "function"
+              ? trailerCaptionOptions(PlayerSettingsStore?.get?.() || {})
+              : { captionsEnabled: false };
+          void attachTrailerVideoStream(
+            video,
+            {
+              kind: "video",
+              streamType: recommendation.trailerStreamType || "mp4",
+              url: recommendation.trailerVideoUrl,
+              ytId: recommendation.trailerYtId || "",
+              subtitles: Array.isArray(recommendation.trailerSubtitles) ? recommendation.trailerSubtitles : []
+            },
+            {
+              captionsEnabled: captions.captionsEnabled === true,
+              onFatalError
+            }
+          );
+        } else {
+          video.src = recommendation.trailerVideoUrl;
+        }
+        if (recommendation.trailerStreamType !== "dash" && recommendation.trailerStreamType !== "hls") {
+          const playPromise = video.play?.();
+          if (playPromise?.catch) {
+            playPromise.catch(() => {});
+          }
+        }
         return;
       }
       if (recommendation.trailerYtId) {
@@ -73,30 +145,6 @@ export function createPlayerScreenMethods05() {
         this.postPlayTrailerMessageHandler = handler;
         window.addEventListener("message", handler);
         this.postPlayTrailerMedia = { kind: "youtube", node: frame, auto };
-        return;
-      }
-      if (recommendation.trailerVideoUrl) {
-        const video = document.createElement("video");
-        video.className = "player-post-play-trailer-video is-loading";
-        video.src = recommendation.trailerVideoUrl;
-        video.autoplay = true;
-        video.controls = false;
-        video.playsInline = true;
-        video.preload = "auto";
-        const markReady = () => video.classList.add("is-ready");
-        video.addEventListener("loadeddata", markReady, { once: true });
-        video.addEventListener("canplay", markReady, { once: true });
-        video.addEventListener("ended", () => {
-          if (generation === this.postPlayTrailerGeneration) {
-            this.postPlayRecommendationController?.onTrailerEnded?.();
-          }
-        });
-        mediaMount.replaceChildren(video);
-        this.postPlayTrailerMedia = { kind: "direct", node: video, auto };
-        const playPromise = video.play?.();
-        if (playPromise?.catch) {
-          playPromise.catch(() => {});
-        }
         return;
       }
       this.postPlayRecommendationController?.onTrailerEnded?.();
@@ -133,17 +181,23 @@ export function createPlayerScreenMethods05() {
           node.remove();
         }
         if (node && node.tagName === "VIDEO") {
-          try {
-            node.removeAttribute("src");
-            node.load?.();
-          } catch (_) {}
+          if (typeof destroyTrailerVideoStream === "function") {
+            destroyTrailerVideoStream(node);
+          } else {
+            try {
+              node.removeAttribute("src");
+              node.load?.();
+            } catch (_) {}
+          }
         }
       };
       if (node) {
         // Android keeps TrailerPlayer mounted through its 500ms exit fade. Do
         // the same here so the media layer can visibly fade below the scrim.
+        this.postPlayPendingCleanupFn = cleanupNode;
         this.postPlayTrailerExitTimer = setTimeout(() => {
           this.postPlayTrailerExitTimer = null;
+          this.postPlayPendingCleanupFn = null;
           cleanupNode();
         }, 500);
       }

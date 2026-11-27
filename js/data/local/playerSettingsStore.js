@@ -52,6 +52,7 @@ const DEFAULTS = {
   trailerAutoplay: true,
   trailerDelaySeconds: 7,
   trailerSubtitles: false,
+  vetroDirectTrailersEnabled: true,
   skipIntroEnabled: true,
   loadingOverlayEnabled: true,
   showPlayerLoadingStatus: true,
@@ -360,6 +361,7 @@ export function normalizePlayerSettings(settings = {}) {
       Math.max(0, Math.trunc(Number(persistentSettings.trailerDelaySeconds ?? 7)) || 0)
     ),
     trailerSubtitles: persistentSettings.trailerSubtitles === true,
+    vetroDirectTrailersEnabled: persistentSettings.vetroDirectTrailersEnabled !== false,
     loadingOverlayEnabled: persistentSettings.loadingOverlayEnabled !== false,
     showPlayerLoadingStatus: persistentSettings.showPlayerLoadingStatus !== false,
     pauseOverlayEnabled: persistentSettings.pauseOverlayEnabled !== false,

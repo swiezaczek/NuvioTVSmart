@@ -23,7 +23,8 @@ export function registerPlaybackActionsPart01(model) {
     STREAM_REUSE_CACHE_HOURS_OPTIONS,
     formatReuseCacheDuration,
     t,
-    arePluginsSupported
+    arePluginsSupported,
+    resetVetroTrailerResolverCircuitBreaker
   } = internals;
   this.actionMap.set("playback:toggle:general", () => {
     this.toggleExpandedSection("playback", "general");
@@ -107,6 +108,13 @@ export function registerPlaybackActionsPart01(model) {
       onSelect: (option) => PlayerSettingsStore.set({ trailerDelaySeconds: Number(option.id) })
     })
   );
+  this.actionMap.set("playback:vetroDirectTrailers", () => {
+    const nextEnabled = PlayerSettingsStore.get().vetroDirectTrailersEnabled === false;
+    PlayerSettingsStore.set({ vetroDirectTrailersEnabled: nextEnabled });
+    if (nextEnabled) {
+      resetVetroTrailerResolverCircuitBreaker?.();
+    }
+  });
   this.actionMap.set("playback:skipIntro", () => {
     PlayerSettingsStore.set({ skipIntroEnabled: !PlayerSettingsStore.get().skipIntroEnabled });
   });

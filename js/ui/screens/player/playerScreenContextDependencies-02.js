@@ -294,6 +294,10 @@ import { parseHlsAttributeList } from "./playerScreenHelpers-12-build-skip-inter
 
 import { resolveUrl } from "./playerScreenHelpers-12-build-skip-interval-label.js";
 
+import { trailerCaptionOptions } from "../../../core/detail/trailerCaptions.js";
+
+import { attachTrailerVideoStream, destroyTrailerVideoStream } from "../../../core/detail/vetroTrailerResolver.js";
+
 import { uniqueNonEmptyValues } from "./playerScreenHelpers-12-build-skip-interval-label.js";
 
 export {
@@ -447,5 +451,8 @@ export {
   stripQuotes,
   parseHlsAttributeList,
   resolveUrl,
-  uniqueNonEmptyValues
+  uniqueNonEmptyValues,
+  trailerCaptionOptions,
+  attachTrailerVideoStream,
+  destroyTrailerVideoStream
 };

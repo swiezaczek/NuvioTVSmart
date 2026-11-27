@@ -1,4 +1,5 @@
 import { applyTrailerCaptionParams, trailerCaptionOptions } from "../../../core/detail/trailerCaptions.js";
+import { resolveVetroDirectTrailer } from "../../../core/detail/vetroTrailerResolver.js";
 
 import { Router } from "../../navigation/routerState.js";
 
@@ -234,16 +235,34 @@ export function resolveTrailerSource(meta = {}) {
   };
 }
 
+export async function upgradeTrailerSourceWithVetroResolver(youtubeSource) {
+  if (!youtubeSource || youtubeSource.kind !== "youtube" || !youtubeSource.ytId) {
+    return youtubeSource || null;
+  }
+  const { captionsLanguage } = detailTrailerCaptionOptions();
+  const directSource = await resolveVetroDirectTrailer({
+    ytId: youtubeSource.ytId,
+    captionsLanguage
+  });
+  if (directSource?.kind === "video" && directSource.url) {
+    return {
+      ...directSource,
+      fallbackYoutube: youtubeSource
+    };
+  }
+  return youtubeSource;
+}
+
 export async function resolveTmdbTrailerSource(meta = {}, itemType = "movie") {
   const fallbackSource = resolveTrailerSource(meta);
   const settings = TmdbSettingsStore.get();
   if (!settings.enabled || !settings.useTrailers || !TMDB_API_KEY || !meta?.id) {
-    return fallbackSource;
+    return upgradeTrailerSourceWithVetroResolver(fallbackSource);
   }
   try {
     const tmdbId = await withTimeout(TmdbService.ensureTmdbId(meta.id, itemType), 1800, null);
     if (!tmdbId) {
-      return fallbackSource;
+      return upgradeTrailerSourceWithVetroResolver(fallbackSource);
     }
     const trailers = await withTimeout(
       TmdbMetadataService.fetchTrailerCandidates({
@@ -254,9 +273,9 @@ export async function resolveTmdbTrailerSource(meta = {}, itemType = "movie") {
       2200,
       []
     );
-    return resolveTrailerSource({ trailers }) || fallbackSource;
+    return upgradeTrailerSourceWithVetroResolver(resolveTrailerSource({ trailers }) || fallbackSource);
   } catch (_) {
-    return fallbackSource;
+    return upgradeTrailerSourceWithVetroResolver(fallbackSource);
   }
 }
 

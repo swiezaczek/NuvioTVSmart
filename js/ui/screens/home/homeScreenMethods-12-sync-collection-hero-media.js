@@ -2,7 +2,13 @@ import * as internals from "./homeScreenContext.js";
 import { getTrailerCleanupDelayMs } from "../../../platform/tvPerformancePolicy.js";
 
 export function createHomeScreenMethods12() {
-  const { getTvRuntimePerformanceProfile, firstNonEmpty, isCollectionFolderItem, normalizeCollectionFolderItem } = internals;
+  const {
+    getTvRuntimePerformanceProfile,
+    firstNonEmpty,
+    isCollectionFolderItem,
+    normalizeCollectionFolderItem,
+    destroyTrailerVideoStream
+  } = internals;
 
   return {
     syncCollectionHeroMedia(hero = null) {
@@ -197,10 +203,14 @@ export function createHomeScreenMethods12() {
       }
       const activeVideo = container.querySelector("video");
       if (activeVideo) {
-        try {
-          activeVideo.removeAttribute("src");
-          activeVideo.load?.();
-        } catch (_) {}
+        if (typeof destroyTrailerVideoStream === "function") {
+          destroyTrailerVideoStream(activeVideo);
+        } else {
+          try {
+            activeVideo.removeAttribute("src");
+            activeVideo.load?.();
+          } catch (_) {}
+        }
       }
       container.innerHTML = "";
       container.classList.remove("is-active", "is-trailer-layer-idle-hidden");

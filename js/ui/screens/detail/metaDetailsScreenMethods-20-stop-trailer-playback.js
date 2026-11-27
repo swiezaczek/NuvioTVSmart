@@ -2,8 +2,15 @@
 import * as internals from "./metaDetailsScreenContext.js";
 
 export function createMetaDetailsScreenMethods20() {
-  const { ScreenUtils, localizedGenreLabel, contentTextDirection, renderLoadingIndicator, detectQuality, renderStreamAddonIcon } =
-    internals;
+  const {
+    ScreenUtils,
+    localizedGenreLabel,
+    contentTextDirection,
+    renderLoadingIndicator,
+    detectQuality,
+    renderStreamAddonIcon,
+    destroyTrailerVideoStream
+  } = internals;
 
   return {
     stopTrailerPlayback({ keepDom = false, restartAutoplay = true, restoreFocus = true, immediateClear = false } = {}) {
@@ -33,14 +40,18 @@ export function createMetaDetailsScreenMethods20() {
         }
         const activeVideo = layer.querySelector("video");
         if (activeVideo) {
-          try {
-            activeVideo.pause?.();
-          } catch (_) {}
-          try {
-            activeVideo.removeAttribute("src");
-            activeVideo.querySelectorAll("source").forEach((source) => source.removeAttribute("src"));
-            activeVideo.load?.();
-          } catch (_) {}
+          if (typeof destroyTrailerVideoStream === "function") {
+            destroyTrailerVideoStream(activeVideo);
+          } else {
+            try {
+              activeVideo.pause?.();
+            } catch (_) {}
+            try {
+              activeVideo.removeAttribute("src");
+              activeVideo.querySelectorAll("source").forEach((source) => source.removeAttribute("src"));
+              activeVideo.load?.();
+            } catch (_) {}
+          }
         }
       };
       if (this.trailerSource?.kind === "youtube") {

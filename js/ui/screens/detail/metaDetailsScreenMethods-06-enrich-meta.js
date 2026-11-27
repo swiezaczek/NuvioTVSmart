@@ -16,7 +16,8 @@ export function createMetaDetailsScreenMethods06() {
     extractCast,
     mergeGenreLists,
     resolveTrailerSource,
-    resolveTmdbTrailerSource
+    resolveTmdbTrailerSource,
+    upgradeTrailerSourceWithVetroResolver
   } = internals;
 
   return {
@@ -233,9 +234,6 @@ export function createMetaDetailsScreenMethods06() {
       }
       const settings = TmdbSettingsStore.get();
       const fallbackSource = resolveTrailerSource(meta);
-      if (!settings.enabled || !settings.useTrailers || !TMDB_API_KEY) {
-        return fallbackSource;
-      }
       const itemType = String(meta?.type || this.params?.itemType || "movie");
       const resolutionKey = [meta?.id, itemType, settings.language, settings.enabled, settings.useTrailers].join("|");
       if (this.trailerSourceResolutionKey === resolutionKey) {
@@ -246,7 +244,12 @@ export function createMetaDetailsScreenMethods06() {
           return this.trailerSourceResolutionResult;
         }
       }
-      const resolutionPromise = resolveTmdbTrailerSource(meta, itemType);
+      const resolutionPromise =
+        !settings.enabled || !settings.useTrailers || !TMDB_API_KEY
+          ? typeof upgradeTrailerSourceWithVetroResolver === "function"
+            ? upgradeTrailerSourceWithVetroResolver(fallbackSource)
+            : Promise.resolve(fallbackSource)
+          : resolveTmdbTrailerSource(meta, itemType);
       this.trailerSourceResolutionKey = resolutionKey;
       this.trailerSourceResolutionPromise = resolutionPromise;
       try {

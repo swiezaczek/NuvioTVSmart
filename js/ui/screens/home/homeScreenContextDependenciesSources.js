@@ -365,3 +365,9 @@ export { createPosterCardMarkup } from "./homeScreenHelpers-15-create-poster-car
 export { PlayerSettingsStore } from "../../../data/local/playerSettingsStore.js";
 
 export { isAutoPlayEffectivelyEnabled } from "../../../core/streams/streamAutoPlaySelector.js";
+
+export {
+  resolveVetroDirectTrailer,
+  attachTrailerVideoStream,
+  destroyTrailerVideoStream
+} from "../../../core/detail/vetroTrailerResolver.js";

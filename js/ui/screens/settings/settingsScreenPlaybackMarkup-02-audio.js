@@ -12,6 +12,16 @@ export function renderPlaybackAudioBody(model) {
               checked: Boolean(model.player.trailerAutoplay)
             })}
             ${model.player.trailerAutoplay ? this.renderActionRow({ focusKey: "playback:trailerDelay", title: t("audio_trailer_delay"), subtitle: t("audio_trailer_delay_sub", {}, "Delay before trailer playback starts"), value: `${model.player.trailerDelaySeconds ?? 7}s` }) : ""}
+            ${this.renderToggleRow({
+              focusKey: "playback:vetroDirectTrailers",
+              title: t("settings.playback.vetroDirectTrailers.title", {}, "Direct Ad-Free Trailers (Vetro)"),
+              subtitle: t(
+                "settings.playback.vetroDirectTrailers.subtitle",
+                {},
+                "Use local Vetro trailer resolver (local port 8102) when available"
+              ),
+              checked: model.player.vetroDirectTrailersEnabled !== false
+            })}
             ${this.renderActionRow({
               focusKey: "playback:audioLanguage",
               title: t("settings.playback.preferredAudio.title"),

@@ -284,13 +284,23 @@ import { resolveTrailerTrustedProxyOrigin } from "./metaDetailsScreenHelpers-05-
 
 import { buildDirectYoutubeEmbedUrl } from "./metaDetailsScreenHelpers-05-get-addon-badge-label.js";
 
+import {
+  resolveVetroDirectTrailer,
+  attachTrailerVideoStream,
+  destroyTrailerVideoStream
+} from "../../../core/detail/vetroTrailerResolver.js";
+
 import { buildYoutubeEmbedUrl } from "./metaDetailsScreenHelpers-06-build-youtube-embed-url.js";
 
 import { buildInlineYoutubePlayerUrl } from "./metaDetailsScreenHelpers-06-build-youtube-embed-url.js";
 
+import { detailTrailerCaptionOptions } from "./metaDetailsScreenHelpers-06-build-youtube-embed-url.js";
+
 import { resolveTrailerSource } from "./metaDetailsScreenHelpers-06-build-youtube-embed-url.js";
 
 import { resolveTmdbTrailerSource } from "./metaDetailsScreenHelpers-06-build-youtube-embed-url.js";
+
+import { upgradeTrailerSourceWithVetroResolver } from "./metaDetailsScreenHelpers-06-build-youtube-embed-url.js";
 
 import { resolveTrailerItems } from "./metaDetailsScreenHelpers-06-build-youtube-embed-url.js";
 
@@ -467,8 +477,13 @@ export {
   buildDirectYoutubeEmbedUrl,
   buildYoutubeEmbedUrl,
   buildInlineYoutubePlayerUrl,
+  detailTrailerCaptionOptions,
   resolveTrailerSource,
   resolveTmdbTrailerSource,
+  upgradeTrailerSourceWithVetroResolver,
+  resolveVetroDirectTrailer,
+  attachTrailerVideoStream,
+  destroyTrailerVideoStream,
   resolveTrailerItems,
   stripTraktSpoilerMarkup,
   containsTraktInlineSpoiler,

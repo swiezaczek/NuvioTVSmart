@@ -8,7 +8,9 @@ export function createMetaDetailsScreenMethods17() {
     DETAIL_SCROLL_STIFFNESS,
     DETAIL_SCROLL_DAMPING_RATIO,
     DETAIL_SCROLL_MAX_FRAME_SECONDS,
-    escapeSelectorValue
+    escapeSelectorValue,
+    resolveVetroDirectTrailer,
+    detailTrailerCaptionOptions
   } = internals;
 
   return {
@@ -321,6 +323,17 @@ export function createMetaDetailsScreenMethods17() {
           startAtSeconds
         });
         return;
+      }
+      if (
+        this.trailerSource?.kind === "youtube" &&
+        this.trailerSource?.ytId &&
+        typeof resolveVetroDirectTrailer === "function"
+      ) {
+        const captionOptions = typeof detailTrailerCaptionOptions === "function" ? detailTrailerCaptionOptions() : {};
+        void resolveVetroDirectTrailer({
+          ytId: this.trailerSource.ytId,
+          captionsLanguage: captionOptions.captionsLanguage || ""
+        });
       }
       this.trailerAutoplayTimer = setTimeout(
         () => {
