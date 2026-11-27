@@ -257,4 +257,44 @@ test("hero backdrop (<canvas> and <img>) and logo transitions never force synchr
     0,
     "hero transitions must perform 0 synchronous offsetWidth reads"
   );
+
+  // 4. single-layer canvas swap reuses previousCanvas in place without creating/removing a new <canvas>
+  let canvasCreates = 0;
+  const origCreate = context.document.createElement;
+  context.document.createElement = (tag) => {
+    if (String(tag).toUpperCase() === "CANVAS") canvasCreates += 1;
+    return origCreate(tag);
+  };
+  const singleWrap = new FakeElement("div");
+  const singleBackdrop = new FakeImage("img");
+  singleBackdrop.classList.add("home-hero-backdrop");
+  singleWrap.appendChild(singleBackdrop);
+  preloadResults.set("https://img/s1.jpg", {
+    loaded: true,
+    bitmap: { width: 1280, height: 720 }
+  });
+  preloadResults.set("https://img/s2.jpg", {
+    loaded: true,
+    bitmap: { width: 1920, height: 1080 }
+  });
+  context.animateHeroBackdropSwap(singleBackdrop, "https://img/s1.jpg", "", 20, {
+    transitionMode: "single-layer"
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  await flushRafs();
+  await flushRafs();
+  assert.equal(canvasCreates, 1);
+  const reusedCanvas = singleWrap.children.at(-1);
+
+  context.animateHeroBackdropSwap(singleBackdrop, "https://img/s2.jpg", "", 20, {
+    transitionMode: "single-layer"
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(canvasCreates, 1, "single-layer canvas swap must reuse existing canvas in place");
+  assert.equal(singleWrap.children.at(-1), reusedCanvas);
+  assert.equal(reusedCanvas.width, 1920);
+  assert.equal(reusedCanvas.height, 1080);
+  await flushRafs();
+  await flushRafs();
+  assert.equal(reusedCanvas.classList.contains("is-visible"), true);
 });

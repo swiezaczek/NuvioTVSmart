@@ -309,14 +309,23 @@ export function animateHeroBackdropSwap(
     let layer = backdrop;
     if (bitmap && parent) {
       const previousCanvas = getCanvas();
-      layer = document.createElement("canvas");
-      layer.className = "home-hero-backdrop home-hero-backdrop-canvas home-hero-backdrop-transition-enter";
-      layer.width = bitmap.width;
-      layer.height = bitmap.height;
-      layer.getContext("2d")?.drawImage(bitmap, 0, 0);
-      // Last in the wrap, so it paints above the fading ghost.
-      parent.appendChild(layer);
-      releaseCanvasLayer(previousCanvas);
+      if (singleLayer && previousCanvas) {
+        layer = previousCanvas;
+        layer.classList.remove("is-visible", "home-hero-backdrop-transition-ghost", "is-fading-out");
+        layer.classList.add("home-hero-backdrop-transition-enter");
+        layer.width = bitmap.width;
+        layer.height = bitmap.height;
+        layer.getContext("2d")?.drawImage(bitmap, 0, 0);
+      } else {
+        layer = document.createElement("canvas");
+        layer.className = "home-hero-backdrop home-hero-backdrop-canvas home-hero-backdrop-transition-enter";
+        layer.width = bitmap.width;
+        layer.height = bitmap.height;
+        layer.getContext("2d")?.drawImage(bitmap, 0, 0);
+        // Last in the wrap, so it paints above the fading ghost.
+        parent.appendChild(layer);
+        releaseCanvasLayer(previousCanvas);
+      }
       backdrop.heroBackdropCanvasSrc = normalizedSrc;
       // Dropping src releases the full-size decode; the canvas carries the artwork.
       backdrop.removeAttribute("src");

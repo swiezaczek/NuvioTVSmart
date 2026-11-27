@@ -235,7 +235,7 @@ export function shouldEnrichModernHero(hero) {
 
 export const HERO_IMAGE_PRELOAD_CACHE_LIMIT = 32;
 
-export const HERO_BACKDROP_BITMAP_CACHE_LIMIT = 4;
+export const HERO_BACKDROP_BITMAP_CACHE_LIMIT = 8;
 
 // Android's hero Coil request is 220x100dp, which is the 440x200 box the web
 // hero paints at TV density. Addon logos can be 1664x437 or larger, and the
