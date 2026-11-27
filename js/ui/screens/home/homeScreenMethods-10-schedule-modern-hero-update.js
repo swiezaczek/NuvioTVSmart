@@ -2,7 +2,7 @@ import * as internals from "./homeScreenContext.js";
 import { getHeroEnrichDwellMs, isModernTvProfile } from "../../../platform/tvPerformancePolicy.js";
 import { getTvRuntimePerformanceProfile } from "../../../platform/tvRuntimePerformance.js";
 
-const MODERN_TV_HERO_ENRICH_SETTLE_DELAY_MS = 160;
+const MODERN_TV_HERO_ENRICH_SETTLE_DELAY_MS = 500;
 
 export function createHomeScreenMethods10() {
   const { MODERN_HOME_CONSTANTS, shouldEnrichModernHero, preloadHeroAssets, buildHeroIdentity } = internals;
@@ -51,7 +51,7 @@ export function createHomeScreenMethods10() {
         }
         callback();
       };
-      const preloadDelay = isRapidNav ? Math.max(0, delay - 80) : Math.max(0, Math.min(120, delay - 80));
+      const preloadDelay = Math.max(0, Math.min(120, delay - 80));
       this.heroBackdropPreloadTimer = setTimeout(() => {
         this.heroBackdropPreloadTimer = null;
         waitForVerticalSettle(() => {

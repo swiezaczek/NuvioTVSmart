@@ -45,8 +45,28 @@ export function createHomeScreenMethods18() {
         deferUntilVerticalSettle: deferHomeArtworkUntilSettle,
         focusedRowOnly: this.isLegacyTvRuntime()
       });
-      if (this.isCollectionFolderNode(target)) {
-        this.hydrateCollectionFocusGif(target, true);
+      if (this.collectionFocusGifRaf && typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(this.collectionFocusGifRaf);
+        this.collectionFocusGifRaf = 0;
+      }
+      const isCollectionTarget = this.isCollectionFolderNode(target);
+      if (isCollectionTarget) {
+        const hydrateFocusedCollection = () => {
+          this.collectionFocusGifRaf = 0;
+          if (
+            target.isConnected === false ||
+            !target.classList?.contains?.("focused") ||
+            (typeof this.getCurrentFocusedNode === "function" && this.getCurrentFocusedNode() !== target)
+          ) {
+            return;
+          }
+          this.hydrateCollectionFocusGif(target, true);
+        };
+        if (typeof requestAnimationFrame === "function") {
+          this.collectionFocusGifRaf = requestAnimationFrame(hydrateFocusedCollection);
+        } else {
+          hydrateFocusedCollection();
+        }
       } else if (this.activeCollectionFocusGifNode && this.activeCollectionFocusGifNode !== target) {
         this.hydrateCollectionFocusGif(this.activeCollectionFocusGifNode, false);
       }
@@ -83,9 +103,14 @@ export function createHomeScreenMethods18() {
           this.scheduleModernHeroUpdate(target, {
             deferUntilVerticalSettle: deferHomeArtworkUntilSettle
           });
-          this.scheduleFocusedPosterFlow(target, {
-            deferUntilVerticalSettle: deferHomeArtworkUntilSettle
-          });
+          if (isCollectionTarget) {
+            this.cancelFocusedPosterFlow?.();
+            this.clearFocusedPosterFlowState?.();
+          } else {
+            this.scheduleFocusedPosterFlow(target, {
+              deferUntilVerticalSettle: deferHomeArtworkUntilSettle
+            });
+          }
         }
       } else {
         this.cancelModernCameraFollow({ stopAnimations: true });

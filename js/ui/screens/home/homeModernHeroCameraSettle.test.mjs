@@ -190,6 +190,10 @@ test("full modern TV mode defers hero commit and preload until horizontal camera
     "full TV mode schedules enrichment after a short post-commit settle delay"
   );
   assert.ok(harness.screen.heroEnrichDwellTimer, "post-commit heroEnrichDwellTimer is armed");
+  const enrichTimer = Array.from(harness.scheduler.timers.values()).find(
+    (entry) => entry.id === harness.screen.heroEnrichDwellTimer
+  );
+  assert.equal(enrichTimer?.delay, 500, "TV post-commit enrichment dwell clears 900ms key cadence");
 
   harness.scheduler.flushTimers();
   assert.equal(harness.calls.enriches.length, 1);
@@ -496,4 +500,98 @@ test("focusNode skips redundant vertical visibility check on same-row horizontal
   assert.equal(calls.heroUpdates.at(-1).options.deferUntilVerticalSettle, false);
   assert.equal(calls.posterFlows.at(-1).id, "b");
   assert.equal(calls.posterFlows.at(-1).options.deferUntilVerticalSettle, false);
+});
+
+test("focusNode defers collection GIF hydration into rAF and cancels stale frames on rapid moves", () => {
+  const scheduler = createFakeTimers();
+  const context = vm.createContext({
+    requestAnimationFrame: scheduler.requestAnimationFrame,
+    cancelAnimationFrame: scheduler.cancelAnimationFrame,
+    internals: {
+      HOME_PERF_DEBUG: false,
+      homePerfNow: () => 0,
+      logHomePerf: () => {},
+      groupNodesByOffsetTop: () => []
+    }
+  });
+  context.globalThis = context;
+  vm.runInContext(`${source18}\nglobalThis.api = createHomeScreenMethods18();`, context);
+
+  const rowSection = { id: "row-collection" };
+  const makeCard = (id, collectionFolder = false) => {
+    const classes = new Set();
+    return {
+      id,
+      anchor: rowSection,
+      collectionFolder,
+      isConnected: true,
+      dataset: { navZone: "main" },
+      classList: {
+        add: (name) => classes.add(name),
+        remove: (name) => classes.delete(name),
+        contains: (name) => classes.has(name)
+      }
+    };
+  };
+  const regularCard = makeCard("regular", false);
+  const collectionCardA = makeCard("col-a", true);
+  const collectionCardB = makeCard("col-b", true);
+  let activeFocus = regularCard;
+  const gifHydrations = [];
+  let posterFlowCalls = 0;
+
+  const screen = Object.assign(Object.create(context.api), {
+    layoutMode: "modern",
+    refreshPendingHomeTrailerCleanup() {},
+    getExpandedPosterScrollAdjustments: () => ({ horizontal: 0, vertical: 0 }),
+    focusWithoutAutoScroll() {},
+    getCurrentFocusedNode: () => activeFocus,
+    setCurrentFocusedNode(node) {
+      activeFocus = node;
+    },
+    isPerformanceConstrained: () => false,
+    isLegacyTvRuntime: () => false,
+    shouldUseImmediateFocusScroll: () => false,
+    scheduleHomeLazyImageHydration() {},
+    isCollectionFolderNode: (node) => Boolean(node?.collectionFolder),
+    hydrateCollectionFocusGif(node, active) {
+      gifHydrations.push({ id: node.id, active });
+    },
+    setSidebarExpanded() {},
+    isSidebarNode: () => false,
+    isMainNode: () => true,
+    rememberMainRowFocus() {},
+    shouldDeferContinueWatchingFocusEffects: () => false,
+    scheduleModernCameraFollow: () => false,
+    getMainFocusAnchor: (node) => node?.anchor || null,
+    ensureTrackHorizontalVisibility() {},
+    ensureMainVerticalVisibility() {},
+    scheduleModernTrackPaginationForFocus() {},
+    ensureContinueWatchingRenderAhead() {},
+    scheduleModernHeroUpdate() {},
+    cancelFocusedPosterFlow() {},
+    clearFocusedPosterFlowState() {},
+    scheduleFocusedPosterFlow() {
+      posterFlowCalls += 1;
+    }
+  });
+
+  screen.focusNode(regularCard, collectionCardA, "right");
+  assert.equal(gifHydrations.length, 0, "must not hydrate collection GIF synchronously in keydown");
+  assert.equal(
+    posterFlowCalls,
+    0,
+    "must not re-enter sync scheduleFocusedPosterFlow for collection targets"
+  );
+  assert.equal(scheduler.rafs.size, 1);
+
+  // Rapid move before rAF fires cancels collectionCardA's pending hydration.
+  screen.focusNode(collectionCardA, collectionCardB, "right");
+  assert.equal(gifHydrations.length, 0);
+  assert.equal(scheduler.rafs.size, 1);
+
+  scheduler.flushRafs();
+  assert.equal(gifHydrations.length, 1);
+  assert.equal(gifHydrations[0].id, "col-b");
+  assert.equal(gifHydrations[0].active, true);
 });
