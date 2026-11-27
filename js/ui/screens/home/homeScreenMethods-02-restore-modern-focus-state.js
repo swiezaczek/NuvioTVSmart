@@ -301,13 +301,13 @@ export function createHomeScreenMethods02() {
       if (active) {
         active.target = nextValue;
         active.stiffness = Number(
-          options?.stiffness ?? (useFastTvSpring ? 2000 : (active.stiffness ?? MODERN_HOME_CONSTANTS.springScrollStiffness))
+          options?.stiffness ?? (useFastTvSpring ? 1100 : (active.stiffness ?? MODERN_HOME_CONSTANTS.springScrollStiffness))
         );
         active.dampingRatio = Number(
           options?.dampingRatio ?? (useFastTvSpring ? 1.0 : (active.dampingRatio ?? MODERN_HOME_CONSTANTS.springScrollDampingRatio))
         );
         active.precision = Number(options?.precision ?? (useFastTvSpring ? 2 : (active.precision ?? 1)));
-        active.velocityEpsilon = Number(options?.velocityEpsilon ?? (useFastTvSpring ? 70 : (active.velocityEpsilon ?? 12)));
+        active.velocityEpsilon = Number(options?.velocityEpsilon ?? (useFastTvSpring ? 55 : (active.velocityEpsilon ?? 12)));
         active.damping = 2 * active.dampingRatio * Math.sqrt(active.stiffness);
         if (Math.abs(nextValue - active.position) > 1) {
           markCameraScrollActive(container);
@@ -316,7 +316,7 @@ export function createHomeScreenMethods02() {
         return;
       }
 
-      const stiffness = Number(options?.stiffness ?? (useFastTvSpring ? 2000 : MODERN_HOME_CONSTANTS.springScrollStiffness));
+      const stiffness = Number(options?.stiffness ?? (useFastTvSpring ? 1100 : MODERN_HOME_CONSTANTS.springScrollStiffness));
       const dampingRatio = Number(options?.dampingRatio ?? (useFastTvSpring ? 1.0 : MODERN_HOME_CONSTANTS.springScrollDampingRatio));
       const initialPosition = Number(container[property] || 0);
 
@@ -331,7 +331,7 @@ export function createHomeScreenMethods02() {
         dampingRatio,
         damping: 2 * dampingRatio * Math.sqrt(stiffness),
         precision: Number(options?.precision ?? (useFastTvSpring ? 2 : 1)),
-        velocityEpsilon: Number(options?.velocityEpsilon ?? (useFastTvSpring ? 70 : 12))
+        velocityEpsilon: Number(options?.velocityEpsilon ?? (useFastTvSpring ? 55 : 12))
       };
 
       const tick = (now) => {
@@ -357,26 +357,18 @@ export function createHomeScreenMethods02() {
         }
         const nextRounded = Math.round(state.position);
 
-        // Reading scroll position after writing it can flush layout. Check
-        // settling once velocity is low enough before writing another frame.
-        if (Math.abs(state.velocity) <= state.velocityEpsilon) {
-          // A hidden container (.home-dom-preserved display:none or
-          // content-visibility) reports no scroll range, so its position can
-          // never reach the requested target: clamp to the live range and
-          // settle instead of scheduling frames nobody can see.
-          const settledTarget = Math.min(getContainerMaxScroll(container, axis), Math.max(0, Number(state.target || 0)));
-          const currentScroll = Number(container[property] || 0);
-          if (Math.abs(settledTarget - nextRounded) <= state.precision || Math.abs(settledTarget - currentScroll) <= state.precision) {
-            if (currentScroll !== settledTarget) {
-              container[property] = settledTarget;
-              state.lastWrittenPosition = settledTarget;
-            }
-            existing[key] = null;
-            springMap.set(container, existing);
-            this.untrackScrollContainerIfIdle?.(container);
-            clearCameraScrollActive(container);
-            return;
+        // Settle purely in JS math so we never read scrollTop/scrollHeight
+        // inside rAF after IntersectionObserver unparks an incoming row.
+        if (Math.abs(state.velocity) <= state.velocityEpsilon && Math.abs(targetPos - nextRounded) <= state.precision) {
+          if (state.lastWrittenPosition !== targetPos) {
+            container[property] = targetPos;
+            state.lastWrittenPosition = targetPos;
           }
+          existing[key] = null;
+          springMap.set(container, existing);
+          this.untrackScrollContainerIfIdle?.(container);
+          clearCameraScrollActive(container);
+          return;
         }
 
         if (nextRounded !== state.lastWrittenPosition) {

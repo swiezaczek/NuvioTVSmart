@@ -100,6 +100,7 @@ function createTrackedContainer({
     }
   };
   Object.defineProperty(container, "scrollLeft", {
+    configurable: true,
     get: () => scrollLeft,
     set: (value) => {
       const max = Math.max(0, container.scrollWidth - container.clientWidth);
@@ -109,6 +110,7 @@ function createTrackedContainer({
     }
   });
   Object.defineProperty(container, "scrollTop", {
+    configurable: true,
     get: () => scrollTop,
     set: (value) => {
       const max = Math.max(0, container.scrollHeight - container.clientHeight);
@@ -120,24 +122,54 @@ function createTrackedContainer({
   return { container, classes, classEvents, xWrites, yWrites };
 }
 
-test("TV animateSpringScroll settles a 443px move in <= 12 frames (<= 200ms) with integer-only writes and 0 overshoot", () => {
+test("TV animateSpringScroll settles a 443px move smoothly in <= 16 frames (~250ms) without reading layout inside tick", () => {
   const { screen, scheduledRafs, stepFrame } = buildHarness({ isTvRuntime: true });
   const { container, xWrites } = createTrackedContainer({ initialClasses: ["home-track"] });
+  let layoutReadsDuringTick = 0;
+  let scrollLeftReadsDuringTick = 0;
+  let ticking = false;
+  let inSetter = false;
+  const origScrollLeftDesc = Object.getOwnPropertyDescriptor(container, "scrollLeft");
+  Object.defineProperty(container, "scrollLeft", {
+    configurable: true,
+    get: () => {
+      if (ticking) scrollLeftReadsDuringTick += 1;
+      return origScrollLeftDesc.get();
+    },
+    set: (value) => {
+      inSetter = true;
+      try {
+        origScrollLeftDesc.set(value);
+      } finally {
+        inSetter = false;
+      }
+    }
+  });
+  Object.defineProperty(container, "scrollWidth", {
+    get: () => {
+      if (ticking && !inSetter) layoutReadsDuringTick += 1;
+      return 4000;
+    }
+  });
 
   screen.animateSpringScroll(container, "x", 443);
   assert.equal(scheduledRafs.size, 1);
   assert.equal(xWrites.length, 0);
 
   let frames = 0;
+  ticking = true;
   while (scheduledRafs.size && frames < 60) {
     stepFrame(16.7);
     frames += 1;
   }
+  ticking = false;
 
   assert.equal(scheduledRafs.size, 0, "spring must finish scheduling rAF");
   assert.equal(container.scrollLeft, 443);
-  assert.ok(frames <= 12, `expected <= 12 frames (~185ms) on TV, got ${frames}`);
-  assert.ok(xWrites.length > 0 && xWrites.length <= 12, `unexpected write count ${xWrites.length}`);
+  assert.equal(layoutReadsDuringTick, 0, "tick must never read scrollWidth/scrollHeight");
+  assert.equal(scrollLeftReadsDuringTick, 0, "tick must never read scrollLeft/scrollTop");
+  assert.ok(frames <= 16, `expected <= 16 frames (~250ms) on TV, got ${frames}`);
+  assert.ok(xWrites.length > 0 && xWrites.length <= 16, `unexpected write count ${xWrites.length}`);
   for (let i = 0; i < xWrites.length; i += 1) {
     assert.equal(
       Number.isInteger(xWrites[i]),
@@ -284,7 +316,7 @@ test("homeRowWindow keeps 150% rootMargin and prefers entry.boundingClientRect h
   assert.equal(section.style.height, "392px");
 });
 
-test("Home focus CSS strips non-composited card paint transitions and persists modern viewport layer", async () => {
+test("Home focus CSS preserves border-color + layout containment, strips poster paint transitions, and persists modern track/viewport layers", async () => {
   const [css14, css17, css18] = await Promise.all([
     readFile(new URL("../../../../css/components-14.css", import.meta.url), "utf8"),
     readFile(new URL("../../../../css/components-17.css", import.meta.url), "utf8"),
@@ -292,8 +324,9 @@ test("Home focus CSS strips non-composited card paint transitions and persists m
   ]);
 
   const cardRule = css14.match(/\.home-screen-shell \.home-content-card \{[^}]*\}/)?.[0] || "";
-  assert.match(cardRule, /transition:\s*transform 120ms ease-out;/);
-  assert.doesNotMatch(cardRule, /border-color\s+120ms/);
+  assert.match(cardRule, /contain:\s*layout style;/);
+  assert.match(cardRule, /transform 120ms ease-out/);
+  assert.match(cardRule, /border-color 120ms ease/);
 
   const frameRule14 = css14.match(/\.home-screen-shell \.home-poster-frame \{[^}]*\}/)?.[0] || "";
   assert.match(frameRule14, /transition:\s*none;/);
@@ -311,4 +344,9 @@ test("Home focus CSS strips non-composited card paint transitions and persists m
       /\.home-screen-shell\.home-layout-modern \.home-modern-rows-viewport \{[^}]*\}/
     )?.[0] || "";
   assert.match(viewportRule17, /will-change:\s*scroll-position;/);
+  assert.match(
+    css17,
+    /\.home-row:not\(\.home-row-parked\)[\s\S]*?\.home-track\s*\{[^}]*will-change:\s*scroll-position;/
+  );
+  assert.doesNotMatch(css17, /\.is-camera-scrolling/);
 });

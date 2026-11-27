@@ -101,7 +101,10 @@
   border: 2px solid transparent;
   background: transparent;
   overflow: visible;
-  transition: transform 120ms ease-out;
+  contain: layout style;
+  transition:
+    transform 120ms ease-out,
+    border-color 120ms ease;
 }
 
 .home-screen-shell .home-content-card.focused {
