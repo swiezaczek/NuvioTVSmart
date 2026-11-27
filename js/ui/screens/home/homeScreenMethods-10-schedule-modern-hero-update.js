@@ -3,6 +3,9 @@ import { getHeroEnrichDwellMs, isModernTvProfile } from "../../../platform/tvPer
 import { getTvRuntimePerformanceProfile } from "../../../platform/tvRuntimePerformance.js";
 
 const MODERN_TV_HERO_ENRICH_SETTLE_DELAY_MS = 500;
+const MODERN_TV_HERO_PACE_QUIET_MS = 370;
+const MODERN_TV_HERO_BROWSE_WINDOW_MS = 1400;
+const MODERN_TV_HERO_BROWSE_SETTLE_DELAY_MS = 1150;
 
 export function createHomeScreenMethods10() {
   const { MODERN_HOME_CONSTANTS, shouldEnrichModernHero, preloadHeroAssets, buildHeroIdentity } = internals;
@@ -30,28 +33,54 @@ export function createHomeScreenMethods10() {
       const now = Date.now();
       const previous = Number(this.lastModernHeroNavAt || 0);
       const isRapidNav = previous > 0 && now - previous < MODERN_HOME_CONSTANTS.heroRapidNavThresholdMs;
-      const delay = immediate ? 0 : this.getHeroFocusDelay({ rapid: isRapidNav });
+      const tvProfile = getTvRuntimePerformanceProfile();
+      let delay = immediate ? 0 : this.getHeroFocusDelay({ rapid: isRapidNav });
+      if (tvProfile?.isTvRuntime && !immediate && previous > 0 && now - previous < MODERN_TV_HERO_BROWSE_WINDOW_MS) {
+        delay = Math.max(delay, MODERN_TV_HERO_BROWSE_SETTLE_DELAY_MS);
+      }
       this.lastModernHeroNavAt = now;
       if (isRapidNav || immediate) {
         this.container?.querySelector(".home-modern-hero-card")?.classList.add("is-hero-focus-pending");
       }
-      const tvProfile = getTvRuntimePerformanceProfile();
       const shouldWaitForCamera = !immediate && (deferUntilVerticalSettle || isModernTvProfile(tvProfile));
-      const isCameraScrollActive = () =>
-        typeof this.isModernHydrationScrollActive === "function"
-          ? Boolean(this.isModernHydrationScrollActive())
-          : Boolean(this.isModernVerticalScrollActive?.());
-      const waitForVerticalSettle = (callback) => {
+      const targetTrack = node?.closest?.(".home-track, .home-grid-track") || null;
+      const isCameraScrollActive = () => {
+        if (
+          typeof this.isModernHydrationScrollActive === "function"
+            ? Boolean(this.isModernHydrationScrollActive())
+            : Boolean(this.isModernVerticalScrollActive?.())
+        ) {
+          return true;
+        }
+        return Boolean(targetTrack && this.isScrollAnimationActive?.(targetTrack, "x"));
+      };
+      const getInputPaceQuietRemainingMs = () => {
+        if (!tvProfile?.isTvRuntime || immediate) {
+          return 0;
+        }
+        const lastInputAt = Number(this.lastHomeInputAt || 0);
+        if (!(lastInputAt > 0)) {
+          return 0;
+        }
+        return Math.max(0, MODERN_TV_HERO_PACE_QUIET_MS - (Date.now() - lastInputAt));
+      };
+      const getCameraOrInputPollDelayMs = () => {
+        const quietRemainingMs = getInputPaceQuietRemainingMs();
         if (shouldWaitForCamera && isCameraScrollActive()) {
-          this.heroBackdropPreloadTimer = setTimeout(
-            () => waitForVerticalSettle(callback),
-            MODERN_HOME_CONSTANTS.verticalScrollSettlePollMs
-          );
+          return Math.max(MODERN_HOME_CONSTANTS.verticalScrollSettlePollMs, quietRemainingMs);
+        }
+        return quietRemainingMs;
+      };
+      const waitForVerticalSettle = (callback) => {
+        const pollDelayMs = getCameraOrInputPollDelayMs();
+        if (pollDelayMs > 0) {
+          this.heroBackdropPreloadTimer = setTimeout(() => waitForVerticalSettle(callback), pollDelayMs);
           return;
         }
         callback();
       };
-      const preloadDelay = Math.max(0, Math.min(120, delay - 80));
+      const preloadDelay =
+        tvProfile?.isTvRuntime && !immediate ? Math.max(MODERN_TV_HERO_PACE_QUIET_MS, delay - 80) : Math.max(0, Math.min(120, delay - 80));
       this.heroBackdropPreloadTimer = setTimeout(() => {
         this.heroBackdropPreloadTimer = null;
         waitForVerticalSettle(() => {
@@ -70,8 +99,9 @@ export function createHomeScreenMethods10() {
         });
       }, preloadDelay);
       const commitHeroWhenSettled = () => {
-        if (shouldWaitForCamera && isCameraScrollActive()) {
-          this.heroFocusDelayTimer = setTimeout(commitHeroWhenSettled, MODERN_HOME_CONSTANTS.verticalScrollSettlePollMs);
+        const pollDelayMs = getCameraOrInputPollDelayMs();
+        if (pollDelayMs > 0) {
+          this.heroFocusDelayTimer = setTimeout(commitHeroWhenSettled, pollDelayMs);
           return;
         }
         this.heroFocusDelayTimer = null;

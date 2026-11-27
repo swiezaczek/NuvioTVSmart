@@ -45,6 +45,10 @@ export function createHomeScreenMethods18() {
         deferUntilVerticalSettle: deferHomeArtworkUntilSettle,
         focusedRowOnly: this.isLegacyTvRuntime()
       });
+      if (this.collectionFocusGifTimer) {
+        clearTimeout(this.collectionFocusGifTimer);
+        this.collectionFocusGifTimer = null;
+      }
       if (this.collectionFocusGifRaf && typeof cancelAnimationFrame === "function") {
         cancelAnimationFrame(this.collectionFocusGifRaf);
         this.collectionFocusGifRaf = 0;
@@ -52,9 +56,11 @@ export function createHomeScreenMethods18() {
       const isCollectionTarget = this.isCollectionFolderNode(target);
       if (isCollectionTarget) {
         const hydrateFocusedCollection = () => {
+          this.collectionFocusGifTimer = null;
           this.collectionFocusGifRaf = 0;
           if (
-            target.isConnected === false ||
+            this.homeDomPreserved ||
+            !target.isConnected ||
             !target.classList?.contains?.("focused") ||
             (typeof this.getCurrentFocusedNode === "function" && this.getCurrentFocusedNode() !== target)
           ) {
@@ -62,7 +68,11 @@ export function createHomeScreenMethods18() {
           }
           this.hydrateCollectionFocusGif(target, true);
         };
-        if (typeof requestAnimationFrame === "function") {
+        const shouldDeferCollectionGif =
+          deferHomeArtworkUntilSettle && (this.isPerformanceConstrained?.() || this.shouldUseBoundedHomeImageHydration?.());
+        if (shouldDeferCollectionGif) {
+          this.collectionFocusGifTimer = setTimeout(hydrateFocusedCollection, 380);
+        } else if (typeof requestAnimationFrame === "function") {
           this.collectionFocusGifRaf = requestAnimationFrame(hydrateFocusedCollection);
         } else {
           hydrateFocusedCollection();

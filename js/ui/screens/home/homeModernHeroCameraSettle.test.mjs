@@ -69,7 +69,10 @@ function createHeroHarness({
   profile = { isTvRuntime: true, isPerformanceConstrained: false, isLegacyTvRuntime: false },
   heroDelayMs = 120,
   hydrationScrollActive = false,
-  verticalScrollActive = false
+  verticalScrollActive = false,
+  trackHorizontalScrollActive = false,
+  lastHomeInputAt = 0,
+  initialNow = 10000
 } = {}) {
   const scheduler = createFakeTimers();
   const calls = {
@@ -79,9 +82,12 @@ function createHeroHarness({
   };
   let scrollHydrationActive = hydrationScrollActive;
   let scrollVerticalActive = verticalScrollActive;
+  let trackScrollActive = trackHorizontalScrollActive;
+  let nowMs = initialNow;
 
   const context = vm.createContext({
     console,
+    Date: { now: () => nowMs },
     setTimeout: scheduler.setTimeout,
     clearTimeout: scheduler.clearTimeout,
     requestAnimationFrame: scheduler.requestAnimationFrame,
@@ -109,14 +115,17 @@ function createHeroHarness({
   );
 
   const heroNode = { classList: { add() {}, remove() {} } };
+  const trackNode = { id: "track-1" };
   const card = {
     isConnected: true,
+    closest: (selector) => (selector === ".home-track, .home-grid-track" ? trackNode : null),
     hero: { id: "tt100", type: "movie", name: "Next Hero", needsEnrich: true },
     classList: { contains: (name) => name === "focused" }
   };
 
   const screen = Object.assign(Object.create(context.api), {
     layoutMode: "modern",
+    lastHomeInputAt,
     heroCandidates: [card.hero],
     heroItem: { id: "tt001", type: "movie", name: "Prev Hero" },
     container: {
@@ -125,6 +134,8 @@ function createHeroHarness({
     isLegacyTvRuntime: () => Boolean(profile.isLegacyTvRuntime),
     isModernVerticalScrollActive: () => scrollVerticalActive,
     isModernHydrationScrollActive: () => scrollHydrationActive,
+    isScrollAnimationActive: (container, axis) =>
+      container === trackNode && axis === "x" && trackScrollActive,
     getCurrentFocusedNode: () => card,
     getNodeHeroSource: (node) => node?.hero || null,
     syncCollectionHeroMedia() {},
@@ -145,11 +156,17 @@ function createHeroHarness({
     card,
     calls,
     scheduler,
+    advanceNow(deltaMs) {
+      nowMs += deltaMs;
+    },
     setHydrationScrollActive(next) {
       scrollHydrationActive = next;
     },
     setVerticalScrollActive(next) {
       scrollVerticalActive = next;
+    },
+    setTrackHorizontalScrollActive(next) {
+      trackScrollActive = next;
     }
   };
 }
@@ -502,9 +519,59 @@ test("focusNode skips redundant vertical visibility check on same-row horizontal
   assert.equal(calls.posterFlows.at(-1).options.deferUntilVerticalSettle, false);
 });
 
-test("focusNode defers collection GIF hydration into rAF and cancels stale frames on rapid moves", () => {
+test("TV browsing cadence stretches hero delay, pushes preloadDelay past 370ms, and honors track scroll + input quiet", () => {
+  const harness = createHeroHarness({
+    profile: { isTvRuntime: true, isPerformanceConstrained: false, isLegacyTvRuntime: false },
+    heroDelayMs: 450,
+    hydrationScrollActive: false,
+    trackHorizontalScrollActive: true,
+    lastHomeInputAt: 10000,
+    initialNow: 10000
+  });
+
+  // First key: keeps 450ms focus delay and schedules preload at 370ms (outside 350ms frame-pace window).
+  harness.screen.scheduleModernHeroUpdate(harness.card);
+  const firstPreloadTimer = Array.from(harness.scheduler.timers.values()).find(
+    (entry) => entry.id === harness.screen.heroBackdropPreloadTimer
+  );
+  const firstCommitTimer = Array.from(harness.scheduler.timers.values()).find(
+    (entry) => entry.id === harness.screen.heroFocusDelayTimer
+  );
+  assert.equal(firstPreloadTimer?.delay, 370);
+  assert.equal(firstCommitTimer?.delay, 450);
+
+  // Follow-up browsing key within 1400ms stretches delay to 1150ms and preloadDelay to 1070ms.
+  harness.advanceNow(900);
+  harness.screen.lastHomeInputAt = 10900;
+  harness.screen.scheduleModernHeroUpdate(harness.card);
+  const browsePreloadTimer = Array.from(harness.scheduler.timers.values()).find(
+    (entry) => entry.id === harness.screen.heroBackdropPreloadTimer
+  );
+  const browseCommitTimer = Array.from(harness.scheduler.timers.values()).find(
+    (entry) => entry.id === harness.screen.heroFocusDelayTimer
+  );
+  assert.equal(browsePreloadTimer?.delay, 1070);
+  assert.equal(browseCommitTimer?.delay, 1150);
+
+  // Even after input quiet passes, active horizontal track scroll keeps hero preload/commit deferred.
+  harness.advanceNow(400);
+  harness.scheduler.flushTimers();
+  harness.scheduler.flushRafs();
+  assert.equal(harness.calls.preloads.length, 0);
+  assert.equal(harness.calls.applies.length, 0);
+
+  harness.setTrackHorizontalScrollActive(false);
+  harness.scheduler.flushTimers();
+  harness.scheduler.flushRafs();
+  assert.deepEqual(harness.calls.preloads, ["tt100", "tt100"]);
+  assert.deepEqual(harness.calls.applies, [{ id: "tt100", enriching: false }]);
+});
+
+test("focusNode defers collection GIF hydration into 380ms timer on bounded TV and rAF on desktop", () => {
   const scheduler = createFakeTimers();
   const context = vm.createContext({
+    setTimeout: scheduler.setTimeout,
+    clearTimeout: scheduler.clearTimeout,
     requestAnimationFrame: scheduler.requestAnimationFrame,
     cancelAnimationFrame: scheduler.cancelAnimationFrame,
     internals: {
@@ -537,6 +604,7 @@ test("focusNode defers collection GIF hydration into rAF and cancels stale frame
   const collectionCardA = makeCard("col-a", true);
   const collectionCardB = makeCard("col-b", true);
   let activeFocus = regularCard;
+  let boundedTv = true;
   const gifHydrations = [];
   let posterFlowCalls = 0;
 
@@ -552,6 +620,7 @@ test("focusNode defers collection GIF hydration into rAF and cancels stale frame
     isPerformanceConstrained: () => false,
     isLegacyTvRuntime: () => false,
     shouldUseImmediateFocusScroll: () => false,
+    shouldUseBoundedHomeImageHydration: () => boundedTv,
     scheduleHomeLazyImageHydration() {},
     isCollectionFolderNode: (node) => Boolean(node?.collectionFolder),
     hydrateCollectionFocusGif(node, active) {
@@ -576,6 +645,7 @@ test("focusNode defers collection GIF hydration into rAF and cancels stale frame
     }
   });
 
+  // Bounded TV defers collection GIF hydration into a 380ms timer (outside 350ms frame-pace window).
   screen.focusNode(regularCard, collectionCardA, "right");
   assert.equal(gifHydrations.length, 0, "must not hydrate collection GIF synchronously in keydown");
   assert.equal(
@@ -583,15 +653,25 @@ test("focusNode defers collection GIF hydration into rAF and cancels stale frame
     0,
     "must not re-enter sync scheduleFocusedPosterFlow for collection targets"
   );
-  assert.equal(scheduler.rafs.size, 1);
+  assert.equal(scheduler.rafs.size, 0);
+  assert.equal(scheduler.timers.size, 1);
+  assert.equal(Array.from(scheduler.timers.values())[0].delay, 380);
 
-  // Rapid move before rAF fires cancels collectionCardA's pending hydration.
+  // Rapid move before 380ms timer fires cancels collectionCardA's pending hydration.
   screen.focusNode(collectionCardA, collectionCardB, "right");
   assert.equal(gifHydrations.length, 0);
-  assert.equal(scheduler.rafs.size, 1);
+  assert.equal(scheduler.timers.size, 1);
 
-  scheduler.flushRafs();
+  scheduler.flushTimers();
   assert.equal(gifHydrations.length, 1);
   assert.equal(gifHydrations[0].id, "col-b");
   assert.equal(gifHydrations[0].active, true);
+
+  // Desktop / non-bounded mode falls back to rAF deferral (still 0 sync reads on keydown).
+  boundedTv = false;
+  screen.focusNode(collectionCardB, collectionCardA, "left");
+  assert.equal(scheduler.rafs.size, 1);
+  scheduler.flushRafs();
+  assert.equal(gifHydrations.length, 2);
+  assert.equal(gifHydrations[1].id, "col-a");
 });
