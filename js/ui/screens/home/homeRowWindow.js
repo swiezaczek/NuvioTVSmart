@@ -7,8 +7,9 @@ export const HOME_ROW_PARKED_CLASS = "home-row-parked";
 export const HOME_ROW_WINDOW_SELECTOR = ".home-row-continue, .home-modern-row";
 // Classic and Grid scroll .home-main (Android: LazyColumn / LazyVerticalGrid).
 export const HOME_LEGACY_ROW_WINDOW_SELECTOR = ".home-row, .home-grid-section";
-// 150% of the rows viewport on each side keeps about two rows mounted ahead.
-const DEFAULT_ROOT_MARGIN = "150% 0px";
+// 75% of the rows viewport on each side keeps ~1-2 rows mounted ahead while
+// cutting off-screen card/layer count during compositor commits.
+const DEFAULT_ROOT_MARGIN = "75% 0px";
 
 export function isHomeRowWindowSupported(scope = globalThis) {
   return (
@@ -71,18 +72,30 @@ export function createHomeRowWindow({
     const entering = [];
     entries.forEach((entry) => {
       const visible = Boolean(entry.isIntersecting || entry.intersectionRatio > 0);
-      (visible ? entering : leaving).push(entry.target);
+      if (visible) {
+        entering.push(entry.target);
+      } else {
+        leaving.push(entry);
+      }
     });
-    // Read every height before the first write so parking costs one layout.
+    // Read every height before the first write so parking costs one layout;
+    // prefer entry.boundingClientRect when supplied by IntersectionObserver.
     const parked = leaving
-      .filter((section) => section.isConnected && !isParked(section) && !holdsFocus(section))
+      .filter((entry) => {
+        const section = entry.target;
+        return section.isConnected && !isParked(section) && !holdsFocus(section);
+      })
       // Fractional height: Grid sections are not whole pixels, and pinning the
       // rounded offsetHeight shifted everything below by up to half a pixel each.
-      .map((section) => {
+      .map((entry) => {
+        const section = entry.target;
         keepTrackScrollLeft(section);
+        const entryHeight = Number(entry.boundingClientRect?.height || 0);
         return [
           section,
-          Number(section.getBoundingClientRect?.().height || section.offsetHeight || 0)
+          entryHeight > 0
+            ? entryHeight
+            : Number(section.getBoundingClientRect?.().height || section.offsetHeight || 0)
         ];
       })
       .filter(([, height]) => height > 0);
