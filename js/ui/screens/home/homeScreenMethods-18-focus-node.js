@@ -56,6 +56,12 @@ export function createHomeScreenMethods18() {
         this.rememberMainRowFocus(target);
         const shouldDeferFocusEffects = this.shouldDeferContinueWatchingFocusEffects(target, direction, inputMeta);
         const usingDelayedCameraFollow = this.scheduleModernCameraFollow(target, direction, current, scrollAdjustments, inputMeta);
+        const currentMainAnchor =
+          this.layoutMode === "modern" && (direction === "left" || direction === "right") && typeof this.getMainFocusAnchor === "function"
+            ? this.getMainFocusAnchor(current)
+            : null;
+        const targetMainAnchor = currentMainAnchor ? this.getMainFocusAnchor(target) : null;
+        const sameModernRowAnchor = Boolean(currentMainAnchor && targetMainAnchor && currentMainAnchor === targetMainAnchor);
         if (!usingDelayedCameraFollow) {
           this.ensureTrackHorizontalVisibility(target, direction, scrollAdjustments.horizontal);
           const sameHorizontalRow =
@@ -63,7 +69,7 @@ export function createHomeScreenMethods18() {
             !scrollAdjustments.vertical &&
             String(current?.dataset?.navRow || "") !== "" &&
             current?.dataset?.navRow === target?.dataset?.navRow;
-          if (!shouldDeferFocusEffects && !sameHorizontalRow) {
+          if (!shouldDeferFocusEffects && !sameHorizontalRow && !sameModernRowAnchor) {
             this.ensureMainVerticalVisibility(target, direction, current, scrollAdjustments.vertical);
           }
         }
@@ -75,10 +81,10 @@ export function createHomeScreenMethods18() {
           this.scheduleDeferredContinueWatchingFocusEffects(target);
         } else {
           this.scheduleModernHeroUpdate(target, {
-            deferUntilVerticalSettle: direction === "up" || direction === "down"
+            deferUntilVerticalSettle: deferHomeArtworkUntilSettle
           });
           this.scheduleFocusedPosterFlow(target, {
-            deferUntilVerticalSettle: direction === "up" || direction === "down"
+            deferUntilVerticalSettle: deferHomeArtworkUntilSettle
           });
         }
       } else {

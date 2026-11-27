@@ -2,6 +2,8 @@ import * as internals from "./homeScreenContext.js";
 import { getHeroEnrichDwellMs, isModernTvProfile } from "../../../platform/tvPerformancePolicy.js";
 import { getTvRuntimePerformanceProfile } from "../../../platform/tvRuntimePerformance.js";
 
+const MODERN_TV_HERO_ENRICH_SETTLE_DELAY_MS = 160;
+
 export function createHomeScreenMethods10() {
   const { MODERN_HOME_CONSTANTS, shouldEnrichModernHero, preloadHeroAssets, buildHeroIdentity } = internals;
 
@@ -33,9 +35,14 @@ export function createHomeScreenMethods10() {
       if (isRapidNav || immediate) {
         this.container?.querySelector(".home-modern-hero-card")?.classList.add("is-hero-focus-pending");
       }
-      const shouldWaitForCamera = deferUntilVerticalSettle || isModernTvProfile(getTvRuntimePerformanceProfile());
+      const tvProfile = getTvRuntimePerformanceProfile();
+      const shouldWaitForCamera = !immediate && (deferUntilVerticalSettle || isModernTvProfile(tvProfile));
+      const isCameraScrollActive = () =>
+        typeof this.isModernHydrationScrollActive === "function"
+          ? Boolean(this.isModernHydrationScrollActive())
+          : Boolean(this.isModernVerticalScrollActive?.());
       const waitForVerticalSettle = (callback) => {
-        if (shouldWaitForCamera && this.isModernHydrationScrollActive()) {
+        if (shouldWaitForCamera && isCameraScrollActive()) {
           this.heroBackdropPreloadTimer = setTimeout(
             () => waitForVerticalSettle(callback),
             MODERN_HOME_CONSTANTS.verticalScrollSettlePollMs
@@ -63,7 +70,7 @@ export function createHomeScreenMethods10() {
         });
       }, preloadDelay);
       const commitHeroWhenSettled = () => {
-        if (deferUntilVerticalSettle && this.isModernVerticalScrollActive()) {
+        if (shouldWaitForCamera && isCameraScrollActive()) {
           this.heroFocusDelayTimer = setTimeout(commitHeroWhenSettled, MODERN_HOME_CONSTANTS.verticalScrollSettlePollMs);
           return;
         }
@@ -91,12 +98,18 @@ export function createHomeScreenMethods10() {
           if (!latestHero || buildHeroIdentity(latestHero) !== scheduledHeroIdentity) {
             return;
           }
+          const activeTvProfile = getTvRuntimePerformanceProfile();
           const shouldEnrichHero = shouldEnrichModernHero(latestHero);
           // While the dwell runs the hero is a plain, complete catalog hero:
           // the enriching flag would keep the previous backdrop on screen.
-          const enrichDwellMs = shouldEnrichHero ? getHeroEnrichDwellMs(getTvRuntimePerformanceProfile()) : 0;
+          const enrichDwellMs = shouldEnrichHero ? getHeroEnrichDwellMs(activeTvProfile) : 0;
+          const postCommitEnrichDelayMs =
+            shouldEnrichHero && !enrichDwellMs && activeTvProfile?.isTvRuntime && !immediate ? MODERN_TV_HERO_ENRICH_SETTLE_DELAY_MS : 0;
+          const effectiveEnrichDelayMs = enrichDwellMs || postCommitEnrichDelayMs;
           const focusedHero =
-            shouldEnrichHero && !enrichDwellMs ? { ...latestHero, heroMetaEnriching: true } : { ...latestHero, heroMetaEnriching: false };
+            shouldEnrichHero && !effectiveEnrichDelayMs
+              ? { ...latestHero, heroMetaEnriching: true }
+              : { ...latestHero, heroMetaEnriching: false };
 
           // Android publishes the newly focused preview as soon as focus settles;
           // metadata enrichment remains an independent background update. Waiting
@@ -110,14 +123,20 @@ export function createHomeScreenMethods10() {
           }
           this.applyHeroToDom();
 
-          if (shouldEnrichHero && enrichDwellMs) {
+          if (shouldEnrichHero && effectiveEnrichDelayMs > 0) {
             void preloadHeroAssets(focusedHero, "modern");
-            this.heroEnrichDwellTimer = setTimeout(() => {
+            const scheduleEnrichAfterCamera = () => {
               this.heroEnrichDwellTimer = null;
-              if (Number(this.heroFocusToken || 0) === focusToken) {
-                void this.enrichCurrentHeroAsync(focusedHero, focusToken, { deferCommit: true });
+              if (Number(this.heroFocusToken || 0) !== focusToken) {
+                return;
               }
-            }, enrichDwellMs);
+              if (shouldWaitForCamera && isCameraScrollActive()) {
+                this.heroEnrichDwellTimer = setTimeout(scheduleEnrichAfterCamera, MODERN_HOME_CONSTANTS.verticalScrollSettlePollMs);
+                return;
+              }
+              void this.enrichCurrentHeroAsync(focusedHero, focusToken, { deferCommit: true });
+            };
+            this.heroEnrichDwellTimer = setTimeout(scheduleEnrichAfterCamera, effectiveEnrichDelayMs);
             return;
           }
           if (shouldEnrichHero) {
