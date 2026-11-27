@@ -10,6 +10,7 @@ import { getTvArtworkPixelRatio } from "../../../platform/tvRuntimePerformance.j
 import { getArtworkEvictIdleMs, getArtworkEvictMarginPx, getDeviceMemoryGb } from "../../../platform/tvPerformancePolicy.js";
 
 export function createHomeScreenMethods24() {
+  const HOME_BOUNDED_HYDRATION_PACE_QUIET_MS = 375;
   const imageRequests = new WeakMap();
   const {
     MODERN_HOME_CONSTANTS,
@@ -110,13 +111,33 @@ export function createHomeScreenMethods24() {
         }
         const target = anchorNode instanceof HTMLElement ? anchorNode : null;
         const targetTrack = target?.closest?.(".home-track, .home-grid-track") || null;
-        const hydrationDelayMs = this.shouldUseImmediateFocusScroll()
-          ? MODERN_HOME_CONSTANTS.smartTvLazyHydrationDebounceMs
-          : MODERN_HOME_CONSTANTS.verticalScrollSettlePollMs;
+        const lastInputAt = Number(this.lastHomeInputAt || 0);
+        const paceQuietRemainingMs =
+          this.shouldUseBoundedHomeImageHydration() && lastInputAt > 0
+            ? Math.max(0, HOME_BOUNDED_HYDRATION_PACE_QUIET_MS - (Date.now() - lastInputAt))
+            : 0;
+        const hydrationDelayMs = Math.max(
+          this.shouldUseImmediateFocusScroll()
+            ? MODERN_HOME_CONSTANTS.smartTvLazyHydrationDebounceMs
+            : MODERN_HOME_CONSTANTS.verticalScrollSettlePollMs,
+          paceQuietRemainingMs
+        );
         const retryAfterVerticalSettle = () => {
           this.homeLazyImageHydrationSettleTimer = null;
-          if (this.isModernHydrationScrollActive() || (targetTrack && this.isScrollAnimationActive?.(targetTrack, "x"))) {
-            this.homeLazyImageHydrationSettleTimer = setTimeout(retryAfterVerticalSettle, MODERN_HOME_CONSTANTS.verticalScrollSettlePollMs);
+          const retryLastInputAt = Number(this.lastHomeInputAt || 0);
+          const retryPaceRemainingMs =
+            this.shouldUseBoundedHomeImageHydration() && retryLastInputAt > 0
+              ? HOME_BOUNDED_HYDRATION_PACE_QUIET_MS - (Date.now() - retryLastInputAt)
+              : 0;
+          if (
+            this.isModernHydrationScrollActive() ||
+            (targetTrack && this.isScrollAnimationActive?.(targetTrack, "x")) ||
+            retryPaceRemainingMs > 0
+          ) {
+            this.homeLazyImageHydrationSettleTimer = setTimeout(
+              retryAfterVerticalSettle,
+              Math.max(MODERN_HOME_CONSTANTS.verticalScrollSettlePollMs, retryPaceRemainingMs)
+            );
             return;
           }
           const settledRefreshIndex = Boolean(this.pendingHomeLazyImageSettleRefreshIndex);

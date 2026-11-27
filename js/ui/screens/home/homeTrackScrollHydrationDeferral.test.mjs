@@ -588,3 +588,87 @@ test("scheduleHomeLazyImageHydration avoids eager anchor querySelector and hydra
   assert.equal(g2WrappedNextLine.rectReads, 1, ".home-grid-track must keep measuring wrapped rows");
   assert.equal(g2WrappedNextLine.src, "https://art/g2.jpg");
 });
+
+test("bounded TV hydration and viewport scroll handler defer past 375ms post-input frame-pace window", async () => {
+  const { context } = buildCombinedHarness();
+  const { row, anchor, firstImg } = makeTrackFixture(context);
+  const listeners = new Map();
+  let viewportRectReads = 0;
+  let hydrationTimes = [];
+
+  const viewport = {
+    isConnected: true,
+    getBoundingClientRect: () => {
+      viewportRectReads += 1;
+      return { top: 0, bottom: 1080, left: 0, right: 1920, width: 1920, height: 1080 };
+    },
+    addEventListener: (name, fn) => listeners.set(name, fn),
+    removeEventListener: () => {}
+  };
+
+  const screen = Object.assign(
+    Object.create(Object.assign({}, context.dpadApi, context.hydrationApi)),
+    {
+      container: {
+        contains: (node) => node === anchor || node === row || node === viewport,
+        querySelector: (sel) => (sel === ".home-modern-rows-viewport" ? viewport : null),
+        querySelectorAll: () => [firstImg]
+      },
+      layoutMode: "modern",
+      boundHomeViewport: null,
+      boundHomeViewportScrollHandler: null,
+      lastHomeInputAt: Date.now(),
+      getHomeViewport: () => viewport,
+      isPerformanceConstrained: () => false,
+      isLegacyTvRuntime: () => false,
+      isSidebarFocusActive: () => false,
+      shouldUseImmediateFocusScroll: () => false,
+      shouldSuspendModernViewportFocusSync: () => false,
+      isModernHydrationScrollActive: () => false,
+      isScrollAnimationActive: () => false,
+      isMainNode: () => true,
+      isNodeWithinMainViewport: () => {
+        viewportRectReads += 1;
+        return true;
+      },
+      getCurrentFocusedNode: () => anchor
+    }
+  );
+  const origHydrate = screen.hydrateHomeLazyImages.bind(screen);
+  screen.hydrateHomeLazyImages = (...args) => {
+    hydrationTimes.push(Date.now());
+    return origHydrate(...args);
+  };
+
+  // 1. Viewport scroll event inside <375ms post-input must defer settle hydration and skip premature viewport check.
+  const startAt = Date.now();
+  screen.bindHomeViewportEvents();
+  listeners.get("scroll")({ target: viewport });
+  await new Promise((r) => setTimeout(r, 150));
+  assert.equal(viewportRectReads, 0, "must skip isNodeWithinMainViewport inside 375ms window");
+  assert.equal(hydrationTimes.length, 0, "must not hydrate inside 375ms post-input window");
+
+  await new Promise((r) => setTimeout(r, 270));
+  assert.equal(hydrationTimes.length, 1, "must hydrate once 375ms pace window clears");
+  assert.ok(
+    hydrationTimes[0] - startAt >= 365,
+    `viewport settle hydration ran too early (${hydrationTimes[0] - startAt}ms)`
+  );
+
+  // 2. Direct deferred scheduleHomeLazyImageHydration also waits >= 375ms after lastHomeInputAt.
+  hydrationTimes = [];
+  const secondStart = Date.now();
+  screen.lastHomeInputAt = secondStart;
+  screen.scheduleHomeLazyImageHydration(anchor, {
+    deferUntilVerticalSettle: true,
+    viewportChanged: true
+  });
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(hydrationTimes.length, 0, "retryAfterVerticalSettle must wait past 375ms");
+  await new Promise((r) => setTimeout(r, 230));
+  assert.equal(hydrationTimes.length, 1);
+  assert.ok(
+    hydrationTimes[0] - secondStart >= 365,
+    `retryAfterVerticalSettle ran too early (${hydrationTimes[0] - secondStart}ms)`
+  );
+});
