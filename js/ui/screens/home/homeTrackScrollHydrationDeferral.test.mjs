@@ -671,4 +671,108 @@ test("bounded TV hydration and viewport scroll handler defer past 375ms post-inp
     hydrationTimes[0] - secondStart >= 365,
     `retryAfterVerticalSettle ran too early (${hydrationTimes[0] - secondStart}ms)`
   );
+  if (screen.homeLazyImageQuietPrefetchTimer) {
+    clearTimeout(screen.homeLazyImageQuietPrefetchTimer);
+    screen.homeLazyImageQuietPrefetchTimer = null;
+  }
+});
+
+test("bounded TV hydration clamps margins during active D-pad stepping and prefetches neighbor rows after 1600ms quiet", async () => {
+  const { context } = buildCombinedHarness();
+  const viewport = {
+    isConnected: true,
+    getBoundingClientRect: () => ({
+      top: 0,
+      bottom: 1080,
+      left: 0,
+      right: 1920,
+      width: 1920,
+      height: 1080
+    })
+  };
+
+  const makeRowWithCard = (top, src) => {
+    const r = new context.HTMLElement();
+    r.isConnected = true;
+    r.getBoundingClientRect = () => ({ top, bottom: top + 320, left: 0, right: 1920 });
+    r.querySelector = () => ({});
+    const img = new context.HTMLImageElement();
+    const attrs = new Map();
+    img.isConnected = true;
+    img.dataset = { src };
+    img.loading = "";
+    img.classList = { contains: (n) => n === "content-poster" };
+    img.closest = (sel) => (sel === ROW_SELECTOR ? r : null);
+    img.getBoundingClientRect = () => ({
+      top,
+      bottom: top + 320,
+      left: 120,
+      right: 340,
+      width: 220,
+      height: 320
+    });
+    img.getAttribute = (n) => (attrs.has(n) ? attrs.get(n) : null);
+    img.removeAttribute = (n) => {
+      attrs.delete(n);
+      if (n === "data-src") delete img.dataset.src;
+    };
+    Object.defineProperty(img, "src", {
+      get: () => attrs.get("src") || "",
+      set: (v) => attrs.set("src", v)
+    });
+    return { row: r, img };
+  };
+
+  const visible = makeRowWithCard(400, "https://art/visible-row.jpg");
+  // top=1300 is 220px below 1080: outside clamped 160px stepping margin, inside normal 480px margin.
+  const neighbor = makeRowWithCard(1300, "https://art/neighbor-row.jpg");
+  const anchor = new context.HTMLElement();
+  anchor.isConnected = true;
+  anchor.offsetWidth = 220;
+  anchor.closest = (sel) => (sel === ROW_SELECTOR ? visible.row : null);
+
+  const screen = Object.assign(Object.create(context.hydrationApi), {
+    container: {
+      querySelector: (sel) => (sel === ".home-modern-rows-viewport" ? viewport : null),
+      querySelectorAll: () => [visible.img, neighbor.img]
+    },
+    homeLazyImageHydrationIndex: [
+      { row: visible.row, images: [visible.img] },
+      { row: neighbor.row, images: [neighbor.img] }
+    ],
+    lastHomeLazyImageHydrationAnchorRow: null,
+    lastHomeInputAt: Date.now(),
+    isPerformanceConstrained: () => false,
+    isLegacyTvRuntime: () => false,
+    isSidebarFocusActive: () => false,
+    getCurrentFocusedNode: () => anchor
+  });
+
+  screen.hydrateHomeLazyImages(anchor, { forceFullScan: true });
+  assert.equal(
+    visible.img.src,
+    "https://art/visible-row.jpg",
+    "visible card must hydrate immediately"
+  );
+  assert.equal(
+    neighbor.img.src,
+    "",
+    "220px-offscreen neighbor row must stay deferred under 160px active stepping margin"
+  );
+  assert.ok(
+    screen.homeLazyImageQuietPrefetchTimer,
+    "must arm 1600ms quiet neighbor prefetch timer"
+  );
+
+  // Wait for 1600ms quiet prefetch to fire with includeNeighborRows: true (480px margin).
+  await new Promise((r) => setTimeout(r, 1700));
+  assert.equal(
+    neighbor.img.src,
+    "https://art/neighbor-row.jpg",
+    "neighbor row must hydrate once 1600ms quiet prefetch completes"
+  );
+  if (screen.homeLazyImageQuietPrefetchTimer) {
+    clearTimeout(screen.homeLazyImageQuietPrefetchTimer);
+    screen.homeLazyImageQuietPrefetchTimer = null;
+  }
 });

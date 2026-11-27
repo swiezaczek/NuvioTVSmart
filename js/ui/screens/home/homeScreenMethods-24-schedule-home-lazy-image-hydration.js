@@ -216,6 +216,10 @@ export function createHomeScreenMethods24() {
       // A frame may already be queued when the sidebar takes focus. Drop it
       // here as well, so the menu does not inherit the Home hydration burst.
       if (typeof this.isSidebarFocusActive === "function" && this.isSidebarFocusActive()) {
+        if (this.homeLazyImageQuietPrefetchTimer) {
+          clearTimeout(this.homeLazyImageQuietPrefetchTimer);
+          this.homeLazyImageQuietPrefetchTimer = null;
+        }
         return;
       }
       const anchorRow = anchorNode?.closest?.(HOME_LAZY_IMAGE_ROW_SELECTOR) || null;
@@ -283,11 +287,21 @@ export function createHomeScreenMethods24() {
             }
           : viewportRect;
       const constrained = this.isPerformanceConstrained();
+      const lastInputAt = Number(this.lastHomeInputAt || 0);
+      const isActiveDpadStepping = Boolean(
+        useBoundedTvHydration && !includeNeighborRows && lastInputAt > 0 && Date.now() - lastInputAt < 1600
+      );
+      if (includeNeighborRows && this.homeLazyImageQuietPrefetchTimer) {
+        clearTimeout(this.homeLazyImageQuietPrefetchTimer);
+        this.homeLazyImageQuietPrefetchTimer = null;
+      }
       // Android prefetches the visible window plus a small row/card neighborhood.
       // Keep the browser's DOM-mounted rows from turning every vertical focus
-      // move into a burst of eager image requests.
-      const verticalMargin = useBoundedTvHydration ? 480 : constrained ? 720 : 1200;
-      const horizontalMargin = useBoundedTvHydration ? 320 : constrained ? 520 : 1000;
+      // move into a burst of eager image requests. During active D-pad stepping
+      // on TV, keep focused + visible cards hydrated and defer neighbor rows
+      // until input rests for 1600ms.
+      const verticalMargin = isActiveDpadStepping ? 160 : useBoundedTvHydration ? 480 : constrained ? 720 : 1200;
+      const horizontalMargin = isActiveDpadStepping ? 220 : useBoundedTvHydration ? 320 : constrained ? 520 : 1000;
       const focusedRow = Boolean(anchorRow && anchorRow === anchorNode?.closest?.(HOME_LAZY_IMAGE_ROW_SELECTOR));
       const focusedRowMargin = focusedRow ? Math.max(96, Math.round(Number(anchorNode?.offsetWidth || 0) * 0.65)) : horizontalMargin;
       const pendingLoads = [];
@@ -378,6 +392,36 @@ export function createHomeScreenMethods24() {
       // for the D-pad hot path.
       if (!isHorizontalOnlyPass && getTvRuntimePerformanceProfile().isTvRuntime && Router.getCurrent() === "home") {
         this.scheduleHomeLazyImageEviction(anchorNode);
+      }
+      if (isActiveDpadStepping) {
+        if (this.homeLazyImageQuietPrefetchTimer) {
+          clearTimeout(this.homeLazyImageQuietPrefetchTimer);
+        }
+        const scheduleQuietPrefetch = () => {
+          const latestInputAt = Number(this.lastHomeInputAt || 0);
+          const remainingQuietMs = latestInputAt > 0 ? Math.max(0, 1600 - (Date.now() - latestInputAt)) : 0;
+          if (remainingQuietMs > 0) {
+            this.homeLazyImageQuietPrefetchTimer = setTimeout(onQuietPrefetch, remainingQuietMs);
+            return;
+          }
+          this.homeLazyImageQuietPrefetchTimer = null;
+          if (!this.container || Router.getCurrent() !== "home") {
+            return;
+          }
+          this.scheduleHomeLazyImageHydration(this.getCurrentFocusedNode?.() || anchorNode, {
+            includeNeighborRows: true,
+            viewportChanged: true
+          });
+        };
+        const onQuietPrefetch = () => {
+          this.homeLazyImageQuietPrefetchTimer = null;
+          if (!this.container || Router.getCurrent() !== "home") {
+            return;
+          }
+          scheduleQuietPrefetch();
+        };
+        const initialWaitMs = Math.max(50, 1600 - (Date.now() - lastInputAt));
+        this.homeLazyImageQuietPrefetchTimer = setTimeout(onQuietPrefetch, initialWaitMs);
       }
     },
     assignHomeLazyImageSource(image, src, priority = 2, premeasured = null) {
