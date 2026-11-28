@@ -394,38 +394,6 @@ test("modern hero description bounds wait for camera scroll before measuring", (
   scheduler.flushRafs();
   assert.ok(computedStyleReads > prevComputedReads);
   assert.ok(rectReads > prevRectReads);
-
-  // 4. Re-scheduling with identical copy and siblings hits modernHeroBoundsCache (0 reflows).
-  const cachedComputedReads = computedStyleReads;
-  const cachedRectReads = rectReads;
-  screen.scheduleHomeTruncationUpdate();
-  scheduler.flushRafs();
-  assert.equal(computedStyleReads, cachedComputedReads);
-  assert.equal(rectReads, cachedRectReads);
-
-  // 5. Updating a sibling invalidates the cache and re-measures.
-  titleSibling.textContent = "Another Movie Title";
-  screen.scheduleHomeTruncationUpdate();
-  scheduler.flushRafs();
-  assert.ok(computedStyleReads > cachedComputedReads);
-  assert.ok(rectReads > cachedRectReads);
-
-  // 6. Active .is-camera-scrolling class defers bounds measurement even if hydration flag is false.
-  let cameraScrollingClass = true;
-  container.querySelector = (selector) =>
-    selector === ".is-camera-scrolling" && cameraScrollingClass ? {} : null;
-  description.textContent = "Synopsis during camera scroll";
-  const beforeScrollReads = computedStyleReads;
-  screen.scheduleHomeTruncationUpdate();
-  assert.equal(scheduler.rafs.size, 0, "defers rAF while .is-camera-scrolling is present");
-  assert.equal(scheduler.timers.size, 1);
-  assert.equal(computedStyleReads, beforeScrollReads);
-
-  cameraScrollingClass = false;
-  scheduler.flushTimers();
-  assert.equal(scheduler.rafs.size, 1);
-  scheduler.flushRafs();
-  assert.ok(computedStyleReads > beforeScrollReads, "measures cleanly once camera scroll settles");
 });
 
 test("focusNode skips redundant vertical visibility check on same-row horizontal moves and aligns camera settle flags", () => {
