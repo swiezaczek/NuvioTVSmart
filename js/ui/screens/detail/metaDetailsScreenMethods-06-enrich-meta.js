@@ -8,6 +8,7 @@ export function createMetaDetailsScreenMethods06() {
     TmdbMetadataService,
     imdbEpisodeRatingsRepository,
     TmdbSettingsStore,
+    PlayerSettingsStore,
     TMDB_API_KEY,
     TMDB_BASE_URL,
     isSeriesDetailMeta,
@@ -246,7 +247,16 @@ export function createMetaDetailsScreenMethods06() {
         return resolveDirectSource(fallbackSource);
       }
       const itemType = String(meta?.type || this.params?.itemType || "movie");
-      const resolutionKey = [meta?.id, itemType, settings.language, settings.enabled, settings.useTrailers].join("|");
+      const directEnabled = PlayerSettingsStore.get()?.vetroDirectTrailersEnabled !== false;
+      const resolutionKey = [
+        meta?.id,
+        itemType,
+        settings.language,
+        settings.enabled,
+        settings.useTrailers,
+        fallbackSource?.ytId || "",
+        directEnabled
+      ].join("|");
       if (this.trailerSourceResolutionKey === resolutionKey) {
         if (this.trailerSourceResolutionPromise) {
           return this.trailerSourceResolutionPromise;
@@ -270,7 +280,7 @@ export function createMetaDetailsScreenMethods06() {
     },
     async refreshTrailerSource(meta = this.meta, token = this.detailLoadToken) {
       const nextSource = await this.resolvePreferredTrailerSource(meta);
-      if (token !== this.detailLoadToken) {
+      if (token !== this.detailLoadToken || this.isTrailerPlaying) {
         return;
       }
       const currentKey = JSON.stringify(this.trailerSource || null);

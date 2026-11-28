@@ -185,7 +185,22 @@ export function createMetaDetailsScreenMethods03() {
       this.collectionItems = [];
       this.collectionName = "";
       this.streamItems = [];
-      this.trailerSource = resolveTrailerSource(meta);
+      const baseTrailerSource = resolveTrailerSource(meta);
+      if (
+        this.trailerHandoff?.url &&
+        (!baseTrailerSource?.ytId || !this.trailerHandoff.ytId || String(this.trailerHandoff.ytId) === String(baseTrailerSource.ytId))
+      ) {
+        this.trailerSource = {
+          kind: "video",
+          streamType: this.trailerHandoff.streamType || "mp4",
+          url: this.trailerHandoff.url,
+          ytId: this.trailerHandoff.ytId || baseTrailerSource?.ytId || "",
+          subtitles: Array.isArray(this.trailerHandoff.subtitles) ? this.trailerHandoff.subtitles : [],
+          fallbackYoutube: baseTrailerSource?.kind === "youtube" ? baseTrailerSource : null
+        };
+      } else {
+        this.trailerSource = baseTrailerSource;
+      }
       if (isSeriesDetailMeta(meta, this.episodes)) {
         this.seriesRatingsBySeason = {};
       } else {
@@ -244,7 +259,9 @@ export function createMetaDetailsScreenMethods03() {
         this.resumeProgress = latestProgress && isWatchProgressInProgress(latestProgress) ? latestProgress : null;
         const currentProgressItemsForDetail = this.resumeProgress ? [this.resumeProgress, ...currentProgressItems] : currentProgressItems;
         this.buildEpisodeState(currentProgressItemsForDetail, currentWatchedItems, this.enrichedWatchedState);
-        this.trailerSource = resolveTrailerSource(this.meta);
+        if (!this.isTrailerPlaying && this.trailerSource?.kind !== "video") {
+          this.trailerSource = resolveTrailerSource(this.meta);
+        }
         if (!this.castItems.length) {
           const fallbackCast = await withTimeout(this.fetchTmdbCastFallback(this.meta), 3200, []);
           if (token !== this.detailLoadToken) {

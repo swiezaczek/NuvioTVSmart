@@ -267,6 +267,11 @@ export function createMetaDetailsScreenMethods19() {
       if (mountedVideo) {
         mountedVideo.defaultMuted = true;
         mountedVideo.muted = true;
+        mountedVideo.controls = false;
+        mountedVideo.removeAttribute?.("controls");
+        try {
+          mountedVideo.disableRemotePlayback = true;
+        } catch (_) {}
         try {
           mountedVideo.volume = 0;
         } catch (_) {}

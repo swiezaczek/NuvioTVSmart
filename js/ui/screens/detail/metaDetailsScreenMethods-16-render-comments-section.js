@@ -553,12 +553,12 @@ export function createMetaDetailsScreenMethods16() {
       if (this.detailScrollHandler) {
         content.removeEventListener("scroll", this.detailScrollHandler);
       }
-      this.detailScrollHandler = () => {
+      this.detailScrollHandler = (event = null) => {
         const shell = this.container?.querySelector(".series-detail-shell");
         if (!shell) {
           return;
         }
-        if (this.isTrailerPlaying && this.trailerPlaybackMode === "autoplay") {
+        if (event && this.isTrailerPlaying && this.trailerPlaybackMode === "autoplay") {
           this.stopTrailerPlayback({ restartAutoplay: false });
         }
         shell.classList.toggle("detail-scrolled", content.scrollTop > 160);
@@ -659,8 +659,12 @@ export function createMetaDetailsScreenMethods16() {
       this.container.addEventListener("click", this.detailClickHandler, true);
       this.detailScrollHandler();
       this.restoreChromeState();
-      this.syncTrailerDom();
-      this.restartTrailerAutoplayTimer();
+      if (!this.isTrailerPlaying || (!this.trailerUiRefs?.video && !this.trailerUiRefs?.frame)) {
+        this.syncTrailerDom();
+      }
+      if (!this.isTrailerPlaying) {
+        this.restartTrailerAutoplayTimer();
+      }
       this.restorePendingFocus();
       this.syncEpisodeTitleMarquee();
     },

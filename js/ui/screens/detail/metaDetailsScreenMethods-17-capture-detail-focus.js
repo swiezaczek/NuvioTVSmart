@@ -350,25 +350,34 @@ export function createMetaDetailsScreenMethods17() {
         return;
       }
       const handoff =
-        this.trailerHandoff && (!this.trailerSource?.ytId || String(this.trailerHandoff.ytId || "") === String(this.trailerSource.ytId))
+        this.trailerHandoff &&
+        (!this.trailerSource?.ytId || !this.trailerHandoff.ytId || String(this.trailerHandoff.ytId) === String(this.trailerSource.ytId))
           ? this.trailerHandoff
           : null;
       if (handoff) {
         const startAtSeconds = Math.max(0, Number(handoff.currentTime || 0));
         this.trailerHandoff = null;
+        const hasDirectHandoffUrl = Boolean(handoff.url);
+        if (hasDirectHandoffUrl && this.trailerSource?.kind !== "video") {
+          this.trailerSource = {
+            kind: "video",
+            streamType: handoff.streamType || "mp4",
+            url: handoff.url,
+            ytId: handoff.ytId || this.trailerSource?.ytId || "",
+            subtitles: Array.isArray(handoff.subtitles) ? handoff.subtitles : [],
+            fallbackYoutube: this.trailerSource?.kind === "youtube" ? this.trailerSource : null
+          };
+        }
         this.playTrailer({
           muted: handoff.muted === true,
           restart: true,
           initiatedByUser: false,
+          preserveSource: hasDirectHandoffUrl || this.trailerSource?.kind === "video",
           startAtSeconds
         });
         return;
       }
-      if (
-        this.trailerSource?.kind === "youtube" &&
-        this.trailerSource?.ytId &&
-        typeof resolveVetroDirectTrailer === "function"
-      ) {
+      if (this.trailerSource?.kind === "youtube" && this.trailerSource?.ytId && typeof resolveVetroDirectTrailer === "function") {
         const captionOptions = typeof detailTrailerCaptionOptions === "function" ? detailTrailerCaptionOptions() : {};
         void resolveVetroDirectTrailer({
           ytId: this.trailerSource.ytId,

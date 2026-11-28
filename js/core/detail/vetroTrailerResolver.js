@@ -4,7 +4,7 @@ import { loadStreamingLibs } from "../../runtime/loadStreamingLibs.js";
 import { PlayerSettingsStore } from "../../data/local/playerSettingsStore.js";
 
 const DEFAULT_TRAILER_RESOLVER_URL = "http://127.0.0.1:8102";
-const RESOLVER_TIMEOUT_MS = 1600;
+const RESOLVER_TIMEOUT_MS = 8000;
 const CIRCUIT_BREAKER_BACKOFF_MS = 60_000;
 const DEFAULT_CACHE_TTL_MS = 30 * 60 * 1000;
 const MAX_CACHE_ENTRIES = 48;
@@ -102,6 +102,19 @@ function getResolverCandidateBaseUrls() {
   return candidates;
 }
 
+function isTimeoutError(error) {
+  return Boolean(
+    error &&
+    (error.code === "REQUEST_TIMEOUT" ||
+      error.name === "TimeoutError" ||
+      error.name === "AbortError")
+  );
+}
+
+function isHttpUrl(value) {
+  return /^https?:\/\/\S+$/i.test(String(value || "").trim());
+}
+
 function normalizeStreamType(value) {
   const normalized = String(value || "mp4")
     .trim()
@@ -172,6 +185,8 @@ export async function resolveVetroDirectTrailer({
     `&maxHeight=${height}`;
 
   const promise = (async () => {
+    let sawReachableResponse = false;
+    let sawPinnedTimeout = false;
     let sawTransportFailure = false;
     try {
       for (const baseUrl of candidates) {
@@ -182,34 +197,40 @@ export async function resolveVetroDirectTrailer({
             if (!response) {
               throw new Error("Empty trailer resolver response");
             }
-            if (Number(response.status || 0) >= 500) {
-              throw new Error(`Trailer resolver HTTP ${response.status}`);
+            let data = null;
+            try {
+              data = await response.json();
+            } catch (_) {
+              data = null;
             }
             if (!response.ok) {
               return { reachable: true, data: null };
             }
-            return { reachable: true, data: await response.json() };
+            return { reachable: true, data };
           }, RESOLVER_TIMEOUT_MS);
 
+          sawReachableResponse = true;
           activeBaseUrl = baseUrl;
           circuitOpenUntilMs = 0;
 
           const data = outcome?.data;
-          if (!data || data.ok !== true || !data.url) {
+          if (!data || data.ok !== true || !isHttpUrl(data.url)) {
             return null;
           }
 
           const value = {
             kind: "video",
             streamType: normalizeStreamType(data.streamType),
-            url: String(data.url),
+            url: String(data.url).trim(),
             ytId: cleanYtId,
             subtitles: Array.isArray(data.subtitles)
               ? data.subtitles
                   .filter((sub) => sub && (sub.url || sub.src))
                   .map((sub) => ({
                     lang: String(sub.lang || sub.srclang || "en").trim(),
-                    label: String(sub.label || sub.lang || sub.srclang || "Subtitles").trim(),
+                    label: String(
+                      sub.label || sub.name || sub.lang || sub.srclang || "Subtitles"
+                    ).trim(),
                     url: String(sub.url || sub.src).trim()
                   }))
               : [],
@@ -223,11 +244,17 @@ export async function resolveVetroDirectTrailer({
             expiresAt: Date.now() + ttlMs
           });
           return value;
-        } catch (_) {
+        } catch (error) {
+          if (activeBaseUrl && baseUrl === activeBaseUrl && isTimeoutError(error)) {
+            // Active endpoint is already proven reachable; a single slow extraction
+            // timeout must not wipe activeBaseUrl or trip the 60s circuit breaker.
+            sawPinnedTimeout = true;
+            break;
+          }
           sawTransportFailure = true;
         }
       }
-      if (sawTransportFailure) {
+      if (!sawReachableResponse && !sawPinnedTimeout && sawTransportFailure) {
         activeBaseUrl = null;
         circuitOpenUntilMs = Date.now() + CIRCUIT_BREAKER_BACKOFF_MS;
       }
@@ -392,6 +419,9 @@ export async function attachTrailerVideoStream(
   try {
     video.crossOrigin = "anonymous";
     video.setAttribute?.("crossorigin", "anonymous");
+    video.controls = false;
+    video.removeAttribute?.("controls");
+    video.disableRemotePlayback = true;
   } catch (_) {}
 
   attachSubtitleTracks(video, source.subtitles, Boolean(captionsEnabled), state.trackElements);
@@ -434,6 +464,16 @@ export async function attachTrailerVideoStream(
       if (events.PLAYBACK_ERROR) {
         player.on?.(events.PLAYBACK_ERROR, triggerFatalError);
       }
+      if (events.CAN_PLAY && video.autoplay !== false) {
+        let startupPlayEnsured = false;
+        player.on?.(events.CAN_PLAY, () => {
+          if (state.destroyed || startupPlayEnsured || !video.paused) {
+            return;
+          }
+          startupPlayEnsured = true;
+          video.play?.()?.catch?.(() => {});
+        });
+      }
       player.initialize(video, streamUrl, Boolean(video.autoplay));
     } catch (_) {
       triggerFatalError();
@@ -454,11 +494,25 @@ export async function attachTrailerVideoStream(
           startLevel: -1
         });
         state.hlsInstance = hls;
+        let mediaRecoveryAttempts = 0;
         if (Hls.Events?.ERROR) {
           hls.on?.(Hls.Events.ERROR, (_event, data = {}) => {
-            if (data?.fatal) {
-              triggerFatalError();
+            if (!data?.fatal || state.destroyed) {
+              return;
             }
+            if (
+              Hls.ErrorTypes?.MEDIA_ERROR &&
+              data.type === Hls.ErrorTypes.MEDIA_ERROR &&
+              mediaRecoveryAttempts < 1 &&
+              typeof hls.recoverMediaError === "function"
+            ) {
+              mediaRecoveryAttempts += 1;
+              try {
+                hls.recoverMediaError();
+                return;
+              } catch (_) {}
+            }
+            triggerFatalError();
           });
         }
         if (Hls.Events?.MANIFEST_PARSED) {
@@ -475,8 +529,8 @@ export async function attachTrailerVideoStream(
             }
           });
         }
-        hls.loadSource(streamUrl);
         hls.attachMedia(video);
+        hls.loadSource(streamUrl);
         return destroy;
       } catch (_) {
         triggerFatalError();

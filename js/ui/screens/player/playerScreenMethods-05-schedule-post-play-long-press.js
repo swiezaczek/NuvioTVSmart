@@ -67,12 +67,53 @@ export function createPlayerScreenMethods05() {
         video.crossOrigin = "anonymous";
         video.autoplay = true;
         video.controls = false;
+        video.defaultMuted = true;
+        video.muted = true;
         video.playsInline = true;
         video.preload = "auto";
-        const markReady = () => video.classList.add("is-ready");
-        video.addEventListener("loadeddata", markReady, { once: true });
-        video.addEventListener("canplay", markReady, { once: true });
-        video.addEventListener("playing", markReady, { once: true });
+        video.removeAttribute?.("controls");
+        video.setAttribute?.("muted", "");
+        try {
+          video.disableRemotePlayback = true;
+        } catch (_) {}
+        let didActivate = false;
+        const settleUnmute = () => {
+          if (generation !== this.postPlayTrailerGeneration || video.isConnected === false || video.muted) {
+            return;
+          }
+          if (!video.paused) {
+            return;
+          }
+          video.muted = true;
+          video.setAttribute?.("muted", "");
+          const retryPlay = video.play?.();
+          if (retryPlay?.catch) {
+            retryPlay.catch(() => {});
+          }
+        };
+        const markReady = () => {
+          if (didActivate || generation !== this.postPlayTrailerGeneration || video.isConnected === false) {
+            return;
+          }
+          if (video.paused && typeof video.requestVideoFrameCallback === "function") {
+            video.requestVideoFrameCallback(() => markReady());
+            return;
+          }
+          didActivate = true;
+          video.classList.add("is-ready");
+          video.muted = false;
+          video.removeAttribute?.("muted");
+          if (video.paused) {
+            settleUnmute();
+          } else {
+            setTimeout(settleUnmute, 120);
+          }
+        };
+        if (typeof video.requestVideoFrameCallback === "function") {
+          video.requestVideoFrameCallback(() => markReady());
+        } else {
+          video.addEventListener("playing", markReady, { once: true });
+        }
         video.addEventListener("ended", () => {
           if (generation === this.postPlayTrailerGeneration) {
             this.postPlayRecommendationController?.onTrailerEnded?.();
@@ -84,7 +125,7 @@ export function createPlayerScreenMethods05() {
           if (generation !== this.postPlayTrailerGeneration) {
             return;
           }
-          if (recommendation.trailerYtId) {
+          if (!didActivate && recommendation.trailerYtId) {
             this.startPostPlayTrailer(recommendation, { auto, preferYoutubeFallback: true });
             return;
           }

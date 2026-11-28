@@ -12,8 +12,8 @@
 > - **Extra UX & session hygiene**: Profile edit/copy PIN gate, FolderDetail poster hold-menu & top-header scroll snap, and cleaner sign-out/worker/cache teardown.
 >
 > ### Additional Benefits for Samsung Tizen + Vetro Users
-> Paired with the **[vetro-trailer-resolver](https://github.com/swiezaczek/vetro-trailer-resolver/releases/latest)** Vetro Shard (`v0.1.1`):
-> - **Instant ad-free 1080p trailers**: plays clean MPEG-DASH (`SegmentBase` H.264 + default-track AAC), HLS, or MP4 streams directly inside Home Hero, Detail backdrop, and Post-Play (zero YouTube pre-roll ads, zero iframe focus traps, ~490 ms first frame on Samsung S90C).
+> Paired with the **[vetro-trailer-resolver](https://github.com/swiezaczek/vetro-trailer-resolver/releases/latest)** Vetro Shard (`v0.1.2`):
+> - **Instant ad-free 1080p trailers from `0:00`**: plays clean MPEG-DASH (`SegmentBase` H.264 + default-track AAC), HLS (full local playlist & segment proxy), or MP4 streams directly inside Home Hero, Detail backdrop, and Post-Play with zero YouTube buttons or pre-roll ads, non-tripping per-video miss handling, and seamless Home-to-Detail `<video>` handoff.
 > - **WebVTT trailer subtitles**: automatic `<track>` subtitles synchronized with Nuvio's trailer subtitle setting.
 > - **Tizen 9+ self-only LAN discovery & security**: automatically discovers the TV's LAN IP via `webapis.network.getIp()` when Tizen 9 WRT blocks `127.0.0.1`, while the Shard rejects external LAN devices with HTTP `403` and runs with zero root permissions (`permissions: []`).
 > - **Instant live controls**: toggle in **Nuvio Settings → Playback → Audio (`Direct Ad-Free Trailers (Vetro)`)** or **Vetro Dashboard (`Trailers` tab)**, with seamless fallback to standard YouTube playback whenever turned off.

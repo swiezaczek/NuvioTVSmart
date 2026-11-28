@@ -254,7 +254,15 @@ export function createMetaDetailsScreenMethods18() {
         }
       };
       const markReady = () => {
-        if (!this.isTrailerPlaying || video.paused || !video.isConnected) {
+        if (!this.isTrailerPlaying || video.isConnected === false) {
+          return;
+        }
+        if (video.paused) {
+          if (typeof video.requestVideoFrameCallback === "function") {
+            video.requestVideoFrameCallback(() => {
+              markReady();
+            });
+          }
           return;
         }
         const wasReady = Boolean(this.trailerVisualReady);
@@ -276,8 +284,12 @@ export function createMetaDetailsScreenMethods18() {
           this.stopTrailerPlayback();
         }
       };
+      const domGeneration = this.trailerDomGeneration;
       const handleError = () => {
-        if (!this.isTrailerPlaying) {
+        if (!this.isTrailerPlaying || Number(this.trailerDomGeneration || 0) !== domGeneration) {
+          return;
+        }
+        if (this.trailerUiRefs?.video && this.trailerUiRefs.video !== video) {
           return;
         }
         if (!this.trailerVisualReady && this.trailerSource?.fallbackYoutube) {

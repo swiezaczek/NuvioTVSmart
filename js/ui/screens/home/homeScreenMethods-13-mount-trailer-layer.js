@@ -249,11 +249,13 @@ export function createHomeScreenMethods13() {
         const video = document.createElement("video");
         video.className = "home-inline-trailer-video";
         video.autoplay = true;
+        video.controls = false;
         video.loop = true;
         video.playsInline = true;
         video.defaultMuted = true;
         video.muted = true;
         video.preload = "auto";
+        video.removeAttribute?.("controls");
         video.setAttribute("autoplay", "");
         video.setAttribute("loop", "");
         video.setAttribute("playsinline", "");
@@ -584,6 +586,8 @@ export function createHomeScreenMethods13() {
         itemKey,
         ytId,
         url,
+        streamType: String(source?.streamType || "").trim(),
+        subtitles: Array.isArray(source?.subtitles) ? source.subtitles.map((entry) => ({ ...entry })) : [],
         currentTime: Math.max(0, Number(state?.currentTime || 0)),
         muted: state?.muted === true,
         paused: state?.paused !== false,
@@ -605,6 +609,8 @@ export function createHomeScreenMethods13() {
       return {
         ytId: handoff.ytId,
         ...(handoff.url ? { url: handoff.url } : {}),
+        ...(handoff.streamType ? { streamType: handoff.streamType } : {}),
+        ...(Array.isArray(handoff.subtitles) && handoff.subtitles.length ? { subtitles: handoff.subtitles } : {}),
         currentTime: handoff.currentTime,
         muted: handoff.muted === true
       };
