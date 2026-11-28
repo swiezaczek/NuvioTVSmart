@@ -10,8 +10,8 @@ import { getTvArtworkPixelRatio } from "../../../platform/tvRuntimePerformance.j
 import { getArtworkEvictIdleMs, getArtworkEvictMarginPx, getDeviceMemoryGb } from "../../../platform/tvPerformancePolicy.js";
 
 export function createHomeScreenMethods24() {
-  const HOME_BOUNDED_HYDRATION_PACE_QUIET_MS = 220;
-  const HOME_ACTIVE_STEPPING_QUIET_MS = 750;
+  const HOME_BOUNDED_HYDRATION_PACE_QUIET_MS = 230;
+  const HOME_ACTIVE_STEPPING_QUIET_MS = 1450;
   const PENDING_ARTWORK_SELECTOR = ".content-poster[data-src], .home-poster-landscape-logo[data-src], .home-continue-bg[data-src]";
   const hasNearbyPendingArtwork = (anchorNode) => {
     if (!anchorNode) {
@@ -318,13 +318,13 @@ export function createHomeScreenMethods24() {
       // Android prefetches the visible window plus a small row/card neighborhood.
       // Keep the browser's DOM-mounted rows from turning every vertical focus
       // move into a burst of eager image requests. During active D-pad stepping
-      // on TV, keep visible cards plus 1 row ahead (360px) and ~3.5 horizontal
+      // on TV, keep visible cards plus 1 row ahead (300px) and 3 horizontal
       // focused-row cards prefetched and defer deeper neighbor rows until input
-      // rests for 750ms.
-      const verticalMargin = isActiveDpadStepping ? 360 : useBoundedTvHydration ? 540 : constrained ? 720 : 1200;
-      const horizontalMargin = isActiveDpadStepping ? 360 : useBoundedTvHydration ? 480 : constrained ? 640 : 1000;
+      // rests for 1450ms.
+      const verticalMargin = isActiveDpadStepping ? 300 : useBoundedTvHydration ? 540 : constrained ? 720 : 1200;
+      const horizontalMargin = isActiveDpadStepping ? 300 : useBoundedTvHydration ? 480 : constrained ? 640 : 1000;
       const focusedRow = Boolean(anchorRow && anchorRow === anchorNode?.closest?.(HOME_LAZY_IMAGE_ROW_SELECTOR));
-      const focusedRowMargin = focusedRow ? Math.max(760, Math.round(Number(anchorNode?.offsetWidth || 248) * 3.5)) : horizontalMargin;
+      const focusedRowMargin = focusedRow ? Math.max(640, Math.round(Number(anchorNode?.offsetWidth || 248) * 3.0)) : horizontalMargin;
       const pendingLoads = [];
       candidateRows.forEach(({ row, isFocusedRow, images }) => {
         // Android's LazyRow loads the visible cards plus a small prefetch
