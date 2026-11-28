@@ -464,6 +464,96 @@ test("preloadHeroBackdrop bypasses CPU resizeWidth for <=1920px headers, uses tr
     assert.equal(fallbackRes.loaded, true);
     assert.equal(fallbackRes.bitmap.width, 1280);
     assert.equal(createImageBitmapCalls.length, 3);
+
+    // 3. preloadHeroLogo skips <= 660px (1.5x HERO_LOGO_RESCALE_WIDTH_PX) logos with 0 createObjectURL calls.
+    const makePngBytes = (width, height) => {
+      const ihdr = new Uint8Array(33);
+      ihdr.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+      ihdr.set([0, 0, 0, 13], 8);
+      ihdr.set([0x49, 0x48, 0x44, 0x52], 12);
+      ihdr.set([(width >>> 24) & 255, (width >>> 16) & 255, (width >>> 8) & 255, width & 255], 16);
+      ihdr.set(
+        [(height >>> 24) & 255, (height >>> 16) & 255, (height >>> 8) & 255, height & 255],
+        20
+      );
+      return ihdr;
+    };
+    globalThis.OffscreenCanvas = class {
+      getContext() {
+        return { drawImage: () => {} };
+      }
+      convertToBlob() {
+        return Promise.resolve(new Blob(["webp"], { type: "image/webp" }));
+      }
+    };
+    globalThis.Image = class FakeLogoImg {
+      set src(v) {
+        this._src = v;
+        this.naturalWidth = 500;
+        queueMicrotask(() => this.onload?.());
+      }
+      decode() {
+        return Promise.resolve();
+      }
+    };
+    let logoBlobUrlCount = 0;
+    globalThis.URL.createObjectURL = (blob) => {
+      const part = String(blob?.parts?.[0] || "");
+      if (part.includes("headerDimensions")) return "blob:hero-worker/logo";
+      logoBlobUrlCount += 1;
+      return `blob:logo/${logoBlobUrlCount}`;
+    };
+
+    // In-thread <=660px logo (w500) skips OffscreenCanvas & createObjectURL.
+    const png500 = makePngBytes(500, 140);
+    const png1200 = makePngBytes(1200, 320);
+    globalThis.fetch = async (url) => ({
+      ok: true,
+      async blob() {
+        return makeByteBlob(url.includes("big") ? png1200 : png500);
+      }
+    });
+    const smallLogoInThread = await modFallback.preloadHeroLogo("https://art/logo-w500.png");
+    assert.deepEqual(smallLogoInThread, { loaded: true, src: "https://art/logo-w500.png" });
+    assert.equal(logoBlobUrlCount, 0, "<=660px logo must not allocate a blob URL");
+
+    const bigLogoInThread = await modFallback.preloadHeroLogo("https://art/logo-big.png");
+    assert.deepEqual(bigLogoInThread, { loaded: true, src: "blob:logo/1" });
+    assert.equal(logoBlobUrlCount, 1, ">660px logo still rescales to bounded WebP blob");
+
+    // Worker path: skippedSmall short-circuits before URL.createObjectURL; oversized logo encodes blob.
+    failWorkerCtor = false;
+    class FakeLogoWorker {
+      constructor() {
+        this.onmessage = null;
+      }
+      postMessage(msg) {
+        queueMicrotask(() => {
+          if (msg.url.includes("w500")) {
+            this.onmessage?.({
+              data: { id: msg.id, ok: true, skippedSmall: true, width: 500, height: 140 }
+            });
+          } else {
+            this.onmessage?.({ data: { id: msg.id, ok: true, blob: new Blob(["webp"]) } });
+          }
+        });
+      }
+      terminate() {}
+    }
+    globalThis.Worker = FakeLogoWorker;
+    const modWorkerLogo = await import(
+      `./homeScreenHelpers-02-extract-release-date-text.js?workerlogo=${Date.now()}`
+    );
+    const smallWorkerLogo = await modWorkerLogo.preloadHeroLogo("https://art/logo-worker-w500.png");
+    assert.deepEqual(smallWorkerLogo, { loaded: true, src: "https://art/logo-worker-w500.png" });
+    assert.equal(logoBlobUrlCount, 1, "worker skippedSmall must not call URL.createObjectURL");
+    assert.ok(
+      workerScripts[0].includes("skippedSmall: true"),
+      "worker source must handle small-logo bypass before OffscreenCanvas/convertToBlob"
+    );
+    const bigWorkerLogo = await modWorkerLogo.preloadHeroLogo("https://art/logo-worker-big.png");
+    assert.deepEqual(bigWorkerLogo, { loaded: true, src: "blob:logo/2" });
+    assert.equal(logoBlobUrlCount, 2);
   } finally {
     if (prevNavigatorUa) Object.defineProperty(globalThis.navigator, "userAgent", prevNavigatorUa);
     if (prevNavigatorMem)
