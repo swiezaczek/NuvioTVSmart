@@ -385,6 +385,9 @@ self.onmessage = async (event) => {
       throw new Error("animated webp");
     }
     const dimensions = jpeg ? jpegSize(view) : webp;
+    if (dimensions && dimensions.width <= width && dimensions.height <= height) {
+      throw new Error("already small");
+    }
     const resize = dimensions ? resizeTarget(dimensions.width, dimensions.height, 1280) : null;
     const alpha = Boolean(webp && webp.alpha);
     const out = await runExclusiveDecode(async () => {
@@ -443,6 +446,10 @@ export function artworkWorkerCount(cores, deviceMemory) {
   return Math.min(Math.max(value - 1, 1), 3);
 }
 
+function workerJobSlots() {
+  return isLowMemoryDevice(getDeviceMemoryGb()) ? 2 : 3;
+}
+
 function workerCount() {
   return artworkWorkerCount(globalThis.navigator?.hardwareConcurrency, getDeviceMemoryGb());
 }
@@ -496,18 +503,15 @@ export function shouldRescaleHomeArtwork() {
 // A worker that hangs would hold its slot forever and every later poster
 // would stay blank, which is worse than the oversized decode this replaces.
 const JOB_TIMEOUT_MS = 15000;
-const WORKER_JOB_SLOTS = 2;
 const CAMERA_SCROLL_POLL_MS = 60;
 const CAMERA_SCROLL_MAX_WAIT_MS = 450;
-const DPAD_PACE_QUIET_MS = 380;
+const DPAD_PACE_QUIET_MS = 355;
 const DPAD_PACE_MAX_WAIT_MS = 650;
-const DPAD_ACTIVE_STEPPING_WINDOW_MS = 1400;
-const DPAD_ACTIVE_CHUNK_SPACING_MS = 90;
-const DPAD_MAX_COMPLETIONS_PER_STEP_WINDOW = 3;
+const DPAD_POST_SETTLE_SPACING_MS = 20;
+const DPAD_POST_SETTLE_WINDOW_MS = 1050;
 const MAX_COMPLETIONS_PER_FRAME = 1;
 
 let lastDpadKeydownAt = 0;
-let flushedSinceKeydown = 0;
 let keydownListenerBound = false;
 
 function ensureDpadKeydownListener() {
@@ -520,21 +524,12 @@ function ensureDpadKeydownListener() {
         "keydown",
         () => {
           lastDpadKeydownAt = Date.now();
-          flushedSinceKeydown = 0;
         },
         { passive: true, capture: true }
       );
       keydownListenerBound = true;
     }
   } catch (_) {}
-}
-
-function getDpadActiveSteppingRemainingMs(now = Date.now()) {
-  if (lastDpadKeydownAt <= 0) {
-    return 0;
-  }
-  const remaining = DPAD_ACTIVE_STEPPING_WINDOW_MS - (now - lastDpadKeydownAt);
-  return remaining > 0 ? remaining : 0;
 }
 
 function isCameraScrollingActive() {
@@ -564,33 +559,6 @@ function scheduleNextCompletionChunk(state) {
   ) {
     return;
   }
-  const activeSteppingRemainingMs = getDpadActiveSteppingRemainingMs();
-  if (state.restDrainTimer) {
-    if (
-      activeSteppingRemainingMs > 0 &&
-      flushedSinceKeydown >= DPAD_MAX_COMPLETIONS_PER_STEP_WINDOW
-    ) {
-      return;
-    }
-    clearTimeout(state.restDrainTimer);
-    state.restDrainTimer = null;
-  }
-  if (
-    activeSteppingRemainingMs > 0 &&
-    flushedSinceKeydown >= DPAD_MAX_COMPLETIONS_PER_STEP_WINDOW
-  ) {
-    state.restDrainTimer = setTimeout(
-      () => {
-        state.restDrainTimer = null;
-        if (!state || state.disposed || !state.pendingCompletions.length) {
-          return;
-        }
-        scheduleNextCompletionChunk(state);
-      },
-      Math.max(16, activeSteppingRemainingMs)
-    );
-    return;
-  }
   const onTick = () => {
     if (!state || state.disposed || !state.pendingCompletions.length) {
       return;
@@ -606,16 +574,13 @@ function scheduleNextCompletionChunk(state) {
       scheduleCompletionFlush(state);
       return;
     }
-    flushPendingCompletions(state, {
-      bypassDeferral:
-        Boolean(state.flushWaitStartedAt) && Date.now() - state.flushWaitStartedAt >= maxWaitMs
-    });
+    flushPendingCompletions(state);
   };
-  if (activeSteppingRemainingMs > 0) {
+  if (lastDpadKeydownAt > 0 && Date.now() - lastDpadKeydownAt < DPAD_POST_SETTLE_WINDOW_MS) {
     state.chunkTimer = setTimeout(() => {
       state.chunkTimer = null;
       onTick();
-    }, DPAD_ACTIVE_CHUNK_SPACING_MS);
+    }, DPAD_POST_SETTLE_SPACING_MS);
     return;
   }
   if (typeof globalThis.requestAnimationFrame === "function") {
@@ -631,7 +596,7 @@ function scheduleNextCompletionChunk(state) {
   }
 }
 
-function flushPendingCompletions(state, { bypassDeferral = false } = {}) {
+function flushPendingCompletions(state) {
   if (!state || state.disposed) {
     return;
   }
@@ -639,22 +604,16 @@ function flushPendingCompletions(state, { bypassDeferral = false } = {}) {
   if (!batch.length) {
     state.flushWaitStartedAt = 0;
     state.flushWaitingOnKeydown = false;
-    pump(state, { bypassDeferral });
+    pump(state);
     return;
-  }
-  if (lastDpadKeydownAt > 0) {
-    flushedSinceKeydown += batch.length;
   }
   for (let index = 0; index < batch.length; index += 1) {
     const entry = batch[index];
     if (entry.job) {
       entry.job.settle(entry.ok ? entry.blob : null, entry.reason);
     }
-    if (!state.suspended && state.workers.includes(entry.worker)) {
-      state.idle.push(entry.worker);
-    }
   }
-  pump(state, { bypassDeferral });
+  pump(state);
   if (state.pendingCompletions.length) {
     scheduleNextCompletionChunk(state);
   } else {
@@ -702,9 +661,7 @@ function scheduleCompletionFlush(state) {
       scheduleCompletionFlush(state);
       return;
     }
-    flushPendingCompletions(state, {
-      bypassDeferral: Date.now() - state.flushWaitStartedAt >= activeMaxWait
-    });
+    flushPendingCompletions(state);
   }, delay);
 }
 
@@ -723,7 +680,6 @@ function createPool() {
     flushWaitingOnKeydown: false,
     chunkTimer: null,
     chunkRaf: 0,
-    restDrainTimer: null,
     nextId: 1,
     cache: new Map(),
     failed: new Map(),
@@ -761,6 +717,9 @@ function spawnWorker(state) {
       state.jobs.delete(id);
       clearTimeout(job.timer);
     }
+    if (!state.disposed && !state.suspended && state.workers.includes(worker)) {
+      state.idle.push(worker);
+    }
     if (shouldDeferCompletionFlush() || lastDpadKeydownAt > 0) {
       state.pendingCompletions.push({ job, worker, ok, blob, reason });
       if (shouldDeferCompletionFlush()) {
@@ -768,12 +727,12 @@ function spawnWorker(state) {
       } else {
         scheduleNextCompletionChunk(state);
       }
+      pump(state);
       return;
     }
     if (job) {
       job.settle(ok ? blob : null, reason);
     }
-    state.idle.push(worker);
     pump(state);
   };
   worker.onerror = () => retireWorker(state, worker, "worker error");
@@ -781,7 +740,8 @@ function spawnWorker(state) {
   // Each job spends most of its time waiting on the network, and the worker
   // handler is async, so two slots per worker overlap a download with the
   // other job's decode (about OkHttp's five requests per host on Android).
-  for (let slot = 0; slot < WORKER_JOB_SLOTS; slot += 1) {
+  const slots = workerJobSlots();
+  for (let slot = 0; slot < slots; slot += 1) {
     state.idle.push(worker);
   }
   return true;
@@ -818,21 +778,7 @@ function retireWorker(state, worker, reason) {
   pump(state);
 }
 
-function pump(state, { bypassDeferral = false } = {}) {
-  if (!bypassDeferral && shouldDeferCompletionFlush()) {
-    if (state.queue.length) {
-      scheduleCompletionFlush(state);
-    }
-    if (
-      state.suspendRequested &&
-      !state.queue.length &&
-      !state.jobs.size &&
-      !state.pendingCompletions.length
-    ) {
-      suspendWorkers(state);
-    }
-    return;
-  }
+function pump(state) {
   if (state.suspended && state.queue.length) {
     resumeWorkers(state);
   }
@@ -872,7 +818,12 @@ function pump(state, { bypassDeferral = false } = {}) {
     }
     worker.postMessage(message);
   }
-  if (state.suspendRequested && !state.queue.length && !state.jobs.size) {
+  if (
+    state.suspendRequested &&
+    !state.queue.length &&
+    !state.jobs.size &&
+    !state.pendingCompletions.length
+  ) {
     suspendWorkers(state);
   }
 }
@@ -1231,17 +1182,12 @@ function resetPool(state) {
     clearTimeout(state.chunkTimer);
     state.chunkTimer = null;
   }
-  if (state.restDrainTimer) {
-    clearTimeout(state.restDrainTimer);
-    state.restDrainTimer = null;
-  }
   if (state.chunkRaf && typeof globalThis.cancelAnimationFrame === "function") {
     globalThis.cancelAnimationFrame(state.chunkRaf);
     state.chunkRaf = 0;
   }
   state.flushWaitStartedAt = 0;
   state.flushWaitingOnKeydown = false;
-  flushedSinceKeydown = 0;
   state.pendingCompletions.splice(0).forEach((entry) => entry.job?.settle(null, "reset"));
   state.jobs.forEach((job) => {
     clearTimeout(job.timer);

@@ -242,7 +242,11 @@ test("worker overlaps network fetches while serializing decode/encode and recove
   assert.equal(byId.get(10)?.reason, "already small");
   assert.equal(byId.get(11)?.ok, true);
   assert.equal(byId.get(12)?.ok, true);
-  assert.equal(h.getClosedBitmaps(), 3, "every created bitmap must be closed, including errors");
+  assert.equal(
+    h.getClosedBitmaps(),
+    2,
+    "pre-decode header skip avoids creating bitmap for small.jpg while closing remaining decoded bitmaps"
+  );
 });
 
 test("rescaleHomeArtwork skips URL.createObjectURL when a single-waiter job becomes stale mid-flight, while shared jobs still resolve", async () => {
@@ -443,8 +447,8 @@ test("worker completions defer URL.createObjectURL and pump while .is-camera-scr
     const rescaler = await import(`./tvPosterRescaler.js?cameraScroll=${Date.now()}`);
     rescaler.resetHomeArtworkRescaler();
 
-    // Queue 8 jobs while idle (3 workers x 2 slots = 6 active, 2 queued behind them).
-    const promises = Array.from({ length: 8 }, (_, index) =>
+    // Queue 11 jobs while idle (3 workers x 3 slots on >=2GB = 9 active, 2 queued behind them).
+    const promises = Array.from({ length: 11 }, (_, index) =>
       rescaler.rescaleHomeArtwork(`https://art/cam-${index}.jpg`, {
         width: 220,
         height: 338,
@@ -452,7 +456,7 @@ test("worker completions defer URL.createObjectURL and pump while .is-camera-scr
       })
     );
     const activeMsgs = createdWorkers.flatMap((w) => w.posted.map((msg) => ({ w, msg })));
-    assert.equal(activeMsgs.length, 6, "6 initial slots dispatched across 3 workers");
+    assert.equal(activeMsgs.length, 9, "9 initial slots dispatched across 3 workers x 3 slots");
 
     // Enter .is-camera-scrolling and settle 2 worker replies.
     cameraScrolling = true;
@@ -472,23 +476,22 @@ test("worker completions defer URL.createObjectURL and pump while .is-camera-scr
     );
     assert.equal(
       createdWorkers.reduce((sum, w) => sum + w.posted.length, 0),
-      6,
-      "must not pump queued jobs while .is-camera-scrolling is active"
+      11,
+      "worker.onmessage must immediately release idle slot and pump queued jobs during .is-camera-scrolling"
     );
 
-    // Clear .is-camera-scrolling and wait for the single 60ms batch flush.
+    // Clear .is-camera-scrolling and wait for deferred completions to flush.
     cameraScrolling = false;
     await new Promise((r) => setTimeout(r, 110));
 
     assert.equal(
       posterBlobUrls.length,
       2,
-      "deferred completions must batch-flush once after .is-camera-scrolling clears"
+      "deferred completions must flush once after .is-camera-scrolling clears"
     );
     assert.equal(
       createdWorkers.reduce((sum, w) => sum + w.posted.length, 0),
-      8,
-      "queued jobs must pump once completions batch-flush"
+      11
     );
     const firstTwo = await Promise.all(settledPromiseIndices.map((idx) => promises[idx]));
     assert.deepEqual(firstTwo, ["blob:poster/1", "blob:poster/2"]);
@@ -499,7 +502,7 @@ test("worker completions defer URL.createObjectURL and pump while .is-camera-scr
     const remainingMsgs = createdWorkers
       .flatMap((w) => w.posted.map((msg) => ({ w, msg })))
       .filter(({ msg }) => !settledIds.has(msg.id));
-    assert.equal(remainingMsgs.length, 6);
+    assert.equal(remainingMsgs.length, 9);
     remainingMsgs.forEach(({ w, msg }) => {
       w.onmessage({ data: { id: msg.id, ok: true, blob: { isPosterBlob: true } } });
     });
@@ -508,11 +511,11 @@ test("worker completions defer URL.createObjectURL and pump while .is-camera-scr
     await new Promise((r) => setTimeout(r, 680));
     assert.equal(
       posterBlobUrls.length,
-      8,
+      11,
       "max-wait safety cap (~450ms) must flush stalled completions so jobs are never stranded"
     );
     const allResults = await Promise.all(promises);
-    assert.equal(allResults.filter(Boolean).length, 8);
+    assert.equal(allResults.filter(Boolean).length, 11);
 
     rescaler.resetHomeArtworkRescaler();
   } finally {
@@ -629,7 +632,7 @@ test("worker completions and pump defer past 380ms keydown pace window and chunk
 
     // Recreate pool to verify idempotency of keydown listener registration.
     rescaler.resetHomeArtworkRescaler();
-    const promises2 = Array.from({ length: 6 }, (_, index) =>
+    const promises2 = Array.from({ length: 11 }, (_, index) =>
       rescaler.rescaleHomeArtwork(`https://art/chunk2-${index}.jpg`, {
         width: 220,
         height: 338,
@@ -639,55 +642,57 @@ test("worker completions and pump defer past 380ms keydown pace window and chunk
     assert.equal(addKeydownListenerCalls, 1, "keydown listener registration must be idempotent");
     await Promise.all(promises);
 
-    // Trigger keydown while .is-camera-scrolling is already false; completions must still defer 380ms.
+    // Trigger keydown while .is-camera-scrolling is false:
+    // - completions must defer 355ms before URL.createObjectURL
+    // - worker slots (3 workers x 3 slots on >=2GB) must release and pump remaining 2 jobs immediately
+    // - after 355ms, all 11 completions drain at 20ms spacing with no 3-poster cap.
     keydownHandler();
-    const msgs = createdWorkers.slice(-3).flatMap((w) => w.posted.map((msg) => ({ w, msg })));
-    assert.equal(msgs.length, 6);
-    msgs.forEach(({ w, msg }) => {
+    const firstMsgs = createdWorkers.slice(-3).flatMap((w) => w.posted.map((msg) => ({ w, msg })));
+    assert.equal(firstMsgs.length, 9);
+    const seenIds = new Set(firstMsgs.map(({ msg }) => msg.id));
+    firstMsgs.forEach(({ w, msg }) => {
       w.onmessage({ data: { id: msg.id, ok: true, blob: { isPosterBlob: true } } });
     });
 
-    await new Promise((r) => setTimeout(r, 250));
-    assert.equal(posterBlobUrls.length, 0, "must defer completions inside 380ms keydown window");
+    const nextMsgs = createdWorkers
+      .slice(-3)
+      .flatMap((w) => w.posted.map((msg) => ({ w, msg })))
+      .filter(({ msg }) => !seenIds.has(msg.id));
+    assert.equal(
+      nextMsgs.length,
+      2,
+      "worker.onmessage must immediately free slots and pump remaining 2 jobs inside 355ms window"
+    );
+    nextMsgs.forEach(({ w, msg }) => {
+      w.onmessage({ data: { id: msg.id, ok: true, blob: { isPosterBlob: true } } });
+    });
 
-    // After 380ms clears (but < 1400ms active D-pad window), completion 1 flushes and
-    // completions 2..3 space at 90ms setTimeout (not 16ms rAF), then stop at 3 until 1400ms rest.
-    await new Promise((r) => setTimeout(r, 190));
-    assert.equal(posterBlobUrls.length, 1, "first flush tick must cap at 1 completion");
+    await new Promise((r) => setTimeout(r, 230));
+    assert.equal(posterBlobUrls.length, 0, "must defer completions inside 355ms keydown window");
+
+    // After 355ms clears, completions drain one at a time spaced by 20ms setTimeout (not rAF).
+    await new Promise((r) => setTimeout(r, 175));
+    assert.ok(
+      posterBlobUrls.length >= 1 && posterBlobUrls.length < 11,
+      `expected incremental 20ms flush after 355ms, got ${posterBlobUrls.length}`
+    );
     assert.equal(
       chunkRafCallbacks.length,
       0,
-      "active <1400ms stepping window must space via 90ms setTimeout instead of 16ms rAF"
+      "post-settle <1050ms window must space via 20ms setTimeout instead of 16ms rAF"
     );
 
-    await new Promise((r) => setTimeout(r, 240));
+    await new Promise((r) => setTimeout(r, 320));
     assert.equal(
       posterBlobUrls.length,
-      3,
-      "completions 2 and 3 must flush at 90ms spacing inside active D-pad window"
+      11,
+      "all 11 queued posters must finish draining at 20ms spacing without starvation cap"
     );
-
-    await new Promise((r) => setTimeout(r, 160));
-    assert.equal(
-      posterBlobUrls.length,
-      3,
-      "must stop draining at 3 completions while still inside 1400ms D-pad window"
-    );
-    assert.equal(chunkRafCallbacks.length, 0);
-
-    // Wait past 1400ms rest: remaining completions drain via 16ms rAF chunks (1 per frame).
-    await new Promise((r) => setTimeout(r, 700));
-    assert.equal(chunkRafCallbacks.length, 1, "rest drain timer must resume via 16ms rAF");
-    for (let step = 4; step <= 6; step += 1) {
-      chunkRafCallbacks.shift()();
-      assert.equal(posterBlobUrls.length, step, `rest chunk ${step} flushes exactly 1 completion`);
-      assert.equal(chunkRafCallbacks.length, step < 6 ? 1 : 0);
-    }
     const settled = await Promise.all(promises2);
-    assert.equal(settled.filter(Boolean).length, 6);
+    assert.equal(settled.filter(Boolean).length, 11);
 
-    // Also verify pump() itself defers new worker dispatch while inside the 380ms keydown window,
-    // and returning worker completions inside the 1400ms window use 90ms spacing instead of immediate settle.
+    // Verify pump() dispatches immediately inside 355ms keydown window while completion waits past 355ms,
+    // and completions arriving at rest (>1050ms) fall back to 16ms rAF chunking.
     const countBeforeDefer = createdWorkers.reduce((sum, w) => sum + w.posted.length, 0);
     keydownHandler();
     const deferredPumpPromise = rescaler.rescaleHomeArtwork("https://art/pump-deferred.jpg", {
@@ -697,14 +702,8 @@ test("worker completions and pump defer past 380ms keydown pace window and chunk
     });
     assert.equal(
       createdWorkers.reduce((sum, w) => sum + w.posted.length, 0),
-      countBeforeDefer,
-      "pump() must defer worker dispatch during 380ms keydown window"
-    );
-    await new Promise((r) => setTimeout(r, 420));
-    assert.equal(
-      createdWorkers.reduce((sum, w) => sum + w.posted.length, 0),
       countBeforeDefer + 1,
-      "pump() must dispatch queued job once 380ms keydown window clears"
+      "pump() must dispatch worker work immediately even inside 355ms keydown window"
     );
     const deferredMsg = createdWorkers
       .slice(-3)
@@ -716,12 +715,34 @@ test("worker completions and pump defer past 380ms keydown pace window and chunk
     });
     assert.equal(
       posterBlobUrls.length,
-      6,
-      "returning worker completion inside 1400ms stepping window must defer via 90ms timer"
+      11,
+      "completion inside 355ms must wait before createObjectURL"
     );
-    assert.equal(chunkRafCallbacks.length, 0);
-    await new Promise((r) => setTimeout(r, 130));
-    assert.equal(await deferredPumpPromise, "blob:poster/7");
+    await new Promise((r) => setTimeout(r, 410));
+    assert.equal(await deferredPumpPromise, "blob:poster/12");
+
+    // Wait past 1050ms from last keydown; new completion at rest uses 16ms rAF chunking.
+    await new Promise((r) => setTimeout(r, 700));
+    const restPromise = rescaler.rescaleHomeArtwork("https://art/rest-raf.jpg", {
+      width: 220,
+      height: 338,
+      fit: "cover"
+    });
+    const restMsg = createdWorkers
+      .slice(-3)
+      .flatMap((w) => w.posted.map((msg) => ({ w, msg })))
+      .find(({ msg }) => msg.url === "https://art/rest-raf.jpg");
+    assert.ok(restMsg);
+    restMsg.w.onmessage({
+      data: { id: restMsg.msg.id, ok: true, blob: { isPosterBlob: true } }
+    });
+    assert.equal(
+      chunkRafCallbacks.length,
+      1,
+      "completions at rest (>1050ms) must use rAF chunking"
+    );
+    chunkRafCallbacks.shift()();
+    assert.equal(await restPromise, "blob:poster/13");
 
     rescaler.resetHomeArtworkRescaler();
   } finally {
