@@ -62,8 +62,10 @@ test("createFramePaceMonitor skips key samples and in-flight slow frames when sh
   assert.equal(slowCalls, 1, "demotes only after 3 valid non-player slow samples");
 });
 
-test("watchTvFramePace in js/app.js guards player route and detaches keydown listener on demotion", () => {
+test("watchTvFramePace in js/app.js guards non-home routes and detaches keydown listener on demotion", () => {
   const source = readFileSync(new URL("../app.js", import.meta.url), "utf8");
-  assert.match(source, /shouldSample:\s*\(\)\s*=>\s*Router\.getCurrent\(\)\s*!==\s*"player"/);
+  assert.match(source, /const shouldSampleHomeRoute = \(\) => Router\.getCurrent\(\) === "home"/);
+  assert.match(source, /shouldSample:\s*shouldSampleHomeRoute/);
+  assert.match(source, /if \(!shouldSampleHomeRoute\(\)\) \{\s*return;\s*\}/);
   assert.match(source, /removeEventListener\("keydown",\s*onKeyDown,\s*true\)/);
 });

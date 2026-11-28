@@ -313,8 +313,9 @@ function watchTvFramePace() {
       onKeyDown = null;
     }
   };
+  const shouldSampleHomeRoute = () => Router.getCurrent() === "home";
   const monitor = createFramePaceMonitor({
-    shouldSample: () => Router.getCurrent() !== "player",
+    shouldSample: shouldSampleHomeRoute,
     onSlow: (lostMs) => {
       detachListener();
       storeMeasuredTvTier({ tier: "constrained", appVersion: APP_VERSION, lostMs });
@@ -326,7 +327,7 @@ function watchTvFramePace() {
   // Readable from the remote inspector when a set's tier is in question.
   globalThis.__NUVIO_FRAME_PACE__ = monitor;
   onKeyDown = () => {
-    if (Router.getCurrent() === "player") {
+    if (!shouldSampleHomeRoute()) {
       return;
     }
     monitor.noteKey();
