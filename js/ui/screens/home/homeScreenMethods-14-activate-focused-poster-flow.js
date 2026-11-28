@@ -124,14 +124,6 @@ export function createHomeScreenMethods14() {
         return;
       }
       if (this.layoutMode === "modern") {
-        if (this.homeHeroBoundsSettleTimer) {
-          clearTimeout(this.homeHeroBoundsSettleTimer);
-          this.homeHeroBoundsSettleTimer = null;
-        }
-        if (this.homeHeroBoundsFrame) {
-          cancelAnimationFrame(this.homeHeroBoundsFrame);
-          this.homeHeroBoundsFrame = 0;
-        }
         // Measuring here forced a layout in the middle of every hero update,
         // two or three times per focus: 17 ms each on a 2025 OLED. The previous
         // bounds stay applied meanwhile and CSS clamps the text, so one
@@ -141,26 +133,32 @@ export function createHomeScreenMethods14() {
             return;
           }
           if (typeof this.isModernHydrationScrollActive === "function" && this.isModernHydrationScrollActive()) {
-            this.homeHeroBoundsSettleTimer = setTimeout(
-              () => {
+            if (this.homeHeroBoundsFrame) {
+              cancelAnimationFrame(this.homeHeroBoundsFrame);
+              this.homeHeroBoundsFrame = 0;
+            }
+            if (!this.homeHeroBoundsSettleTimer) {
+              const pollMs = Number(MODERN_HOME_CONSTANTS?.verticalScrollSettlePollMs || 60);
+              this.homeHeroBoundsSettleTimer = setTimeout(() => {
                 this.homeHeroBoundsSettleTimer = null;
                 scheduleBoundsFrame();
-              },
-              Number(MODERN_HOME_CONSTANTS?.verticalScrollSettlePollMs || 60)
-            );
+              }, pollMs);
+            }
             return;
           }
-          this.homeHeroBoundsFrame = requestAnimationFrame(() => {
-            this.homeHeroBoundsFrame = 0;
-            if (!this.container || this.layoutMode !== "modern" || this.homeDomPreserved) {
-              return;
-            }
-            if (typeof this.isModernHydrationScrollActive === "function" && this.isModernHydrationScrollActive()) {
-              scheduleBoundsFrame();
-              return;
-            }
-            this.applyModernHeroDescriptionBounds(this.container);
-          });
+          if (!this.homeHeroBoundsFrame) {
+            this.homeHeroBoundsFrame = requestAnimationFrame(() => {
+              this.homeHeroBoundsFrame = 0;
+              if (!this.container || this.layoutMode !== "modern" || this.homeDomPreserved) {
+                return;
+              }
+              if (typeof this.isModernHydrationScrollActive === "function" && this.isModernHydrationScrollActive()) {
+                scheduleBoundsFrame();
+                return;
+              }
+              this.applyModernHeroDescriptionBounds(this.container);
+            });
+          }
         };
         scheduleBoundsFrame();
         return;
@@ -257,6 +255,9 @@ export function createHomeScreenMethods14() {
       const modernHeroDescriptionMaxLines = 4;
       const scope = root instanceof HTMLElement ? root : this.container;
       const heroNodes = scope.classList?.contains("home-hero-card") ? [scope] : Array.from(scope.querySelectorAll(".home-hero-card"));
+      const boundsCache = this.modernHeroBoundsCache || (this.modernHeroBoundsCache = new WeakMap());
+      const boundsVersion = Number(this.modernHeroBoundsVersion || 0);
+      const viewportKey = `${globalThis?.innerWidth || 0}x${globalThis?.innerHeight || 0}`;
       heroNodes.forEach((heroNode) => {
         const description = heroNode.querySelector(".home-hero-description");
         if (!(description instanceof HTMLElement)) {
@@ -267,18 +268,38 @@ export function createHomeScreenMethods14() {
           return;
         }
 
+        const copy = description.closest?.(".home-modern-hero-copy") || null;
+        const copyChildren = copy ? Array.from(copy.children || []) : [];
+        const siblingKey = copyChildren
+          .filter((node) => node !== description)
+          .map((node) => {
+            const img = node.querySelector?.("img");
+            const title = node.querySelector?.(".home-hero-title-text");
+            return `${node.className || ""}:${node.hidden ? "1" : "0"}:${node.style?.display || ""}:${title?.classList?.contains?.("is-hidden") ? "1" : "0"}:${img ? `${img.hidden ? "1" : "0"}:${img.style?.display || ""}:${img.getAttribute?.("src") || ""}` : ""}:${node.textContent || ""}`;
+          })
+          .join("\u0001");
+        const copyWidth = copy ? Number(copy.clientWidth || 0) : 0;
+        const copyHeight = copy ? Number(copy.clientHeight || 0) : 0;
+        const signature = `${boundsVersion}|${viewportKey}|${copyWidth}x${copyHeight}|${description.textContent || ""}|${siblingKey}`;
+        const cached = boundsCache.get(description);
+        if (
+          cached &&
+          cached.signature === signature &&
+          description.style.maxHeight === cached.maxHeight &&
+          description.style.webkitLineClamp === cached.lineClamp
+        ) {
+          return;
+        }
+
         const descriptionStyle = getComputedStyle(description);
         const lineHeight = parseFloat(descriptionStyle.lineHeight || "0") || 0;
         const fontSize = parseFloat(descriptionStyle.fontSize || "0") || 0;
         const lineBoxHeight = Math.max(1, Math.ceil(lineHeight || fontSize * 1.35 || description.offsetHeight || 1));
-        const copy = description.closest(".home-modern-hero-copy");
-        const siblings = copy
-          ? Array.from(copy.children).filter((node) => node !== description && getComputedStyle(node).display !== "none")
-          : [];
+        const siblings = copyChildren.filter((node) => node !== description && getComputedStyle(node).display !== "none");
         const spacing = copy ? parseFloat(getComputedStyle(copy).rowGap || "0") || 0 : 0;
         const occupiedHeight = siblings.reduce((height, node) => height + node.getBoundingClientRect().height, 0);
         const availableHeight = copy
-          ? copy.clientHeight - occupiedHeight - spacing * siblings.length
+          ? copyHeight - occupiedHeight - spacing * siblings.length
           : lineBoxHeight * modernHeroDescriptionMaxLines;
         const lines = Math.min(modernHeroDescriptionMaxLines, Math.max(0, Math.floor(availableHeight / lineBoxHeight)));
         const maxHeight = `${lineBoxHeight * lines}px`;
@@ -289,6 +310,7 @@ export function createHomeScreenMethods14() {
         if (description.style.webkitLineClamp !== lineClamp) {
           description.style.webkitLineClamp = lineClamp;
         }
+        boundsCache.set(description, { signature, maxHeight, lineClamp });
       });
     },
     ensureHomeTruncationObservers() {
@@ -299,12 +321,14 @@ export function createHomeScreenMethods14() {
       if (globalThis?.document?.fonts?.ready) {
         document.fonts.ready
           .then(() => {
+            this.modernHeroBoundsVersion = Number(this.modernHeroBoundsVersion || 0) + 1;
             this.scheduleHomeTruncationUpdate();
           })
           .catch(() => {});
       }
       if (typeof window !== "undefined") {
         window.addEventListener("resize", () => {
+          this.modernHeroBoundsVersion = Number(this.modernHeroBoundsVersion || 0) + 1;
           this.scheduleHomeTruncationUpdate();
         });
       }

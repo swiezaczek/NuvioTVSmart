@@ -394,6 +394,21 @@ test("modern hero description bounds wait for camera scroll before measuring", (
   scheduler.flushRafs();
   assert.ok(computedStyleReads > prevComputedReads);
   assert.ok(rectReads > prevRectReads);
+
+  // 4. Re-scheduling with identical copy and siblings hits modernHeroBoundsCache (0 reflows).
+  const cachedComputedReads = computedStyleReads;
+  const cachedRectReads = rectReads;
+  screen.scheduleHomeTruncationUpdate();
+  scheduler.flushRafs();
+  assert.equal(computedStyleReads, cachedComputedReads);
+  assert.equal(rectReads, cachedRectReads);
+
+  // 5. Updating a sibling invalidates the cache and re-measures.
+  titleSibling.textContent = "Another Movie Title";
+  screen.scheduleHomeTruncationUpdate();
+  scheduler.flushRafs();
+  assert.ok(computedStyleReads > cachedComputedReads);
+  assert.ok(rectReads > cachedRectReads);
 });
 
 test("focusNode skips redundant vertical visibility check on same-row horizontal moves and aligns camera settle flags", () => {
