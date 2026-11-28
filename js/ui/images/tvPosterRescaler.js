@@ -246,7 +246,7 @@ const runExclusiveDecode = (task) => {
 };
 
 self.onmessage = async (event) => {
-  const { id, url, width, height, fit, kind, timeoutMs } = event.data || {};
+  const { id, url, width, height, fit, kind, timeoutMs, preferDataUrl } = event.data || {};
   const hasTimeout = Number(timeoutMs) > 0 && typeof AbortController === "function";
   const controller = hasTimeout ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), Number(timeoutMs)) : 0;
@@ -347,7 +347,7 @@ self.onmessage = async (event) => {
           return;
         }
         sniffed = true;
-        const head = concatChunks(chunks, total);
+        const head = chunks[0]?.byteLength >= 30 ? chunks[0] : concatChunks(chunks, total);
         const jpeg = isJpeg(head);
         const webp = jpeg ? null : webpInfo(head);
         if (!jpeg && !webp) {
@@ -388,6 +388,10 @@ self.onmessage = async (event) => {
       throw new Error("animated webp");
     }
     const dimensions = jpeg ? jpegSize(view) : webp;
+    if (dimensions && dimensions.width <= width && dimensions.height <= height) {
+      // Already no larger than the card. Skip decoding before touching a bitmap.
+      throw new Error("already small");
+    }
     const resize = dimensions ? resizeTarget(dimensions.width, dimensions.height, 1280) : null;
     const alpha = Boolean(webp && webp.alpha);
     const out = await runExclusiveDecode(async () => {
@@ -417,6 +421,15 @@ self.onmessage = async (event) => {
         }
       }
     });
+    if (preferDataUrl && typeof FileReaderSync === "function") {
+      try {
+        const dataUrl = new FileReaderSync().readAsDataURL(out);
+        if (dataUrl) {
+          self.postMessage({ id, ok: true, dataUrl });
+          return;
+        }
+      } catch (_) {}
+    }
     self.postMessage({ id, ok: true, blob: out });
   } catch (error) {
     self.postMessage({ id, ok: false, reason: String((error && error.message) || error) });
@@ -497,15 +510,131 @@ export function shouldRescaleHomeArtwork() {
 // would stay blank, which is worse than the oversized decode this replaces.
 const JOB_TIMEOUT_MS = 15000;
 const WORKER_JOB_SLOTS = 2;
+const MAX_VISIBLE_COMPLETIONS_PER_FRAME = 2;
+const VISIBLE_FRAME_BUDGET_MS = 6;
+const OFFSCREEN_IDLE_TIMEOUT_MS = 250;
+const OFFSCREEN_FALLBACK_DELAY_MS = 32;
 
-function createPool() {
+function hasPendingCompletions(state) {
+  return Boolean(state && (state.pendingVisible.length || state.pendingOffscreen.length));
+}
+
+function cancelOffscreenDrain(state) {
+  if (state.offscreenIdleId && typeof globalThis.cancelIdleCallback === "function") {
+    globalThis.cancelIdleCallback(state.offscreenIdleId);
+    state.offscreenIdleId = 0;
+  }
+  if (state.offscreenTimer) {
+    clearTimeout(state.offscreenTimer);
+    state.offscreenTimer = null;
+  }
+}
+
+function flushVisibleCompletions(state) {
+  if (!state || state.disposed) {
+    return;
+  }
+  const nowFn =
+    typeof globalThis.performance?.now === "function"
+      ? () => globalThis.performance.now()
+      : () => Date.now();
+  const startedAt = nowFn();
+  let settled = 0;
+  while (state.pendingVisible.length && settled < MAX_VISIBLE_COMPLETIONS_PER_FRAME) {
+    const entry = state.pendingVisible.shift();
+    if (!entry?.job) {
+      continue;
+    }
+    if (entry.job.waiters === 1 && entry.job.isStale?.()) {
+      entry.job.settle(null, "stale");
+      continue;
+    }
+    entry.job.settle(entry.ok ? entry.payload : null, entry.reason);
+    settled += 1;
+    if (
+      settled < MAX_VISIBLE_COMPLETIONS_PER_FRAME &&
+      nowFn() - startedAt >= VISIBLE_FRAME_BUDGET_MS
+    ) {
+      break;
+    }
+  }
+  pump(state);
+  if (hasPendingCompletions(state)) {
+    scheduleCompletionDrain(state);
+  }
+}
+
+function flushOffscreenCompletion(state) {
+  if (!state || state.disposed) {
+    return;
+  }
+  if (state.pendingVisible.length) {
+    scheduleCompletionDrain(state);
+    return;
+  }
+  while (state.pendingOffscreen.length) {
+    const entry = state.pendingOffscreen.shift();
+    if (!entry?.job) {
+      continue;
+    }
+    if (entry.job.waiters === 1 && entry.job.isStale?.()) {
+      entry.job.settle(null, "stale");
+      continue;
+    }
+    entry.job.settle(entry.ok ? entry.payload : null, entry.reason);
+    break;
+  }
+  pump(state);
+  if (hasPendingCompletions(state)) {
+    scheduleCompletionDrain(state);
+  }
+}
+
+function scheduleCompletionDrain(state) {
+  if (!state || state.disposed) {
+    return;
+  }
+  if (state.pendingVisible.length) {
+    cancelOffscreenDrain(state);
+    if (!state.visibleRaf) {
+      state.visibleRaf = globalThis.requestAnimationFrame(() => {
+        state.visibleRaf = 0;
+        flushVisibleCompletions(state);
+      });
+    }
+    return;
+  }
+  if (!state.pendingOffscreen.length || state.offscreenIdleId || state.offscreenTimer) {
+    return;
+  }
+  const runOffscreen = () => {
+    state.offscreenIdleId = 0;
+    state.offscreenTimer = null;
+    flushOffscreenCompletion(state);
+  };
+  if (typeof globalThis.requestIdleCallback === "function") {
+    state.offscreenIdleId = globalThis.requestIdleCallback(runOffscreen, {
+      timeout: OFFSCREEN_IDLE_TIMEOUT_MS
+    });
+  } else {
+    state.offscreenTimer = setTimeout(runOffscreen, OFFSCREEN_FALLBACK_DELAY_MS);
+  }
+}
+
+function createPool({ preferDataUrl = false } = {}) {
   const workerUrl = URL.createObjectURL(new Blob([WORKER_SOURCE], { type: "text/javascript" }));
   const state = {
     workerUrl,
+    preferDataUrl: Boolean(preferDataUrl),
     workers: [],
     idle: [],
     queue: [],
     jobs: new Map(),
+    pendingVisible: [],
+    pendingOffscreen: [],
+    visibleRaf: 0,
+    offscreenIdleId: 0,
+    offscreenTimer: null,
     nextId: 1,
     cache: new Map(),
     failed: new Map(),
@@ -537,14 +666,33 @@ function spawnWorker(state) {
     return false;
   }
   worker.onmessage = (event) => {
-    const { id, ok, blob, reason } = event.data || {};
+    const { id, ok, blob, dataUrl, reason } = event.data || {};
+    const payload = typeof dataUrl === "string" && dataUrl ? dataUrl : blob;
     const job = state.jobs.get(id);
     if (job) {
       state.jobs.delete(id);
       clearTimeout(job.timer);
-      job.settle(ok ? blob : null, reason);
     }
-    state.idle.push(worker);
+    if (!state.disposed && !state.suspended && state.workers.includes(worker)) {
+      state.idle.push(worker);
+    }
+    if (job && !job.done) {
+      const shouldPace =
+        !state.disposed &&
+        ok &&
+        Boolean(payload) &&
+        job.kind !== "logo" &&
+        typeof globalThis.requestAnimationFrame === "function";
+      if (!shouldPace) {
+        job.settle(ok ? payload : null, reason);
+      } else if (job.waiters === 1 && job.isStale?.()) {
+        job.settle(null, "stale");
+      } else {
+        const bucket = (job.priority ?? 2) === 0 ? state.pendingVisible : state.pendingOffscreen;
+        bucket.push({ job, ok, payload, reason });
+        scheduleCompletionDrain(state);
+      }
+    }
     pump(state);
   };
   worker.onerror = () => retireWorker(state, worker, "worker error");
@@ -626,10 +774,17 @@ function pump(state) {
       if (job.timeoutMs > 0) {
         message.timeoutMs = job.timeoutMs;
       }
+    } else if (state.preferDataUrl) {
+      message.preferDataUrl = true;
     }
     worker.postMessage(message);
   }
-  if (state.suspendRequested && !state.queue.length && !state.jobs.size) {
+  if (
+    state.suspendRequested &&
+    !state.queue.length &&
+    !state.jobs.size &&
+    !hasPendingCompletions(state)
+  ) {
     suspendWorkers(state);
   }
 }
@@ -659,7 +814,9 @@ function suspendWorkers(state) {
     if (entry.uses > 0) {
       return;
     }
-    URL.revokeObjectURL(entry.objectUrl);
+    if (String(entry.objectUrl).startsWith("blob:")) {
+      URL.revokeObjectURL(entry.objectUrl);
+    }
     state.cache.delete(key);
   });
 }
@@ -668,7 +825,7 @@ function suspendPool(state) {
   if (!state || state.disposed) {
     return;
   }
-  if (state.queue.length || state.jobs.size) {
+  if (state.queue.length || state.jobs.size || hasPendingCompletions(state)) {
     // A poster is being re-encoded right now. Cut it only once the answer is
     // in, or the card would keep the oversized original instead.
     state.suspendRequested = true;
@@ -733,7 +890,9 @@ function trimCache(state) {
     if (entry.uses > 0) {
       continue;
     }
-    URL.revokeObjectURL(entry.objectUrl);
+    if (String(entry.objectUrl).startsWith("blob:")) {
+      URL.revokeObjectURL(entry.objectUrl);
+    }
     state.cache.delete(key);
   }
 }
@@ -744,7 +903,7 @@ function getPoolFor(kind) {
     return null;
   }
   if (current === null) {
-    const created = createPool();
+    const created = createPool({ preferDataUrl: kind !== "generic" });
     if (!created) {
       if (kind === "generic") genericPool = undefined;
       else pool = undefined;
@@ -790,6 +949,7 @@ function rescaleWithPool(state, url, { width, height, fit, priority = 2, isStale
   }
   const pendingJob = state.inflight.get(key);
   if (pendingJob) {
+    const prevPriority = pendingJob.priority;
     pendingJob.priority = Math.min(pendingJob.priority, priority);
     // A second card wanting the same artwork means the queued job is no longer
     // stale just because the first card went away.
@@ -799,6 +959,14 @@ function rescaleWithPool(state, url, { width, height, fit, priority = 2, isStale
     // zero while another card is still painting it, and trimCache would then
     // revoke a url that is on screen.
     pendingJob.waiters += 1;
+    if (prevPriority > 0 && pendingJob.priority === 0) {
+      const idx = state.pendingOffscreen.findIndex((entry) => entry.job === pendingJob);
+      if (idx >= 0) {
+        const [promoted] = state.pendingOffscreen.splice(idx, 1);
+        state.pendingVisible.push(promoted);
+        scheduleCompletionDrain(state);
+      }
+    }
     return pendingJob.promise;
   }
   const job = {
@@ -813,7 +981,7 @@ function rescaleWithPool(state, url, { width, height, fit, priority = 2, isStale
     waiters: 1
   };
   job.promise = new Promise((resolve) => {
-    job.settle = (blob, reason) => {
+    job.settle = (payload, reason) => {
       // A timeout and a late reply can both land, and settling twice would
       // leak a second object url for the same job.
       if (job.done) {
@@ -821,14 +989,18 @@ function rescaleWithPool(state, url, { width, height, fit, priority = 2, isStale
       }
       job.done = true;
       state.inflight.delete(key);
-      if (!blob || state.disposed) {
-        if (!blob && !state.disposed) {
+      if (!payload || state.disposed) {
+        if (!payload && !state.disposed) {
           rememberArtworkFailure(state, key, reason, url);
         }
         resolve(null);
         return;
       }
-      const objectUrl = URL.createObjectURL(blob);
+      if (job.waiters === 1 && job.isStale?.()) {
+        resolve(null);
+        return;
+      }
+      const objectUrl = typeof payload === "string" ? payload : URL.createObjectURL(payload);
       const entry = { objectUrl, uses: job.waiters };
       state.cache.set(key, entry);
       trimCache(state);
@@ -947,7 +1119,8 @@ export function rescaleArtwork(url, options) {
 }
 
 function releaseFromPool(state, objectUrl) {
-  if (!state || !objectUrl || !String(objectUrl).startsWith("blob:")) {
+  const value = String(objectUrl || "");
+  if (!state || (!value.startsWith("blob:") && !value.startsWith("data:"))) {
     return;
   }
   for (const entry of state.cache.values()) {
@@ -976,6 +1149,13 @@ function resetPool(state) {
     return;
   }
   state.disposed = true;
+  if (state.visibleRaf && typeof globalThis.cancelAnimationFrame === "function") {
+    globalThis.cancelAnimationFrame(state.visibleRaf);
+    state.visibleRaf = 0;
+  }
+  cancelOffscreenDrain(state);
+  state.pendingVisible.splice(0).forEach((entry) => entry.job?.settle(null, "reset"));
+  state.pendingOffscreen.splice(0).forEach((entry) => entry.job?.settle(null, "reset"));
   state.jobs.forEach((job) => {
     clearTimeout(job.timer);
     job.settle(null, "reset");
@@ -988,7 +1168,11 @@ function resetPool(state) {
       worker.terminate();
     } catch (_) {}
   });
-  state.cache.forEach((entry) => URL.revokeObjectURL(entry.objectUrl));
+  state.cache.forEach((entry) => {
+    if (String(entry.objectUrl).startsWith("blob:")) {
+      URL.revokeObjectURL(entry.objectUrl);
+    }
+  });
   URL.revokeObjectURL(state.workerUrl);
   state.cache.clear();
   state.jobs.clear();

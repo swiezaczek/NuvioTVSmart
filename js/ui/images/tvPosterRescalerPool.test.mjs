@@ -339,3 +339,166 @@ test("already small failure stays dimension-scoped and does not mark url unresca
   assert.equal(await first, null);
   assert.equal(isKnownUnrescalableHomeArtwork(smallUrl), false);
 });
+
+test("Home pool prefers dataUrl without creating or revoking poster object URLs and drops stale single-waiter jobs", async () => {
+  reset();
+  const originalCreate = URL.createObjectURL;
+  const createdObjects = [];
+  URL.createObjectURL = (value) => {
+    createdObjects.push(value);
+    return `blob:unexpected-${createdObjects.length}`;
+  };
+  try {
+    const dataPromise = rescaleHomeArtwork("https://art/data-url.jpg", BOX);
+    const worker = created.find((candidate) => candidate.posted.length);
+    const job = worker.posted.shift();
+    assert.equal(job.preferDataUrl, true);
+    assert.equal(createdObjects.length, 1);
+    assert.equal(createdObjects[0]?.type, "text/javascript");
+    worker.onmessage({ data: { id: job.id, ok: true, dataUrl: "data:image/jpeg;base64,AQID" } });
+    const resolved = await dataPromise;
+    assert.equal(resolved, "data:image/jpeg;base64,AQID");
+    assert.equal(createdObjects.length, 1);
+    releaseHomeArtwork(resolved);
+    assert.equal(revoked.length, 0);
+
+    let stale = false;
+    const stalePromise = rescaleHomeArtwork("https://art/stale-at-settle.jpg", {
+      ...BOX,
+      isStale: () => stale
+    });
+    const staleJob = worker.posted.shift();
+    stale = true;
+    worker.onmessage({ data: { id: staleJob.id, ok: true, blob: { size: 5 } } });
+    assert.equal(await stalePromise, null);
+    assert.equal(createdObjects.length, 1);
+  } finally {
+    URL.createObjectURL = originalCreate;
+  }
+});
+
+test("visible completions settle on next rAF (capped per frame), offscreen drains on idle and promotes on priority-0 request", async () => {
+  const origRaf = globalThis.requestAnimationFrame;
+  const origCancelRaf = globalThis.cancelAnimationFrame;
+  const origIdle = globalThis.requestIdleCallback;
+  const origCancelIdle = globalThis.cancelIdleCallback;
+
+  let nextId = 1;
+  const rafs = new Map();
+  const idles = new Map();
+  globalThis.requestAnimationFrame = (cb) => {
+    const id = nextId++;
+    rafs.set(id, cb);
+    return id;
+  };
+  globalThis.cancelAnimationFrame = (id) => rafs.delete(id);
+  globalThis.requestIdleCallback = (cb) => {
+    const id = nextId++;
+    idles.set(id, cb);
+    return id;
+  };
+  globalThis.cancelIdleCallback = (id) => idles.delete(id);
+
+  const flushOneRaf = () => {
+    const first = rafs.entries().next().value;
+    if (!first) return false;
+    rafs.delete(first[0]);
+    first[1]();
+    return true;
+  };
+  const flushOneIdle = () => {
+    const first = idles.entries().next().value;
+    if (!first) return false;
+    idles.delete(first[0]);
+    first[1]();
+    return true;
+  };
+
+  try {
+    reset();
+    const settled = [];
+    const track = (label, promise) =>
+      promise.then((value) => {
+        settled.push(label);
+        return value;
+      });
+
+    // Queue 3 visible (priority 0) + 2 offscreen (priority 2) jobs.
+    const v1 = track("v1", rescaleHomeArtwork("https://art/v1.jpg", { ...BOX, priority: 0 }));
+    const v2 = track("v2", rescaleHomeArtwork("https://art/v2.jpg", { ...BOX, priority: 0 }));
+    const v3 = track("v3", rescaleHomeArtwork("https://art/v3.jpg", { ...BOX, priority: 0 }));
+    const o1 = track("o1", rescaleHomeArtwork("https://art/o1.jpg", { ...BOX, priority: 2 }));
+    const o2 = track("o2", rescaleHomeArtwork("https://art/o2.jpg", { ...BOX, priority: 2 }));
+
+    // Deliver all 5 worker responses.
+    for (let round = 0; round < 10; round += 1) {
+      const worker = created.find((candidate) => !candidate.terminated && candidate.posted.length);
+      if (!worker) break;
+      const job = worker.posted.shift();
+      worker.onmessage({
+        data: { id: job.id, ok: true, dataUrl: `data:image/jpeg;base64,${job.id}` }
+      });
+    }
+
+    await Promise.resolve();
+    assert.equal(
+      settled.length,
+      0,
+      "completions wait for next rAF rather than bursting in onmessage"
+    );
+    assert.equal(rafs.size, 1, "one rAF scheduled for visible completions");
+    assert.equal(idles.size, 0, "offscreen idle drain waits until visible queue is empty");
+
+    // Frame 1: settles at most 2 visible completions.
+    assert.equal(flushOneRaf(), true);
+    await Promise.all([v1, v2]);
+    assert.deepEqual(settled, ["v1", "v2"]);
+    assert.equal(rafs.size, 1, "remaining visible completion schedules next rAF");
+    assert.equal(idles.size, 0);
+
+    // Frame 2: settles 3rd visible completion and arms idle drain for offscreen.
+    assert.equal(flushOneRaf(), true);
+    await v3;
+    assert.deepEqual(settled, ["v1", "v2", "v3"]);
+    assert.equal(rafs.size, 0);
+    assert.equal(idles.size, 1, "offscreen completions drain via requestIdleCallback");
+
+    // Promote o2 to priority 0 -> moves immediately to visible rAF queue and cancels idle drain.
+    const promoted = rescaleHomeArtwork("https://art/o2.jpg", { ...BOX, priority: 0 });
+    assert.equal(rafs.size, 1, "promoted offscreen completion schedules visible rAF");
+    assert.equal(idles.size, 0, "idle drain cancelled while promoted visible item is pending");
+
+    assert.equal(flushOneRaf(), true);
+    assert.equal(await promoted, await o2);
+    assert.deepEqual(settled, ["v1", "v2", "v3", "o2"]);
+    assert.equal(idles.size, 1, "remaining offscreen o1 re-arms idle drain");
+
+    // Idle tick drains o1.
+    assert.equal(flushOneIdle(), true);
+    await o1;
+    assert.deepEqual(settled, ["v1", "v2", "v3", "o2", "o1"]);
+    assert.equal(rafs.size, 0);
+    assert.equal(idles.size, 0);
+
+    // Pool reset cancels pending rAF/idle handles and settles queued completions to null.
+    const pendingReset = rescaleHomeArtwork("https://art/reset-me.jpg", { ...BOX, priority: 0 });
+    const worker = created.find((candidate) => !candidate.terminated && candidate.posted.length);
+    const resetJob = worker.posted.shift();
+    worker.onmessage({ data: { id: resetJob.id, ok: true, dataUrl: "data:image/jpeg;base64,zz" } });
+    assert.equal(rafs.size, 1);
+    resetHomeArtworkRescaler();
+    assert.equal(rafs.size, 0, "reset cancels pending visible rAF");
+    assert.equal(idles.size, 0, "reset cancels pending offscreen idle handle");
+    assert.equal(await pendingReset, null);
+  } finally {
+    reset();
+    if (origRaf === undefined) delete globalThis.requestAnimationFrame;
+    else globalThis.requestAnimationFrame = origRaf;
+    if (origCancelRaf === undefined) delete globalThis.cancelAnimationFrame;
+    else globalThis.cancelAnimationFrame = origCancelRaf;
+    if (origIdle === undefined) delete globalThis.requestIdleCallback;
+    else globalThis.requestIdleCallback = origIdle;
+    if (origCancelIdle === undefined) delete globalThis.cancelIdleCallback;
+    else globalThis.cancelIdleCallback = origCancelIdle;
+  }
+});

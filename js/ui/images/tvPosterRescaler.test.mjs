@@ -713,3 +713,90 @@ test("a failed encode still closes the decoded bitmap", async () => {
   assert.equal(message.reason, "encode failed");
   assert.equal(worker.closedBitmaps(), 1);
 });
+
+test("pre-decode header dimension check short-circuits already small JPEGs without createImageBitmap", async () => {
+  let decodeCalls = 0;
+  const messages = [];
+  const context = vm.createContext({
+    Blob,
+    setTimeout,
+    clearTimeout,
+    self: { postMessage: (message) => messages.push(message) },
+    fetch: async () => bytesResponse(jpegWithDimensions(200, 300)),
+    createImageBitmap: async () => {
+      decodeCalls += 1;
+      return { width: 200, height: 300, close() {} };
+    },
+    OffscreenCanvas: class OffscreenCanvas {}
+  });
+  vm.runInContext(WORKER_SOURCE, context);
+
+  await context.self.onmessage({
+    data: {
+      id: 31,
+      url: "https://cdn.example.com/small.jpg",
+      width: 220,
+      height: 338,
+      fit: "cover"
+    }
+  });
+  assert.equal(decodeCalls, 0);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].id, 31);
+  assert.equal(messages[0].ok, false);
+  assert.equal(messages[0].reason, "already small");
+});
+
+test("preferDataUrl uses FileReaderSync when available and falls back to blob when absent", async () => {
+  const sendWithFileReader = async (hasFileReaderSync) => {
+    const messages = [];
+    const context = vm.createContext({
+      Blob,
+      setTimeout,
+      clearTimeout,
+      ...(hasFileReaderSync
+        ? {
+            FileReaderSync: class FileReaderSync {
+              readAsDataURL() {
+                return "data:image/jpeg;base64,QUJD";
+              }
+            }
+          }
+        : {}),
+      self: { postMessage: (message) => messages.push(message) },
+      fetch: async () => bytesResponse(jpegWithDimensions(800, 1200)),
+      createImageBitmap: async () => ({ width: 800, height: 1200, close() {} }),
+      OffscreenCanvas: class OffscreenCanvas {
+        getContext() {
+          return { drawImage() {} };
+        }
+        async convertToBlob() {
+          return { type: "image/jpeg", size: 3 };
+        }
+      }
+    });
+    vm.runInContext(WORKER_SOURCE, context);
+    await context.self.onmessage({
+      data: {
+        id: 41,
+        url: "https://cdn.example.com/poster.jpg",
+        width: 220,
+        height: 338,
+        fit: "cover",
+        preferDataUrl: true
+      }
+    });
+    return messages[0];
+  };
+
+  const withSync = await sendWithFileReader(true);
+  assert.equal(withSync.id, 41);
+  assert.equal(withSync.ok, true);
+  assert.equal(withSync.dataUrl, "data:image/jpeg;base64,QUJD");
+
+  const withoutSync = await sendWithFileReader(false);
+  assert.equal(withoutSync.id, 41);
+  assert.equal(withoutSync.ok, true);
+  assert.equal(withoutSync.blob?.type, "image/jpeg");
+  assert.equal(withoutSync.blob?.size, 3);
+});
