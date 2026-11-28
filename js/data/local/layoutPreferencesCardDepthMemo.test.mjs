@@ -152,3 +152,75 @@ test("HomeScreen applyHeroToDom reuses this.layoutPrefs without extra LayoutPref
     globalThis.localStorage.getItem = origGetItem;
   }
 });
+
+test("applyHeroDescriptionAutoScroll defers rAF by 1500ms during active TV navigation and cancels on re-entry or unmount", async () => {
+  const vm = await import("node:vm");
+  const raw05 = (
+    await readFile(
+      new URL("../../ui/screens/home/homeScreenMethods-05-apply-hero-to-dom.js", import.meta.url),
+      "utf8"
+    )
+  )
+    .replace(/^import [\s\S]*?;\r?\n/gm, "")
+    .replace(/^export /gm, "");
+
+  const applyCalls = [];
+  const rafQueue = [];
+  const context = vm.createContext({
+    setTimeout,
+    clearTimeout,
+    requestAnimationFrame: (cb) => {
+      rafQueue.push(cb);
+      return rafQueue.length;
+    },
+    cancelAnimationFrame: () => {},
+    ensureHeroMdbListRatings: () => {},
+    registerHomeDomNodes: () => {},
+    createHeroDescriptionAutoScroller: () => ({
+      apply: (node, enabled) => applyCalls.push({ node, enabled }),
+      stop: () => {}
+    }),
+    internals: {
+      ScreenUtils: { hide: () => {} }
+    }
+  });
+  vm.runInContext(`${raw05}\nglobalThis.methods = createHomeScreenMethods05();`, context);
+
+  const descNode = { isConnected: true };
+  const screen = Object.assign(Object.create(context.methods), {
+    container: {
+      querySelector: (sel) => (sel === ".home-hero-card .home-hero-description" ? descNode : null)
+    },
+    layoutPrefs: { heroDescriptionAutoScrollEnabled: true },
+    lastHomeInputAt: Date.now(),
+    shouldUseBoundedHomeImageHydration: () => true,
+    isLegacyTvRuntime: () => false
+  });
+
+  // Initial call schedules 1500ms timer instead of immediate rAF.
+  screen.applyHeroDescriptionAutoScroll();
+  assert.equal(rafQueue.length, 0, "must not schedule rAF before 1500ms TV settle delay");
+  assert.ok(screen.heroDescriptionAutoScrollDelayTimer);
+
+  // Rapid re-entry cancels the previous timer and resets the 1500ms wait.
+  const firstTimer = screen.heroDescriptionAutoScrollDelayTimer;
+  screen.applyHeroDescriptionAutoScroll();
+  assert.notEqual(screen.heroDescriptionAutoScrollDelayTimer, firstTimer);
+
+  // Unmount (container cleared) before 1500ms fires makes timer a clean no-op.
+  screen.container = null;
+  await new Promise((r) => setTimeout(r, 1550));
+  assert.equal(rafQueue.length, 0, "unmounted screen must not schedule auto-scroll rAF");
+
+  // Re-mount with active input: after 1500ms, rAF runs and calls apply().
+  screen.container = {
+    querySelector: (sel) => (sel === ".home-hero-card .home-hero-description" ? descNode : null)
+  };
+  screen.lastHomeInputAt = Date.now();
+  screen.applyHeroDescriptionAutoScroll();
+  await new Promise((r) => setTimeout(r, 1550));
+  assert.equal(rafQueue.length, 1, "must schedule auto-scroll rAF once 1500ms delay completes");
+  rafQueue.shift()();
+  assert.equal(applyCalls.length, 1);
+  assert.equal(applyCalls[0].node, descNode);
+});
