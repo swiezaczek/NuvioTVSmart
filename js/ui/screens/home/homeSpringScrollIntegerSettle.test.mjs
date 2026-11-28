@@ -316,7 +316,103 @@ test("homeRowWindow keeps 150% rootMargin and prefers entry.boundingClientRect h
   assert.equal(section.style.height, "392px");
 });
 
-test("Home focus CSS preserves border-color + layout containment, strips poster paint transitions, and persists modern track/viewport layers", async () => {
+test("homeRowWindow defers IntersectionObserver parking/unparking during camera scroll while keeping ensureReady synchronous", () => {
+  const observerCalls = [];
+  class IntersectionObserver {
+    constructor(callback, options) {
+      this.callback = callback;
+      this.options = options;
+      observerCalls.push(this);
+    }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+
+  const timers = new Map();
+  let nextTimer = 1;
+  const rootClasses = new Set(["is-camera-scrolling"]);
+  const root = { classList: { contains: (name) => rootClasses.has(name) } };
+  const makeSection = (initiallyParked = false) => {
+    const classes = new Set(initiallyParked ? [HOME_ROW_PARKED_CLASS] : []);
+    const node = {
+      isConnected: true,
+      offsetHeight: 392,
+      style: { height: initiallyParked ? "392px" : "" },
+      classList: {
+        add: (name) => classes.add(name),
+        remove: (name) => classes.delete(name),
+        contains: (name) => classes.has(name)
+      },
+      querySelector: () => null,
+      previousElementSibling: null,
+      nextElementSibling: null
+    };
+    node.closest = () => node;
+    return node;
+  };
+
+  const rowA = makeSection(false);
+  const rowB = makeSection(true);
+  const rowC = makeSection(true);
+  const rowWindow = createHomeRowWindow({
+    root,
+    scope: {
+      IntersectionObserver,
+      setTimeout: (fn) => {
+        const id = nextTimer++;
+        timers.set(id, fn);
+        return id;
+      },
+      clearTimeout: (id) => {
+        timers.delete(id);
+      }
+    }
+  });
+  rowWindow.observe([rowA, rowB, rowC]);
+
+  observerCalls[0].callback([
+    { target: rowA, isIntersecting: false, boundingClientRect: { height: 392 } },
+    { target: rowB, isIntersecting: true, boundingClientRect: { height: 392 } },
+    { target: rowC, isIntersecting: true, boundingClientRect: { height: 392 } }
+  ]);
+
+  assert.equal(
+    rowA.classList.contains(HOME_ROW_PARKED_CLASS),
+    false,
+    "parking deferred mid-scroll"
+  );
+  assert.equal(
+    rowB.classList.contains(HOME_ROW_PARKED_CLASS),
+    true,
+    "unparking deferred mid-scroll"
+  );
+  assert.equal(timers.size, 1);
+
+  // ensureReady must still unpark immediately even while camera scroll is active.
+  assert.equal(rowWindow.ensureReady(rowC), true);
+  assert.equal(rowC.classList.contains(HOME_ROW_PARKED_CLASS), false);
+  assert.equal(observerCalls.length, 2, "refresh reconnects observer after manual unpark");
+
+  // Reconnected observer reports mid-scroll -> still deferred until scroll clears.
+  observerCalls[1].callback([
+    { target: rowA, isIntersecting: false, boundingClientRect: { height: 392 } },
+    { target: rowB, isIntersecting: true, boundingClientRect: { height: 392 } },
+    { target: rowC, isIntersecting: true, boundingClientRect: { height: 392 } }
+  ]);
+  assert.equal(rowA.classList.contains(HOME_ROW_PARKED_CLASS), false);
+  assert.equal(rowB.classList.contains(HOME_ROW_PARKED_CLASS), true);
+
+  // Camera scroll clears -> queued entries flush on next poll tick.
+  rootClasses.delete("is-camera-scrolling");
+  const pending = Array.from(timers.values());
+  timers.clear();
+  pending.forEach((fn) => fn());
+  assert.equal(rowA.classList.contains(HOME_ROW_PARKED_CLASS), true);
+  assert.equal(rowB.classList.contains(HOME_ROW_PARKED_CLASS), false);
+});
+
+test("Home focus CSS preserves classic transitions, adds GPU opacity rings + blur caching, and persists modern track/viewport layers", async () => {
   const [css14, css17, css18] = await Promise.all([
     readFile(new URL("../../../../css/components-14.css", import.meta.url), "utf8"),
     readFile(new URL("../../../../css/components-17.css", import.meta.url), "utf8"),
@@ -325,19 +421,40 @@ test("Home focus CSS preserves border-color + layout containment, strips poster 
 
   const cardRule = css14.match(/\.home-screen-shell \.home-content-card \{[^}]*\}/)?.[0] || "";
   assert.match(cardRule, /contain:\s*layout style;/);
-  assert.match(cardRule, /transform 120ms ease-out/);
-  assert.match(cardRule, /border-color 120ms ease/);
+  assert.match(cardRule, /transition:\s*transform 120ms ease-out;/);
+  assert.doesNotMatch(cardRule, /border-color\s+120ms/);
 
   const frameRule14 = css14.match(/\.home-screen-shell \.home-poster-frame \{[^}]*\}/)?.[0] || "";
-  assert.match(frameRule14, /transition:\s*none;/);
+  assert.match(frameRule14, /border-color 120ms ease/);
+  assert.match(frameRule14, /box-shadow 120ms ease/);
 
   const cwMediaRule = css14.match(/\.home-screen-shell \.home-continue-media \{[^}]*\}/)?.[0] || "";
   assert.match(cwMediaRule, /transition:\s*none;/);
+
+  const cwBlurRule =
+    css14.match(
+      /\.home-screen-shell \.home-continue-card-blur-next-up \.home-continue-bg \{[^}]*\}/
+    )?.[0] || "";
+  assert.match(cwBlurRule, /translateZ\(0\) scale\(1\.08\)/);
+  assert.match(cwBlurRule, /backface-visibility:\s*hidden;/);
+
+  assert.match(
+    css14,
+    /body:not\(\.performance-constrained\)[\s\S]*?\.home-continue-card:not\(\.home-continue-card-loading\)::after\s*\{[^}]*will-change:\s*opacity;[\s\S]*?transition:\s*opacity 120ms ease;/
+  );
+  assert.match(
+    css14,
+    /\.home-screen-shell\.home-layout-modern:not\(\.depth-continue-watching\)[\s\S]*?\.home-continue-media::before\s*\{\s*content:\s*none;\s*\}/
+  );
 
   const frameRule18 =
     css18.match(/\.home-screen-shell\.home-layout-modern \.home-poster-frame \{[^}]*\}/)?.[0] || "";
   assert.match(frameRule18, /transition:\s*height 180ms ease-out;/);
   assert.doesNotMatch(frameRule18, /border-color|box-shadow|background-color/);
+  assert.match(
+    css18,
+    /body:not\(\.performance-constrained\)[\s\S]*?\.home-poster-frame::before[\s\S]*?will-change:\s*opacity;[\s\S]*?transition:\s*opacity 120ms ease;/
+  );
 
   const viewportRule17 =
     css17.match(

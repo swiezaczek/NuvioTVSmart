@@ -10,6 +10,8 @@ export const HOME_LEGACY_ROW_WINDOW_SELECTOR = ".home-row, .home-grid-section";
 // 150% of the rows viewport on each side keeps about two rows mounted ahead so
 // vertical D-pad moves rarely force synchronous ensureReady()/refresh() rebuilds.
 const DEFAULT_ROOT_MARGIN = "150% 0px";
+const DEFERRED_SCROLL_POLL_MS = 80;
+const DEFERRED_SCROLL_MAX_WAIT_MS = 450;
 
 export function isHomeRowWindowSupported(scope = globalThis) {
   return (
@@ -65,9 +67,28 @@ export function createHomeRowWindow({
   scope = globalThis
 } = {}) {
   const observed = new Set();
+  const deferredEntries = new Map();
   let observer = null;
+  let deferredFlushTimer = null;
+  let deferredFlushDeadline = 0;
 
-  const onEntries = (entries) => {
+  const scheduleTimer =
+    typeof scope.setTimeout === "function" ? scope.setTimeout.bind(scope) : setTimeout;
+  const cancelTimer =
+    typeof scope.clearTimeout === "function" ? scope.clearTimeout.bind(scope) : clearTimeout;
+
+  const clearDeferredFlush = () => {
+    if (deferredFlushTimer !== null) {
+      cancelTimer(deferredFlushTimer);
+      deferredFlushTimer = null;
+    }
+    deferredFlushDeadline = 0;
+    deferredEntries.clear();
+  };
+
+  const isCameraScrolling = () => Boolean(root?.classList?.contains?.("is-camera-scrolling"));
+
+  const applyEntries = (entries) => {
     const leaving = [];
     const entering = [];
     entries.forEach((entry) => {
@@ -106,6 +127,60 @@ export function createHomeRowWindow({
     entering.forEach(unpark);
   };
 
+  const scheduleDeferredFlush = () => {
+    if (deferredFlushTimer !== null) {
+      return;
+    }
+    if (!deferredFlushDeadline) {
+      deferredFlushDeadline = Date.now() + DEFERRED_SCROLL_MAX_WAIT_MS;
+    }
+    const onFlushTimer = () => {
+      deferredFlushTimer = null;
+      if (!observer) {
+        clearDeferredFlush();
+        return;
+      }
+      if (isCameraScrolling() && Date.now() < deferredFlushDeadline) {
+        deferredFlushTimer = scheduleTimer(onFlushTimer, DEFERRED_SCROLL_POLL_MS);
+        return;
+      }
+      const queued = Array.from(deferredEntries.values());
+      deferredEntries.clear();
+      deferredFlushDeadline = 0;
+      if (queued.length) {
+        applyEntries(queued);
+      }
+    };
+    deferredFlushTimer = scheduleTimer(onFlushTimer, DEFERRED_SCROLL_POLL_MS);
+  };
+
+  const onEntries = (entries) => {
+    if (!entries?.length) {
+      return;
+    }
+    if (isCameraScrolling()) {
+      entries.forEach((entry) => {
+        if (entry?.target) {
+          deferredEntries.set(entry.target, entry);
+        }
+      });
+      scheduleDeferredFlush();
+      return;
+    }
+    if (deferredEntries.size) {
+      entries.forEach((entry) => {
+        if (entry?.target) {
+          deferredEntries.set(entry.target, entry);
+        }
+      });
+      const queued = Array.from(deferredEntries.values());
+      clearDeferredFlush();
+      applyEntries(queued);
+      return;
+    }
+    applyEntries(entries);
+  };
+
   const connect = () => {
     observer = new scope.IntersectionObserver(onEntries, { root: root || null, rootMargin });
     observed.forEach((section) => observer.observe(section));
@@ -122,6 +197,7 @@ export function createHomeRowWindow({
         if (!next.has(section)) {
           observer.unobserve(section);
           observed.delete(section);
+          deferredEntries.delete(section);
         }
       });
       next.forEach((section) => {
@@ -138,9 +214,16 @@ export function createHomeRowWindow({
       if (!section) {
         return false;
       }
-      const changed = [section.previousElementSibling, section, section.nextElementSibling]
-        .map(unpark)
-        .some(Boolean);
+      const targets = [section.previousElementSibling, section, section.nextElementSibling];
+      targets.forEach((target) => {
+        if (target) {
+          deferredEntries.delete(target);
+        }
+      });
+      if (!deferredEntries.size && deferredFlushTimer !== null) {
+        clearDeferredFlush();
+      }
+      const changed = targets.map(unpark).some(Boolean);
       if (changed) {
         this.refresh();
       }
@@ -153,6 +236,7 @@ export function createHomeRowWindow({
       let changed = false;
       observed.forEach((section) => {
         if (wanted.has(String(section.dataset?.rowKey || ""))) {
+          deferredEntries.delete(section);
           changed = unpark(section) || changed;
         }
       });
@@ -162,6 +246,7 @@ export function createHomeRowWindow({
       return changed;
     },
     unparkAll() {
+      clearDeferredFlush();
       let changed = false;
       observed.forEach((section) => {
         changed = unpark(section) || changed;
@@ -177,12 +262,14 @@ export function createHomeRowWindow({
       if (!observer) {
         return;
       }
+      clearDeferredFlush();
       observer.disconnect();
       connect();
     },
     // Rows stay parked: Home keeps its DOM while another screen is open, and
     // waking 30 rows only to hide them restyled ~1900 elements on the way out.
     destroy() {
+      clearDeferredFlush();
       observer?.disconnect();
       observer = null;
       observed.clear();
