@@ -3,6 +3,8 @@
 >
 > Public community custom build of `NuvioMedia/NuvioTVSmart` maintained for **Samsung Tizen** and **Samsung Tizen + Vetro** users (while `main` remains a clean mirror of `upstream/main`).
 >
+> **Download:** [Latest unsigned Tizen `.wgt` Release](https://github.com/swiezaczek/NuvioTVSmart-by-Swiezaczek/releases/latest) (sign with your TV certificate via Nuvio TV Installer, Apps2Samsung, or Tizen Studio).
+>
 > ### Changes & Benefits for Samsung Tizen Users (no Vetro required)
 > - **Smoother UI navigation & fewer micro-stutters**: off-DOM `ImageBitmap` backdrop decoding, bounded artwork LRU caching, offloaded Hero logos, look-ahead horizontal card hydration, incremental catalog grid appends, seek/OSD reflow elimination, and Tizen 9 `watchTvFramePace` + EngineFS loopback hardening.
 > - **Frame-synced trailer unmute (zero audio-before-video)**: keeps trailer audio muted until `firstFrame` / `requestVideoFrameCallback` visual reveal (`0 ms` reveal delay) with an autoplay-policy pause fallback.
@@ -10,11 +12,11 @@
 > - **Extra UX & session hygiene**: Profile edit/copy PIN gate, FolderDetail poster hold-menu & top-header scroll snap, and cleaner sign-out/worker/cache teardown.
 >
 > ### Additional Benefits for Samsung Tizen + Vetro Users
-> Paired with the **[vetro-trailer-resolver](https://github.com/swiezaczek/vetro-trailer-resolver/releases/latest)** Vetro Shard (`v0.1.0`):
+> Paired with the **[vetro-trailer-resolver](https://github.com/swiezaczek/vetro-trailer-resolver/releases/latest)** Vetro Shard (`v0.1.1`):
 > - **Instant ad-free 1080p trailers**: plays clean MPEG-DASH (`SegmentBase` H.264 + default-track AAC), HLS, or MP4 streams directly inside Home Hero, Detail backdrop, and Post-Play (zero YouTube pre-roll ads, zero iframe focus traps, ~490 ms first frame on Samsung S90C).
 > - **WebVTT trailer subtitles**: automatic `<track>` subtitles synchronized with Nuvio's trailer subtitle setting.
 > - **Tizen 9+ self-only LAN discovery & security**: automatically discovers the TV's LAN IP via `webapis.network.getIp()` when Tizen 9 WRT blocks `127.0.0.1`, while the Shard rejects external LAN devices with HTTP `403` and runs with zero root permissions (`permissions: []`).
-> - **Instant live controls**: toggle in **Nuvio Settings → Playback → Audio (`Direct Ad-Free Trailers (Vetro)`)**, **Vetro Dashboard (`Trailers` tab)**, or **Vetro TV Launcher Control Center (`Trailers` card)**, with seamless fallback to standard YouTube playback whenever turned off.
+> - **Instant live controls**: toggle in **Nuvio Settings → Playback → Audio (`Direct Ad-Free Trailers (Vetro)`)** or **Vetro Dashboard (`Trailers` tab)**, with seamless fallback to standard YouTube playback whenever turned off.
 
 <div align="center">
 
