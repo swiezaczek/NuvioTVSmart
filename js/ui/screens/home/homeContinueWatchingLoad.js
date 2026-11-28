@@ -153,6 +153,12 @@ export function startHomeContinueWatchingLoad(context) {
         return;
       }
       if (!suppressContinueWatchingLoading) {
+        if ((this.hasPaintedInitialHomeContent === true || this.isInitialHomeLoading === false) && Number(this.lastHomeInputAt || 0) > 0) {
+          const settledBeforeDisplay = await waitForHomeInputQuiet(this, isCurrentHomeContinueWatchingLoad);
+          if (!settledBeforeDisplay || !isCurrentHomeContinueWatchingLoad()) {
+            return;
+          }
+        }
         // Publish the raw in-progress state immediately. Metadata and Next Up are enriched
         // asynchronously below, matching Android's initial render and avoiding a CW skeleton
         // when the local progress already contains a title or artwork.

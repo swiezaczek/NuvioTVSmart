@@ -264,6 +264,16 @@ test("CW enrichment batch persistence, external invalidation guard, visibility f
       cwLoadSource.includes("waitForHomeInputQuiet(this, isCurrentHomeContinueWatchingLoad)"),
       "homeContinueWatchingLoad must yield for input quiet after enrichContinueWatching before persisting/rendering"
     );
+    assert.ok(
+      cwLoadSource.includes("settledBeforeDisplay"),
+      "homeContinueWatchingLoad must also yield before immediate pre-enrichment render when post-paint D-pad input is active"
+    );
+
+    const rawLoadSource = (
+      await readFile(new URL("./homeContinueWatchingLoad.js", import.meta.url), "utf8")
+    )
+      .replace(/^import [\s\S]*?;\r?\n/gm, "")
+      .replace(/^export /gm, "");
 
     const quietContext = vm.createContext({
       console,
@@ -387,6 +397,94 @@ test("CW enrichment batch persistence, external invalidation guard, visibility f
     });
     assert.deepEqual(abortedFetches, [], "aborted quiet wait must not fetch CW metadata");
     assert.equal(abortedNextUpCalled, false, "aborted quiet wait must not run buildNextUpItems");
+
+    // 6. Drive startHomeContinueWatchingLoad pre-enrichment yield guard directly.
+    const loadContext = vm.createContext({
+      console,
+      Promise,
+      Set,
+      Map,
+      Math,
+      Number,
+      String,
+      Array,
+      Object,
+      Boolean,
+      setTimeout,
+      clearTimeout,
+      stabilizeImmediateContinueWatchingItems: ({ rawItems }) => rawItems,
+      waitForHomeInputQuiet: quietContext.waitForHomeInputQuiet,
+      internals: {
+        Router: { getCurrent: () => "home" },
+        watchProgressRepository: {
+          getContinueWatchingSourceKey: () => "local",
+          getContinueWatchingRemoteProgressState: () => ({ sourceKey: "local", loaded: true })
+        },
+        watchedItemsRepository: {},
+        StartupSyncService: { isCurrentProfilePullPending: () => false },
+        WatchProgressSource: { NUVIO_SYNC: "nuvio" },
+        buildWatchedTitleIdSet: () => new Set(),
+        CW_MAX_NEXT_UP_LOOKUPS: 10,
+        shouldApplyLateContinueWatchingFocus: () => false,
+        shouldProtectContinueWatchingDisplay: () => false,
+        CW_MAX_VISIBLE_ITEMS: 30,
+        buildVisibleContinueWatchingItems: (list) => list,
+        buildCompleteContinueWatchingDisplay: (list) => list,
+        buildContinueWatchingSignature: (list) => JSON.stringify(list || []),
+        buildHeroIdentity: () => "",
+        sortContinueWatchingItemsForDisplay: (list) => list,
+        normalizeHomeRowItem: (_r, x) => x,
+        ContinueWatchingPreferences: { getDismissedNextUpKeys: () => [] }
+      }
+    });
+    vm.runInContext(
+      `${rawLoadSource}\nglobalThis.startHomeContinueWatchingLoad = startHomeContinueWatchingLoad;`,
+      loadContext
+    );
+
+    const bgRenderTimes = [];
+    const loadStartAt = Date.now();
+    const loadScreen = {
+      homeLoadToken: 1,
+      homeContinueWatchingLoadGeneration: 0,
+      hasPaintedInitialHomeContent: true,
+      lastHomeInputAt: loadStartAt,
+      continueWatchingDisplay: [],
+      layoutPrefs: {},
+      selectNextUpProgressCandidates: () => [],
+      refreshWatchedTitleState: () => Promise.resolve(),
+      persistContinueWatchingSnapshot: () => {},
+      clearContinueWatchingSnapshot: () => {},
+      scheduleContinueWatchingReleaseRefresh: () => {},
+      releaseInitialHomeLoading: () => {},
+      maybeStartPendingHomeBackgroundRefresh: () => {},
+      requestBackgroundRender: () => bgRenderTimes.push(Date.now()),
+      async enrichContinueWatching(items) {
+        return items;
+      }
+    };
+    await loadContext.startHomeContinueWatchingLoad.call(loadScreen, {
+      token: 1,
+      watchedItemsPromise: Promise.resolve([]),
+      progressAllPromise: Promise.resolve([]),
+      recentProgressPromise: Promise.resolve([makeItem("tt401", "PreEnrich")]),
+      progressErrors: { all: null, recent: null },
+      continueWatchingSourceKey: "local",
+      continueWatchingSource: "local",
+      startupSyncPendingAtLoad: false,
+      startupSyncPullPromiseAtLoad: null,
+      nextUpSeedOptions: {},
+      prefs: {},
+      background: true,
+      preserveHomeReturnState: true,
+      suppressContinueWatchingLoading: false,
+      hasExistingContinueWatchingDisplay: false
+    });
+    assert.ok(bgRenderTimes.length >= 1, "expected pre-enrichment background render");
+    assert.ok(
+      bgRenderTimes[0] - loadStartAt >= 1780,
+      `pre-enrichment CW render must wait for 1800ms input quiet (elapsed=${bgRenderTimes[0] - loadStartAt}ms)`
+    );
   } finally {
     globalThis.localStorage = prevStorage;
     globalThis.document = prevDocument;
