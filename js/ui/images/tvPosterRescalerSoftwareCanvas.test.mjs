@@ -447,8 +447,8 @@ test("worker completions defer URL.createObjectURL and pump while .is-camera-scr
     const rescaler = await import(`./tvPosterRescaler.js?cameraScroll=${Date.now()}`);
     rescaler.resetHomeArtworkRescaler();
 
-    // Queue 11 jobs while idle (3 workers x 3 slots on >=2GB = 9 active, 2 queued behind them).
-    const promises = Array.from({ length: 11 }, (_, index) =>
+    // Queue 8 jobs while idle (3 workers x 2 slots = 6 active, 2 queued behind them).
+    const promises = Array.from({ length: 8 }, (_, index) =>
       rescaler.rescaleHomeArtwork(`https://art/cam-${index}.jpg`, {
         width: 220,
         height: 338,
@@ -456,7 +456,7 @@ test("worker completions defer URL.createObjectURL and pump while .is-camera-scr
       })
     );
     const activeMsgs = createdWorkers.flatMap((w) => w.posted.map((msg) => ({ w, msg })));
-    assert.equal(activeMsgs.length, 9, "9 initial slots dispatched across 3 workers x 3 slots");
+    assert.equal(activeMsgs.length, 6, "6 initial slots dispatched across 3 workers x 2 slots");
 
     // Enter .is-camera-scrolling and settle 2 worker replies.
     cameraScrolling = true;
@@ -476,7 +476,7 @@ test("worker completions defer URL.createObjectURL and pump while .is-camera-scr
     );
     assert.equal(
       createdWorkers.reduce((sum, w) => sum + w.posted.length, 0),
-      11,
+      8,
       "worker.onmessage must immediately release idle slot and pump queued jobs during .is-camera-scrolling"
     );
 
@@ -491,7 +491,7 @@ test("worker completions defer URL.createObjectURL and pump while .is-camera-scr
     );
     assert.equal(
       createdWorkers.reduce((sum, w) => sum + w.posted.length, 0),
-      11
+      8
     );
     const firstTwo = await Promise.all(settledPromiseIndices.map((idx) => promises[idx]));
     assert.deepEqual(firstTwo, ["blob:poster/1", "blob:poster/2"]);
@@ -502,7 +502,7 @@ test("worker completions defer URL.createObjectURL and pump while .is-camera-scr
     const remainingMsgs = createdWorkers
       .flatMap((w) => w.posted.map((msg) => ({ w, msg })))
       .filter(({ msg }) => !settledIds.has(msg.id));
-    assert.equal(remainingMsgs.length, 9);
+    assert.equal(remainingMsgs.length, 6);
     remainingMsgs.forEach(({ w, msg }) => {
       w.onmessage({ data: { id: msg.id, ok: true, blob: { isPosterBlob: true } } });
     });
@@ -511,11 +511,11 @@ test("worker completions defer URL.createObjectURL and pump while .is-camera-scr
     await new Promise((r) => setTimeout(r, 680));
     assert.equal(
       posterBlobUrls.length,
-      11,
+      8,
       "max-wait safety cap (~450ms) must flush stalled completions so jobs are never stranded"
     );
     const allResults = await Promise.all(promises);
-    assert.equal(allResults.filter(Boolean).length, 11);
+    assert.equal(allResults.filter(Boolean).length, 8);
 
     rescaler.resetHomeArtworkRescaler();
   } finally {
@@ -632,7 +632,7 @@ test("worker completions and pump defer past 380ms keydown pace window and chunk
 
     // Recreate pool to verify idempotency of keydown listener registration.
     rescaler.resetHomeArtworkRescaler();
-    const promises2 = Array.from({ length: 11 }, (_, index) =>
+    const promises2 = Array.from({ length: 8 }, (_, index) =>
       rescaler.rescaleHomeArtwork(`https://art/chunk2-${index}.jpg`, {
         width: 220,
         height: 338,
@@ -644,11 +644,11 @@ test("worker completions and pump defer past 380ms keydown pace window and chunk
 
     // Trigger keydown while .is-camera-scrolling is false:
     // - completions must defer 355ms before URL.createObjectURL
-    // - worker slots (3 workers x 3 slots on >=2GB) must release and pump remaining 2 jobs immediately
-    // - after 355ms, all 11 completions drain at 20ms spacing with no 3-poster cap.
+    // - worker slots (3 workers x 2 slots = 6) must release and pump remaining 2 jobs immediately
+    // - after 355ms, all 8 completions drain at 20ms spacing with no 3-poster cap.
     keydownHandler();
     const firstMsgs = createdWorkers.slice(-3).flatMap((w) => w.posted.map((msg) => ({ w, msg })));
-    assert.equal(firstMsgs.length, 9);
+    assert.equal(firstMsgs.length, 6);
     const seenIds = new Set(firstMsgs.map(({ msg }) => msg.id));
     firstMsgs.forEach(({ w, msg }) => {
       w.onmessage({ data: { id: msg.id, ok: true, blob: { isPosterBlob: true } } });
@@ -673,7 +673,7 @@ test("worker completions and pump defer past 380ms keydown pace window and chunk
     // After 355ms clears, completions drain one at a time spaced by 20ms setTimeout (not rAF).
     await new Promise((r) => setTimeout(r, 175));
     assert.ok(
-      posterBlobUrls.length >= 1 && posterBlobUrls.length < 11,
+      posterBlobUrls.length >= 1 && posterBlobUrls.length < 8,
       `expected incremental 20ms flush after 355ms, got ${posterBlobUrls.length}`
     );
     assert.equal(
@@ -682,14 +682,14 @@ test("worker completions and pump defer past 380ms keydown pace window and chunk
       "post-settle <1050ms window must space via 20ms setTimeout instead of 16ms rAF"
     );
 
-    await new Promise((r) => setTimeout(r, 320));
+    await new Promise((r) => setTimeout(r, 260));
     assert.equal(
       posterBlobUrls.length,
-      11,
-      "all 11 queued posters must finish draining at 20ms spacing without starvation cap"
+      8,
+      "all 8 queued posters must finish draining at 20ms spacing without starvation cap"
     );
     const settled = await Promise.all(promises2);
-    assert.equal(settled.filter(Boolean).length, 11);
+    assert.equal(settled.filter(Boolean).length, 8);
 
     // Verify pump() dispatches immediately inside 355ms keydown window while completion waits past 355ms,
     // and completions arriving at rest (>1050ms) fall back to 16ms rAF chunking.
@@ -715,11 +715,11 @@ test("worker completions and pump defer past 380ms keydown pace window and chunk
     });
     assert.equal(
       posterBlobUrls.length,
-      11,
+      8,
       "completion inside 355ms must wait before createObjectURL"
     );
     await new Promise((r) => setTimeout(r, 410));
-    assert.equal(await deferredPumpPromise, "blob:poster/12");
+    assert.equal(await deferredPumpPromise, "blob:poster/9");
 
     // Wait past 1050ms from last keydown; new completion at rest uses 16ms rAF chunking.
     await new Promise((r) => setTimeout(r, 700));
@@ -742,7 +742,7 @@ test("worker completions and pump defer past 380ms keydown pace window and chunk
       "completions at rest (>1050ms) must use rAF chunking"
     );
     chunkRafCallbacks.shift()();
-    assert.equal(await restPromise, "blob:poster/13");
+    assert.equal(await restPromise, "blob:poster/10");
 
     rescaler.resetHomeArtworkRescaler();
   } finally {
@@ -838,4 +838,193 @@ test("WORKER_SOURCE readPosterBytes sniffs chunks[0] directly when >= 30 bytes",
   assert.equal(posted[1].ok, false);
   assert.equal(posted[1].reason, "not jpeg");
   assert.equal(cancelled, true);
+});
+
+test("Home rescaler prefers worker dataUrl (0 poster createObjectURL/revokeObjectURL) while generic pool stays on blob URLs", async () => {
+  // 1. Verify WORKER_SOURCE FileReaderSync dataUrl fast path in VM.
+  const fullJpeg = jpegBytes(800, 1200);
+  const workerPosted = [];
+  const workerCtx = vm.createContext({
+    Uint8Array,
+    Blob,
+    Promise,
+    Math,
+    Number,
+    Error,
+    setTimeout,
+    clearTimeout,
+    AbortController,
+    FileReaderSync: class {
+      readAsDataURL(blob) {
+        return `data:${blob.type || "image/jpeg"};base64,MOCKDATA`;
+      }
+    },
+    self: {
+      postMessage: (msg) => workerPosted.push(msg)
+    },
+    fetch: async () => ({
+      ok: true,
+      headers: { get: () => String(fullJpeg.byteLength) },
+      arrayBuffer: async () =>
+        fullJpeg.buffer.slice(fullJpeg.byteOffset, fullJpeg.byteOffset + fullJpeg.byteLength)
+    }),
+    createImageBitmap: async () => ({ width: 800, height: 1200, close() {} }),
+    OffscreenCanvas: class {
+      getContext() {
+        return { drawImage() {} };
+      }
+      convertToBlob() {
+        return Promise.resolve(new Blob(["jpeg"], { type: "image/jpeg" }));
+      }
+    }
+  });
+  vm.runInContext(WORKER_SOURCE, workerCtx);
+
+  await workerCtx.self.onmessage({
+    data: {
+      id: 1,
+      url: "https://art/poster.jpg",
+      width: 220,
+      height: 338,
+      fit: "cover",
+      preferDataUrl: true
+    }
+  });
+  assert.equal(workerPosted[0].ok, true);
+  assert.equal(workerPosted[0].dataUrl, "data:image/jpeg;base64,MOCKDATA");
+  assert.equal(workerPosted[0].blob, undefined);
+
+  // 2. Verify Home pool uses data: URLs with 0 poster createObjectURL/revokeObjectURL calls,
+  // refcounts & LRU-evicts cleanly, while generic pool (rescaleArtwork) uses blob: URLs.
+  const origWorker = globalThis.Worker;
+  const origOffscreenCanvas = globalThis.OffscreenCanvas;
+  const origCreateImageBitmap = globalThis.createImageBitmap;
+  const origCreateObjectURL = globalThis.URL.createObjectURL;
+  const origRevokeObjectURL = globalThis.URL.revokeObjectURL;
+  const origUserAgent = Object.getOwnPropertyDescriptor(globalThis.navigator, "userAgent");
+  const origDeviceMemory = Object.getOwnPropertyDescriptor(globalThis.navigator, "deviceMemory");
+  const origTizen = globalThis.tizen;
+  const origWebapis = globalThis.webapis;
+  const origBlob = globalThis.Blob;
+
+  const createdWorkers = [];
+  const posterBlobCreated = [];
+  const posterBlobRevoked = [];
+
+  class FakeWorker {
+    constructor() {
+      this.onmessage = null;
+      this.onerror = null;
+      this.posted = [];
+      createdWorkers.push(this);
+    }
+    postMessage(msg) {
+      this.posted.push(msg);
+      queueMicrotask(() => {
+        if (msg.preferDataUrl) {
+          this.onmessage?.({
+            data: { id: msg.id, ok: true, dataUrl: `data:image/jpeg;base64,CARD_${msg.id}` }
+          });
+        } else {
+          this.onmessage?.({
+            data: { id: msg.id, ok: true, blob: new FakeBlob(["jpeg"], { type: "image/jpeg" }) }
+          });
+        }
+      });
+    }
+    terminate() {}
+  }
+  class FakeBlob {
+    constructor(parts, opts) {
+      this.parts = parts;
+      this.type = opts?.type || "";
+      this.isWorkerSource =
+        Array.isArray(parts) && typeof parts[0] === "string" && parts[0].includes("self.onmessage");
+    }
+  }
+
+  try {
+    Object.defineProperty(globalThis.navigator, "userAgent", {
+      value:
+        "Mozilla/5.0 (SMART-TV; Linux; Tizen 9.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      configurable: true
+    });
+    Object.defineProperty(globalThis.navigator, "deviceMemory", {
+      value: 1,
+      configurable: true
+    });
+    globalThis.tizen = {};
+    globalThis.webapis = {};
+    globalThis.Worker = FakeWorker;
+    globalThis.OffscreenCanvas = function OffscreenCanvas() {};
+    globalThis.createImageBitmap = async () => ({ close() {} });
+    globalThis.Blob = FakeBlob;
+    globalThis.URL.createObjectURL = (blob) => {
+      if (blob?.isWorkerSource) return `blob:worker/${createdWorkers.length + 1}`;
+      const url = `blob:generic/${posterBlobCreated.length + 1}`;
+      posterBlobCreated.push(url);
+      return url;
+    };
+    globalThis.URL.revokeObjectURL = (url) => {
+      if (!String(url).startsWith("blob:worker/")) {
+        posterBlobRevoked.push(url);
+      }
+    };
+
+    const rescaler = await import(`./tvPosterRescaler.js?preferDataUrl=${Date.now()}`);
+    rescaler.resetHomeArtworkRescaler();
+    rescaler.resetArtworkRescaler();
+
+    const homeUrl1 = await rescaler.rescaleHomeArtwork("https://art/home-1.jpg", {
+      width: 220,
+      height: 338,
+      fit: "cover"
+    });
+    assert.ok(homeUrl1.startsWith("data:image/jpeg;base64,"), "Home pool must resolve data: URL");
+    assert.equal(posterBlobCreated.length, 0, "Home pool must make 0 poster createObjectURL calls");
+
+    // Releasing + filling cache past low-memory cap (200) must never call revokeObjectURL on data: URIs.
+    rescaler.releaseHomeArtwork(homeUrl1);
+    for (let i = 2; i <= 205; i += 1) {
+      const u = await rescaler.rescaleHomeArtwork(`https://art/home-${i}.jpg`, {
+        width: 220,
+        height: 338,
+        fit: "cover"
+      });
+      rescaler.releaseHomeArtwork(u);
+    }
+    assert.equal(posterBlobCreated.length, 0, "Home cache trim must keep 0 createObjectURL calls");
+    assert.equal(
+      posterBlobRevoked.length,
+      0,
+      "Home cache trim must never call revokeObjectURL on data: URIs"
+    );
+
+    // Non-Home generic pool keeps blob: URLs without preferDataUrl.
+    const genericUrl = await rescaler.rescaleArtwork("https://art/generic-1.jpg", {
+      width: 220,
+      height: 338,
+      fit: "cover"
+    });
+    assert.equal(genericUrl, "blob:generic/1");
+    assert.equal(posterBlobCreated.length, 1);
+
+    rescaler.resetHomeArtworkRescaler();
+    rescaler.resetArtworkRescaler();
+    assert.deepEqual(posterBlobRevoked, ["blob:generic/1"]);
+  } finally {
+    globalThis.Worker = origWorker;
+    globalThis.OffscreenCanvas = origOffscreenCanvas;
+    globalThis.createImageBitmap = origCreateImageBitmap;
+    globalThis.URL.createObjectURL = origCreateObjectURL;
+    globalThis.URL.revokeObjectURL = origRevokeObjectURL;
+    globalThis.Blob = origBlob;
+    if (origUserAgent) Object.defineProperty(globalThis.navigator, "userAgent", origUserAgent);
+    if (origDeviceMemory)
+      Object.defineProperty(globalThis.navigator, "deviceMemory", origDeviceMemory);
+    if (origTizen === undefined) delete globalThis.tizen;
+    else globalThis.tizen = origTizen;
+    if (origWebapis === undefined) delete globalThis.webapis;
+    else globalThis.webapis = origWebapis;
+  }
 });

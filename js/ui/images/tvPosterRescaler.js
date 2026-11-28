@@ -242,7 +242,7 @@ const runExclusiveDecode = (task) => {
 };
 
 self.onmessage = async (event) => {
-  const { id, url, width, height, fit, kind, timeoutMs } = event.data || {};
+  const { id, url, width, height, fit, kind, timeoutMs, preferDataUrl } = event.data || {};
   let full = null;
   const hasTimeout = Number(timeoutMs) > 0 && typeof AbortController === "function";
   const controller = hasTimeout ? new AbortController() : null;
@@ -417,6 +417,11 @@ self.onmessage = async (event) => {
         }
       }
     });
+    if (preferDataUrl && typeof FileReaderSync === "function") {
+      const dataUrl = new FileReaderSync().readAsDataURL(out);
+      self.postMessage({ id, ok: true, dataUrl });
+      return;
+    }
     self.postMessage({ id, ok: true, blob: out });
   } catch (error) {
     if (full) {
@@ -446,8 +451,10 @@ export function artworkWorkerCount(cores, deviceMemory) {
   return Math.min(Math.max(value - 1, 1), 3);
 }
 
+const WORKER_JOB_SLOTS = 2;
+
 function workerJobSlots() {
-  return isLowMemoryDevice(getDeviceMemoryGb()) ? 2 : 3;
+  return WORKER_JOB_SLOTS;
 }
 
 function workerCount() {
@@ -610,7 +617,7 @@ function flushPendingCompletions(state) {
   for (let index = 0; index < batch.length; index += 1) {
     const entry = batch[index];
     if (entry.job) {
-      entry.job.settle(entry.ok ? entry.blob : null, entry.reason);
+      entry.job.settle(entry.ok ? entry.payload : null, entry.reason);
     }
   }
   pump(state);
@@ -665,11 +672,12 @@ function scheduleCompletionFlush(state) {
   }, delay);
 }
 
-function createPool() {
+function createPool({ preferDataUrl = false } = {}) {
   ensureDpadKeydownListener();
   const workerUrl = URL.createObjectURL(new Blob([WORKER_SOURCE], { type: "text/javascript" }));
   const state = {
     workerUrl,
+    preferDataUrl: Boolean(preferDataUrl),
     workers: [],
     idle: [],
     queue: [],
@@ -711,7 +719,8 @@ function spawnWorker(state) {
     return false;
   }
   worker.onmessage = (event) => {
-    const { id, ok, blob, reason } = event.data || {};
+    const { id, ok, blob, dataUrl, reason } = event.data || {};
+    const payload = typeof dataUrl === "string" && dataUrl ? dataUrl : blob;
     const job = state.jobs.get(id);
     if (job) {
       state.jobs.delete(id);
@@ -721,7 +730,7 @@ function spawnWorker(state) {
       state.idle.push(worker);
     }
     if (shouldDeferCompletionFlush() || lastDpadKeydownAt > 0) {
-      state.pendingCompletions.push({ job, worker, ok, blob, reason });
+      state.pendingCompletions.push({ job, worker, ok, payload, reason });
       if (shouldDeferCompletionFlush()) {
         scheduleCompletionFlush(state);
       } else {
@@ -731,7 +740,7 @@ function spawnWorker(state) {
       return;
     }
     if (job) {
-      job.settle(ok ? blob : null, reason);
+      job.settle(ok ? payload : null, reason);
     }
     pump(state);
   };
@@ -815,6 +824,8 @@ function pump(state) {
       if (job.timeoutMs > 0) {
         message.timeoutMs = job.timeoutMs;
       }
+    } else if (state.preferDataUrl) {
+      message.preferDataUrl = true;
     }
     worker.postMessage(message);
   }
@@ -853,7 +864,9 @@ function suspendWorkers(state) {
     if (entry.uses > 0) {
       return;
     }
-    URL.revokeObjectURL(entry.objectUrl);
+    if (String(entry.objectUrl).startsWith("blob:")) {
+      URL.revokeObjectURL(entry.objectUrl);
+    }
     state.cache.delete(key);
   });
 }
@@ -927,7 +940,9 @@ function trimCache(state) {
     if (entry.uses > 0) {
       continue;
     }
-    URL.revokeObjectURL(entry.objectUrl);
+    if (String(entry.objectUrl).startsWith("blob:")) {
+      URL.revokeObjectURL(entry.objectUrl);
+    }
     state.cache.delete(key);
   }
 }
@@ -938,7 +953,7 @@ function getPoolFor(kind) {
     return null;
   }
   if (current === null) {
-    const created = createPool();
+    const created = createPool({ preferDataUrl: kind !== "generic" });
     if (!created) {
       if (kind === "generic") genericPool = undefined;
       else pool = undefined;
@@ -1007,7 +1022,7 @@ function rescaleWithPool(state, url, { width, height, fit, priority = 2, isStale
     waiters: 1
   };
   job.promise = new Promise((resolve) => {
-    job.settle = (blob, reason) => {
+    job.settle = (payload, reason) => {
       // A timeout and a late reply can both land, and settling twice would
       // leak a second object url for the same job.
       if (job.done) {
@@ -1015,8 +1030,8 @@ function rescaleWithPool(state, url, { width, height, fit, priority = 2, isStale
       }
       job.done = true;
       state.inflight.delete(key);
-      if (!blob || state.disposed) {
-        if (!blob && !state.disposed) {
+      if (!payload || state.disposed) {
+        if (!payload && !state.disposed) {
           rememberArtworkFailure(state, key, reason, url);
         }
         resolve(null);
@@ -1026,7 +1041,7 @@ function rescaleWithPool(state, url, { width, height, fit, priority = 2, isStale
         resolve(null);
         return;
       }
-      const objectUrl = URL.createObjectURL(blob);
+      const objectUrl = typeof payload === "string" ? payload : URL.createObjectURL(payload);
       const entry = { objectUrl, uses: job.waiters };
       state.cache.set(key, entry);
       trimCache(state);
@@ -1145,7 +1160,8 @@ export function rescaleArtwork(url, options) {
 }
 
 function releaseFromPool(state, objectUrl) {
-  if (!state || !objectUrl || !String(objectUrl).startsWith("blob:")) {
+  const value = String(objectUrl || "");
+  if (!state || (!value.startsWith("blob:") && !value.startsWith("data:"))) {
     return;
   }
   for (const entry of state.cache.values()) {
@@ -1201,7 +1217,11 @@ function resetPool(state) {
       worker.terminate();
     } catch (_) {}
   });
-  state.cache.forEach((entry) => URL.revokeObjectURL(entry.objectUrl));
+  state.cache.forEach((entry) => {
+    if (String(entry.objectUrl).startsWith("blob:")) {
+      URL.revokeObjectURL(entry.objectUrl);
+    }
+  });
   URL.revokeObjectURL(state.workerUrl);
   state.cache.clear();
   state.jobs.clear();
