@@ -1,4 +1,5 @@
 > [!NOTE]
+>
 > ## NuvioTVSmart by Swiezaczek (`build/samsung-vetro`)
 >
 > Public community custom build of `NuvioMedia/NuvioTVSmart` maintained for **Samsung Tizen** and **Samsung Tizen + Vetro** users (while `main` remains a clean mirror of `upstream/main`).
@@ -6,13 +7,16 @@
 > **Download:** [Latest unsigned Tizen `.wgt` Release](https://github.com/swiezaczek/NuvioTVSmart-by-Swiezaczek/releases/latest) (sign with your TV certificate via Nuvio TV Installer, Apps2Samsung, or Tizen Studio).
 >
 > ### Changes & Benefits for Samsung Tizen Users (no Vetro required)
-> - **Smoother UI navigation & fewer micro-stutters**: off-DOM `ImageBitmap` backdrop decoding, bounded artwork LRU caching, offloaded Hero logos, look-ahead horizontal card hydration, incremental catalog grid appends, seek/OSD reflow elimination, and Tizen 9 `watchTvFramePace` + EngineFS loopback hardening.
+>
+> - **Smoother UI navigation & fewer micro-stutters**: self-contained Hero artwork Blob Worker, `FileReaderSync` data-URL poster/logo commits, camera-scroll-aware poster & row hydration pacing, vertical fast-scroll guard, bounded artwork caching, and `Home`-scoped `watchTvFramePace` (with burst/repeat protection) + Tizen 9 EngineFS loopback hardening.
 > - **Frame-synced trailer unmute (zero audio-before-video)**: keeps trailer audio muted until `firstFrame` / `requestVideoFrameCallback` visual reveal (`0 ms` reveal delay) with an autoplay-policy pause fallback.
 > - **OLED-friendly HDR & subtitle upgrades**: linear HDR bitmap subtitle dimming, accurate SDR/HDR stream detection (avoiding false HDR triggers on tone-mapped/HLS SDR), live `hdrTextColor` editing during HDR playback, calibrated `75%–150%` line spacing aligned with Android TV (`1.15`), and subtitle outline thickness.
 > - **Extra UX & session hygiene**: Profile edit/copy PIN gate, FolderDetail poster hold-menu & top-header scroll snap, and cleaner sign-out/worker/cache teardown.
 >
 > ### Additional Benefits for Samsung Tizen + Vetro Users
+>
 > Paired with the **[vetro-trailer-resolver](https://github.com/swiezaczek/vetro-trailer-resolver/releases/latest)** Vetro Shard (`v0.1.2`):
+>
 > - **Instant ad-free 1080p trailers from `0:00`**: plays clean MPEG-DASH (`SegmentBase` H.264 + default-track AAC), HLS (full local playlist & segment proxy), or MP4 streams directly inside Home Hero, Detail backdrop, and Post-Play with zero YouTube buttons or pre-roll ads, non-tripping per-video miss handling, and seamless Home-to-Detail `<video>` handoff.
 > - **WebVTT trailer subtitles**: automatic `<track>` subtitles synchronized with Nuvio's trailer subtitle setting.
 > - **Tizen 9+ self-only LAN discovery & security**: automatically discovers the TV's LAN IP via `webapis.network.getIp()` when Tizen 9 WRT blocks `127.0.0.1`, while the Shard rejects external LAN devices with HTTP `403` and runs with zero root permissions (`permissions: []`).
