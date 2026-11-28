@@ -724,8 +724,8 @@ test("bounded TV hydration clamps margins during active D-pad stepping and prefe
   };
 
   const visible = makeRowWithCard(400, "https://art/visible-row.jpg");
-  // top=1300 is 220px below 1080: outside clamped 160px stepping margin, inside normal 480px margin.
-  const neighbor = makeRowWithCard(1300, "https://art/neighbor-row.jpg");
+  // top=1120 is 40px below 1080: outside clamped 0px vertical stepping margin, inside normal 480px margin.
+  const neighbor = makeRowWithCard(1120, "https://art/neighbor-row.jpg");
   const anchor = new context.HTMLElement();
   anchor.isConnected = true;
   anchor.offsetWidth = 220;
@@ -757,7 +757,7 @@ test("bounded TV hydration clamps margins during active D-pad stepping and prefe
   assert.equal(
     neighbor.img.src,
     "",
-    "220px-offscreen neighbor row must stay deferred under 160px active stepping margin"
+    "40px-offscreen neighbor row must stay deferred under 0px active vertical stepping margin"
   );
   assert.ok(
     screen.homeLazyImageQuietPrefetchTimer,
@@ -775,4 +775,84 @@ test("bounded TV hydration clamps margins during active D-pad stepping and prefe
     clearTimeout(screen.homeLazyImageQuietPrefetchTimer);
     screen.homeLazyImageQuietPrefetchTimer = null;
   }
+});
+
+test("boundHomeViewportScrollHandler avoids rAF/timer churn mid-spring and passes focused node on settle", async () => {
+  let rafCount = 0;
+  const context = vm.createContext({
+    console,
+    setTimeout,
+    clearTimeout,
+    requestAnimationFrame: (cb) => {
+      rafCount += 1;
+      return setTimeout(cb, 0);
+    },
+    cancelAnimationFrame: (id) => clearTimeout(id),
+    internals: {
+      MODERN_HOME_CONSTANTS: {
+        smartTvLazyHydrationDebounceMs: 10,
+        verticalScrollSettlePollMs: 15
+      },
+      Router: { getCurrent: () => "home" },
+      getTvRuntimePerformanceProfile: () => ({ isTvRuntime: true }),
+      getLegacySidebarSelectedNode: () => null,
+      getModernSidebarSelectedNode: () => null,
+      getDirectionFromKeyCode: () => null
+    }
+  });
+  context.globalThis = context;
+  vm.runInContext(
+    `${stripImportsAndExports(dpadSource)}\nglobalThis.dpadApi = createHomeScreenMethods19();`,
+    context
+  );
+
+  const listeners = new Map();
+  const viewport = {
+    addEventListener: (type, fn) => listeners.set(type, fn),
+    removeEventListener: () => {}
+  };
+  const focusedNode = { id: "focused-card" };
+  const scheduled = [];
+  let hydrationActive = true;
+  const screen = Object.assign(Object.create(context.dpadApi), {
+    container: {
+      querySelector: (sel) => (sel === ".home-modern-rows-viewport" ? viewport : null)
+    },
+    layoutMode: "modern",
+    lastHomeInputAt: Date.now(),
+    getHomeViewport: () => viewport,
+    shouldUseBoundedHomeImageHydration: () => true,
+    isLegacyTvRuntime: () => false,
+    isModernHydrationScrollActive: () => hydrationActive,
+    shouldSuspendModernViewportFocusSync: () => false,
+    getCurrentFocusedNode: () => focusedNode,
+    scheduleHomeLazyImageHydration: (anchor, opts) => scheduled.push({ anchor, opts })
+  });
+
+  screen.bindHomeViewportEvents();
+  const scrollHandler = listeners.get("scroll");
+  assert.equal(typeof scrollHandler, "function");
+
+  // Emit 5 scroll events during active D-pad pace window + scroll animation.
+  for (let i = 0; i < 5; i += 1) {
+    scrollHandler({ target: viewport });
+  }
+  assert.equal(rafCount, 0, "scroll events during pace/scroll window must not schedule rAF");
+  const initialSettleTimer = screen.homeViewportSettleHydrationTimer;
+  assert.ok(initialSettleTimer, "first scroll event must arm settle hydration timer");
+
+  // Extra scroll event inside pace window must keep the existing timer rather than resetting it.
+  scrollHandler({ target: viewport });
+  assert.equal(
+    screen.homeViewportSettleHydrationTimer,
+    initialSettleTimer,
+    "mid-spring scroll events must not clear/reset pending settle timer"
+  );
+
+  // Let pace window & scroll animation finish; settle timer passes focused node to hydration.
+  hydrationActive = false;
+  await new Promise((r) => setTimeout(r, 430));
+  assert.equal(scheduled.length, 1);
+  assert.equal(scheduled[0].anchor, focusedNode);
+  assert.equal(scheduled[0].opts?.viewportChanged, true);
 });

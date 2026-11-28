@@ -382,18 +382,33 @@ export function createHomeScreenMethods19() {
             }
             return;
           }
+          const lastInputAt = Number(this.lastHomeInputAt || 0);
+          const withinPaceWindow = Boolean(
+            this.shouldUseBoundedHomeImageHydration?.() &&
+            lastInputAt > 0 &&
+            Date.now() - lastInputAt < HOME_BOUNDED_HYDRATION_PACE_QUIET_MS
+          );
+          if (withinPaceWindow || Boolean(this.isModernHydrationScrollActive?.())) {
+            // Skip per-frame rAF & timer resets mid-spring during active input;
+            // schedule once per quiet cycle so post-settle rows still hydrate.
+            if (withinPaceWindow && this.homeViewportSettleHydrationTimer) {
+              return;
+            }
+            this.scheduleHomeViewportSettleHydration();
+            return;
+          }
           if (this.homeViewportScrollFrame) {
             return;
           }
           this.homeViewportScrollFrame = requestAnimationFrame(() => {
             this.homeViewportScrollFrame = 0;
-            const lastInputAt = Number(this.lastHomeInputAt || 0);
-            const withinPaceWindow = Boolean(
+            const frameLastInputAt = Number(this.lastHomeInputAt || 0);
+            const frameWithinPaceWindow = Boolean(
               this.shouldUseBoundedHomeImageHydration?.() &&
-              lastInputAt > 0 &&
-              Date.now() - lastInputAt < HOME_BOUNDED_HYDRATION_PACE_QUIET_MS
+              frameLastInputAt > 0 &&
+              Date.now() - frameLastInputAt < HOME_BOUNDED_HYDRATION_PACE_QUIET_MS
             );
-            if (this.shouldSuspendModernViewportFocusSync() || withinPaceWindow) {
+            if (this.shouldSuspendModernViewportFocusSync() || frameWithinPaceWindow) {
               // The camera tween's last scroll event lands while it is still
               // active (or inside the frame-pace window); without a retry the
               // rows it revealed never hydrate.
@@ -441,7 +456,7 @@ export function createHomeScreenMethods19() {
           this.scheduleHomeViewportSettleHydration();
           return;
         }
-        this.scheduleHomeLazyImageHydration(null, { viewportChanged: true });
+        this.scheduleHomeLazyImageHydration(this.getCurrentFocusedNode?.() || null, { viewportChanged: true });
       }, delayMs);
     }
   };

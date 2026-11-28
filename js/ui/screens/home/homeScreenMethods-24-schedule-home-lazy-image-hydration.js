@@ -300,8 +300,8 @@ export function createHomeScreenMethods24() {
       // move into a burst of eager image requests. During active D-pad stepping
       // on TV, keep focused + visible cards hydrated and defer neighbor rows
       // until input rests for 1600ms.
-      const verticalMargin = isActiveDpadStepping ? 160 : useBoundedTvHydration ? 480 : constrained ? 720 : 1200;
-      const horizontalMargin = isActiveDpadStepping ? 220 : useBoundedTvHydration ? 320 : constrained ? 520 : 1000;
+      const verticalMargin = isActiveDpadStepping ? 0 : useBoundedTvHydration ? 480 : constrained ? 720 : 1200;
+      const horizontalMargin = isActiveDpadStepping ? 160 : useBoundedTvHydration ? 320 : constrained ? 520 : 1000;
       const focusedRow = Boolean(anchorRow && anchorRow === anchorNode?.closest?.(HOME_LAZY_IMAGE_ROW_SELECTOR));
       const focusedRowMargin = focusedRow ? Math.max(96, Math.round(Number(anchorNode?.offsetWidth || 0) * 0.65)) : horizontalMargin;
       const pendingLoads = [];
