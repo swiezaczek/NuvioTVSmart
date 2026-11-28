@@ -128,11 +128,23 @@ export function createHomeScreenMethods14() {
         // two or three times per focus: 17 ms each on a 2025 OLED. The previous
         // bounds stay applied meanwhile and CSS clamps the text, so one
         // measurement after camera scroll settles is enough.
+        const isCameraScrollPending = () => {
+          if (typeof this.isModernHydrationScrollActive === "function" && this.isModernHydrationScrollActive()) {
+            return true;
+          }
+          try {
+            return Boolean(
+              this.container?.querySelector?.(".is-camera-scrolling") || globalThis?.document?.querySelector?.(".is-camera-scrolling")
+            );
+          } catch (_) {
+            return false;
+          }
+        };
         const scheduleBoundsFrame = () => {
           if (!this.container || this.layoutMode !== "modern" || this.homeDomPreserved) {
             return;
           }
-          if (typeof this.isModernHydrationScrollActive === "function" && this.isModernHydrationScrollActive()) {
+          if (isCameraScrollPending()) {
             if (this.homeHeroBoundsFrame) {
               cancelAnimationFrame(this.homeHeroBoundsFrame);
               this.homeHeroBoundsFrame = 0;
@@ -152,7 +164,7 @@ export function createHomeScreenMethods14() {
               if (!this.container || this.layoutMode !== "modern" || this.homeDomPreserved) {
                 return;
               }
-              if (typeof this.isModernHydrationScrollActive === "function" && this.isModernHydrationScrollActive()) {
+              if (isCameraScrollPending()) {
                 scheduleBoundsFrame();
                 return;
               }
