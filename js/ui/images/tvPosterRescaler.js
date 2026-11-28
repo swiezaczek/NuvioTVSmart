@@ -344,7 +344,7 @@ self.onmessage = async (event) => {
           return;
         }
         sniffed = true;
-        const head = concatChunks(chunks, total);
+        const head = chunks[0]?.byteLength >= 30 ? chunks[0] : concatChunks(chunks, total);
         const jpeg = isJpeg(head);
         const webp = jpeg ? null : webpInfo(head);
         if (!jpeg && !webp) {
@@ -501,9 +501,13 @@ const CAMERA_SCROLL_POLL_MS = 60;
 const CAMERA_SCROLL_MAX_WAIT_MS = 450;
 const DPAD_PACE_QUIET_MS = 380;
 const DPAD_PACE_MAX_WAIT_MS = 650;
+const DPAD_ACTIVE_STEPPING_WINDOW_MS = 1400;
+const DPAD_ACTIVE_CHUNK_SPACING_MS = 90;
+const DPAD_MAX_COMPLETIONS_PER_STEP_WINDOW = 3;
 const MAX_COMPLETIONS_PER_FRAME = 1;
 
 let lastDpadKeydownAt = 0;
+let flushedSinceKeydown = 0;
 let keydownListenerBound = false;
 
 function ensureDpadKeydownListener() {
@@ -516,12 +520,21 @@ function ensureDpadKeydownListener() {
         "keydown",
         () => {
           lastDpadKeydownAt = Date.now();
+          flushedSinceKeydown = 0;
         },
         { passive: true, capture: true }
       );
       keydownListenerBound = true;
     }
   } catch (_) {}
+}
+
+function getDpadActiveSteppingRemainingMs(now = Date.now()) {
+  if (lastDpadKeydownAt <= 0) {
+    return 0;
+  }
+  const remaining = DPAD_ACTIVE_STEPPING_WINDOW_MS - (now - lastDpadKeydownAt);
+  return remaining > 0 ? remaining : 0;
 }
 
 function isCameraScrollingActive() {
@@ -551,6 +564,33 @@ function scheduleNextCompletionChunk(state) {
   ) {
     return;
   }
+  const activeSteppingRemainingMs = getDpadActiveSteppingRemainingMs();
+  if (state.restDrainTimer) {
+    if (
+      activeSteppingRemainingMs > 0 &&
+      flushedSinceKeydown >= DPAD_MAX_COMPLETIONS_PER_STEP_WINDOW
+    ) {
+      return;
+    }
+    clearTimeout(state.restDrainTimer);
+    state.restDrainTimer = null;
+  }
+  if (
+    activeSteppingRemainingMs > 0 &&
+    flushedSinceKeydown >= DPAD_MAX_COMPLETIONS_PER_STEP_WINDOW
+  ) {
+    state.restDrainTimer = setTimeout(
+      () => {
+        state.restDrainTimer = null;
+        if (!state || state.disposed || !state.pendingCompletions.length) {
+          return;
+        }
+        scheduleNextCompletionChunk(state);
+      },
+      Math.max(16, activeSteppingRemainingMs)
+    );
+    return;
+  }
   const onTick = () => {
     if (!state || state.disposed || !state.pendingCompletions.length) {
       return;
@@ -571,6 +611,13 @@ function scheduleNextCompletionChunk(state) {
         Boolean(state.flushWaitStartedAt) && Date.now() - state.flushWaitStartedAt >= maxWaitMs
     });
   };
+  if (activeSteppingRemainingMs > 0) {
+    state.chunkTimer = setTimeout(() => {
+      state.chunkTimer = null;
+      onTick();
+    }, DPAD_ACTIVE_CHUNK_SPACING_MS);
+    return;
+  }
   if (typeof globalThis.requestAnimationFrame === "function") {
     state.chunkRaf = globalThis.requestAnimationFrame(() => {
       state.chunkRaf = 0;
@@ -594,6 +641,9 @@ function flushPendingCompletions(state, { bypassDeferral = false } = {}) {
     state.flushWaitingOnKeydown = false;
     pump(state, { bypassDeferral });
     return;
+  }
+  if (lastDpadKeydownAt > 0) {
+    flushedSinceKeydown += batch.length;
   }
   for (let index = 0; index < batch.length; index += 1) {
     const entry = batch[index];
@@ -673,6 +723,7 @@ function createPool() {
     flushWaitingOnKeydown: false,
     chunkTimer: null,
     chunkRaf: 0,
+    restDrainTimer: null,
     nextId: 1,
     cache: new Map(),
     failed: new Map(),
@@ -1180,12 +1231,17 @@ function resetPool(state) {
     clearTimeout(state.chunkTimer);
     state.chunkTimer = null;
   }
+  if (state.restDrainTimer) {
+    clearTimeout(state.restDrainTimer);
+    state.restDrainTimer = null;
+  }
   if (state.chunkRaf && typeof globalThis.cancelAnimationFrame === "function") {
     globalThis.cancelAnimationFrame(state.chunkRaf);
     state.chunkRaf = 0;
   }
   state.flushWaitStartedAt = 0;
   state.flushWaitingOnKeydown = false;
+  flushedSinceKeydown = 0;
   state.pendingCompletions.splice(0).forEach((entry) => entry.job?.settle(null, "reset"));
   state.jobs.forEach((job) => {
     clearTimeout(job.timer);

@@ -650,21 +650,44 @@ test("worker completions and pump defer past 380ms keydown pace window and chunk
     await new Promise((r) => setTimeout(r, 250));
     assert.equal(posterBlobUrls.length, 0, "must defer completions inside 380ms keydown window");
 
-    // After 380ms clears, each tick flushes max 1 completion and schedules rAF for the next slice.
+    // After 380ms clears (but < 1400ms active D-pad window), completion 1 flushes and
+    // completions 2..3 space at 90ms setTimeout (not 16ms rAF), then stop at 3 until 1400ms rest.
     await new Promise((r) => setTimeout(r, 190));
     assert.equal(posterBlobUrls.length, 1, "first flush tick must cap at 1 completion");
-    assert.equal(chunkRafCallbacks.length, 1, "remaining completions must wait for next rAF");
+    assert.equal(
+      chunkRafCallbacks.length,
+      0,
+      "active <1400ms stepping window must space via 90ms setTimeout instead of 16ms rAF"
+    );
 
-    for (let step = 2; step <= 6; step += 1) {
+    await new Promise((r) => setTimeout(r, 240));
+    assert.equal(
+      posterBlobUrls.length,
+      3,
+      "completions 2 and 3 must flush at 90ms spacing inside active D-pad window"
+    );
+
+    await new Promise((r) => setTimeout(r, 160));
+    assert.equal(
+      posterBlobUrls.length,
+      3,
+      "must stop draining at 3 completions while still inside 1400ms D-pad window"
+    );
+    assert.equal(chunkRafCallbacks.length, 0);
+
+    // Wait past 1400ms rest: remaining completions drain via 16ms rAF chunks (1 per frame).
+    await new Promise((r) => setTimeout(r, 700));
+    assert.equal(chunkRafCallbacks.length, 1, "rest drain timer must resume via 16ms rAF");
+    for (let step = 4; step <= 6; step += 1) {
       chunkRafCallbacks.shift()();
-      assert.equal(posterBlobUrls.length, step, `chunk ${step} flushes exactly 1 completion`);
+      assert.equal(posterBlobUrls.length, step, `rest chunk ${step} flushes exactly 1 completion`);
       assert.equal(chunkRafCallbacks.length, step < 6 ? 1 : 0);
     }
     const settled = await Promise.all(promises2);
     assert.equal(settled.filter(Boolean).length, 6);
 
     // Also verify pump() itself defers new worker dispatch while inside the 380ms keydown window,
-    // and returning worker completions after 380ms still chunk at <=1 per rAF frame.
+    // and returning worker completions inside the 1400ms window use 90ms spacing instead of immediate settle.
     const countBeforeDefer = createdWorkers.reduce((sum, w) => sum + w.posted.length, 0);
     keydownHandler();
     const deferredPumpPromise = rescaler.rescaleHomeArtwork("https://art/pump-deferred.jpg", {
@@ -694,10 +717,10 @@ test("worker completions and pump defer past 380ms keydown pace window and chunk
     assert.equal(
       posterBlobUrls.length,
       6,
-      "interactive returning worker completion after 380ms must still defer to rAF chunking"
+      "returning worker completion inside 1400ms stepping window must defer via 90ms timer"
     );
-    assert.equal(chunkRafCallbacks.length, 1);
-    chunkRafCallbacks.shift()();
+    assert.equal(chunkRafCallbacks.length, 0);
+    await new Promise((r) => setTimeout(r, 130));
     assert.equal(await deferredPumpPromise, "blob:poster/7");
 
     rescaler.resetHomeArtworkRescaler();
@@ -724,4 +747,74 @@ test("worker completions and pump defer past 380ms keydown pace window and chunk
     if (origWebapis === undefined) delete globalThis.webapis;
     else globalThis.webapis = origWebapis;
   }
+});
+
+test("WORKER_SOURCE readPosterBytes sniffs chunks[0] directly when >= 30 bytes", async () => {
+  assert.ok(
+    WORKER_SOURCE.includes("chunks[0]?.byteLength >= 30 ? chunks[0] : concatChunks(chunks, total)"),
+    "readPosterBytes must reuse chunks[0] for 30-byte header sniff when available"
+  );
+  const fullJpeg = jpegBytes(800, 1200);
+  const firstChunk = fullJpeg.slice(0, 32);
+  const secondChunk = fullJpeg.slice(32);
+  let cancelled = false;
+  const posted = [];
+  const workerCtx = vm.createContext({
+    Uint8Array,
+    Blob,
+    Promise,
+    Math,
+    Number,
+    Error,
+    setTimeout,
+    clearTimeout,
+    AbortController,
+    self: {
+      postMessage: (msg) => posted.push(msg)
+    },
+    fetch: async (url) => {
+      let idx = 0;
+      const streamChunks = url.includes("png")
+        ? [new Uint8Array(32).fill(0x89), new Uint8Array(16)]
+        : [firstChunk, secondChunk];
+      return {
+        ok: true,
+        headers: { get: () => null },
+        body: {
+          getReader: () => ({
+            read: async () =>
+              idx < streamChunks.length
+                ? { done: false, value: streamChunks[idx++] }
+                : { done: true },
+            cancel: async () => {
+              cancelled = true;
+            }
+          })
+        }
+      };
+    },
+    createImageBitmap: async () => ({ width: 800, height: 1200, close() {} }),
+    OffscreenCanvas: class {
+      getContext() {
+        return { drawImage() {} };
+      }
+      convertToBlob() {
+        return Promise.resolve(new Blob(["webp"], { type: "image/webp" }));
+      }
+    }
+  });
+  vm.runInContext(WORKER_SOURCE, workerCtx);
+
+  await workerCtx.self.onmessage({
+    data: { id: 1, url: "https://art/multi-chunk.jpg", width: 220, height: 338, fit: "cover" }
+  });
+  assert.equal(posted[0].ok, true);
+  assert.equal(cancelled, false);
+
+  await workerCtx.self.onmessage({
+    data: { id: 2, url: "https://art/bad-header.png", width: 220, height: 338, fit: "cover" }
+  });
+  assert.equal(posted[1].ok, false);
+  assert.equal(posted[1].reason, "not jpeg");
+  assert.equal(cancelled, true);
 });
