@@ -451,10 +451,21 @@ test("Home focus CSS preserves classic transitions, adds GPU opacity rings + blu
     css18.match(/\.home-screen-shell\.home-layout-modern \.home-poster-frame \{[^}]*\}/)?.[0] || "";
   assert.match(frameRule18, /transition:\s*height 180ms ease-out;/);
   assert.doesNotMatch(frameRule18, /border-color|box-shadow|background-color/);
-  assert.match(
-    css18,
-    /body:not\(\.performance-constrained\)[\s\S]*?\.home-poster-frame::before[\s\S]*?will-change:\s*opacity;[\s\S]*?transition:\s*opacity 120ms ease;/
-  );
+
+  const unfocusedBeforeRule18 =
+    css18.match(
+      /body:not\(\.performance-constrained\)[\s\S]*?\.home-collection-card\s+\.home-poster-frame::before\s*\{[^}]*\}/
+    )?.[0] || "";
+  assert.match(unfocusedBeforeRule18, /opacity:\s*0;/);
+  assert.match(unfocusedBeforeRule18, /transition:\s*opacity 120ms ease;/);
+  assert.doesNotMatch(unfocusedBeforeRule18, /will-change:|translateZ\(0\)/);
+
+  const focusedBeforeRule18 =
+    css18.match(
+      /body:not\(\.performance-constrained\)[\s\S]*?\.home-collection-card\.focused\s+\.home-poster-frame::before\s*\{[^}]*\}/
+    )?.[0] || "";
+  assert.match(focusedBeforeRule18, /opacity:\s*1;/);
+  assert.match(focusedBeforeRule18, /transform:\s*translateZ\(0\);/);
 
   const viewportRule17 =
     css17.match(
@@ -466,4 +477,149 @@ test("Home focus CSS preserves classic transitions, adds GPU opacity rings + blu
     /\.home-row:not\(\.home-row-parked\)[\s\S]*?\.home-track\s*\{[^}]*will-change:\s*scroll-position;/
   );
   assert.doesNotMatch(css17, /\.is-camera-scrolling/);
+});
+
+test("createHomeRowWindow keeps IntersectionObserver mutations deferred across 395ms keydown quiet window and cleans up listener", () => {
+  let now = 1000;
+  let timerSeq = 0;
+  const timers = new Map();
+  const observerCalls = [];
+  const docListeners = new Map();
+  const rootClasses = new Set();
+
+  const makeSection = (key, parked = false) => {
+    const classes = new Set(["home-row", ...(parked ? [HOME_ROW_PARKED_CLASS] : [])]);
+    return {
+      isConnected: true,
+      dataset: { rowKey: key },
+      style: parked ? { height: "392px" } : { height: "" },
+      classList: {
+        contains: (name) => classes.has(name),
+        add: (name) => classes.add(name),
+        remove: (name) => classes.delete(name)
+      },
+      querySelector: () => null,
+      closest: (selector) => (selector === ".home-row" ? null : null),
+      getBoundingClientRect: () => ({ height: 392 })
+    };
+  };
+
+  const rowA = makeSection("row-a", false);
+  const rowB = makeSection("row-b", true);
+  rowB.closest = () => rowB;
+
+  const scope = {
+    Date: { now: () => now },
+    document: {
+      addEventListener(type, fn, opts) {
+        docListeners.set(type, { fn, opts });
+      },
+      removeEventListener(type, fn, opts) {
+        const entry = docListeners.get(type);
+        if (entry && entry.fn === fn && entry.opts?.capture === opts?.capture) {
+          docListeners.delete(type);
+        }
+      }
+    },
+    setTimeout(fn) {
+      const id = ++timerSeq;
+      timers.set(id, fn);
+      return id;
+    },
+    clearTimeout(id) {
+      timers.delete(id);
+    },
+    IntersectionObserver: function FakeIntersectionObserver(callback, options) {
+      const record = { callback, options, observed: [], disconnected: false };
+      observerCalls.push(record);
+      return {
+        observe: (el) => record.observed.push(el),
+        unobserve: () => {},
+        disconnect: () => {
+          record.disconnected = true;
+        }
+      };
+    }
+  };
+
+  const root = {
+    classList: { contains: (name) => rootClasses.has(name) }
+  };
+
+  const rowWindow = createHomeRowWindow({ root, scope });
+  rowWindow.observe([rowA, rowB]);
+
+  const keydownEntry = docListeners.get("keydown");
+  assert.ok(keydownEntry, "keydown listener registered on document");
+  assert.deepEqual(keydownEntry.opts, { capture: true, passive: true });
+
+  // Vertical key pressed at t=1000, camera scroll ends early at t=1180.
+  keydownEntry.fn();
+  now = 1180;
+
+  observerCalls[0].callback([
+    { target: rowA, isIntersecting: false, boundingClientRect: { height: 392 } },
+    { target: rowB, isIntersecting: true, boundingClientRect: { height: 392 } }
+  ]);
+  assert.equal(
+    rowA.classList.contains(HOME_ROW_PARKED_CLASS),
+    false,
+    "row parking deferred inside 395ms keydown quiet window even without is-camera-scrolling"
+  );
+  assert.equal(rowB.classList.contains(HOME_ROW_PARKED_CLASS), true);
+
+  // Poll at t=1260 (< 395ms) stays deferred.
+  now = 1260;
+  Array.from(timers.values()).forEach((fn) => {
+    timers.clear();
+    fn();
+  });
+  assert.equal(rowA.classList.contains(HOME_ROW_PARKED_CLASS), false);
+  assert.equal(timers.size, 1);
+
+  // ensureReady still unparks synchronously during the keydown quiet window.
+  assert.equal(rowWindow.ensureReady(rowB), true);
+  assert.equal(rowB.classList.contains(HOME_ROW_PARKED_CLASS), false);
+
+  // Re-trigger observation after refresh inside quiet window, then settle at +400ms.
+  observerCalls[1].callback([
+    { target: rowA, isIntersecting: false, boundingClientRect: { height: 392 } },
+    { target: rowB, isIntersecting: true, boundingClientRect: { height: 392 } }
+  ]);
+  assert.equal(rowA.classList.contains(HOME_ROW_PARKED_CLASS), false);
+
+  now = 1400;
+  Array.from(timers.values()).forEach((fn) => {
+    timers.clear();
+    fn();
+  });
+  assert.equal(
+    rowA.classList.contains(HOME_ROW_PARKED_CLASS),
+    true,
+    "deferred entries flush once >= 395ms quiet window elapses"
+  );
+
+  // Verify 650ms hard cap flushes even if keydowns continue continuously.
+  const rowC = makeSection("row-c", false);
+  rowWindow.observe([rowA, rowB, rowC]);
+  now = 2000;
+  keydownEntry.fn();
+  observerCalls[1].callback([
+    { target: rowC, isIntersecting: false, boundingClientRect: { height: 392 } }
+  ]);
+  assert.equal(rowC.classList.contains(HOME_ROW_PARKED_CLASS), false);
+  now = 2660;
+  keydownEntry.fn();
+  Array.from(timers.values()).forEach((fn) => {
+    timers.clear();
+    fn();
+  });
+  assert.equal(
+    rowC.classList.contains(HOME_ROW_PARKED_CLASS),
+    true,
+    "650ms max-wait cap flushes despite repeated keydowns"
+  );
+
+  rowWindow.destroy();
+  assert.equal(docListeners.has("keydown"), false, "destroy removes keydown listener");
 });

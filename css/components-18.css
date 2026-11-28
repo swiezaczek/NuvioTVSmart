@@ -31,8 +31,6 @@ body:not(.performance-constrained)
   box-shadow: inset 0 0 0 var(--home-focus-ring) var(--secondary-color);
   pointer-events: none;
   opacity: 0;
-  transform: translateZ(0);
-  will-change: opacity;
   transition: opacity 120ms ease;
 }
 
@@ -47,6 +45,7 @@ body:not(.performance-constrained)
   .home-collection-card.focused
   .home-poster-frame::before {
   opacity: 1;
+  transform: translateZ(0);
 }
 
 body:not(.performance-constrained)

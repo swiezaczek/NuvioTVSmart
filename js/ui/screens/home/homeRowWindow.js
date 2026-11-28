@@ -11,7 +11,8 @@ export const HOME_LEGACY_ROW_WINDOW_SELECTOR = ".home-row, .home-grid-section";
 // vertical D-pad moves rarely force synchronous ensureReady()/refresh() rebuilds.
 const DEFAULT_ROOT_MARGIN = "150% 0px";
 const DEFERRED_SCROLL_POLL_MS = 80;
-const DEFERRED_SCROLL_MAX_WAIT_MS = 450;
+const DEFERRED_SCROLL_MAX_WAIT_MS = 650;
+const DEFERRED_KEYDOWN_QUIET_MS = 395;
 
 export function isHomeRowWindowSupported(scope = globalThis) {
   return (
@@ -71,11 +72,39 @@ export function createHomeRowWindow({
   let observer = null;
   let deferredFlushTimer = null;
   let deferredFlushDeadline = 0;
+  let lastKeydownAt = 0;
+  let keyListenerAttached = false;
+
+  const getNow = () => (typeof scope?.Date?.now === "function" ? scope.Date.now() : Date.now());
+  const keyTarget =
+    typeof scope?.document?.addEventListener === "function"
+      ? scope.document
+      : typeof scope?.addEventListener === "function"
+        ? scope
+        : null;
 
   const scheduleTimer =
     typeof scope.setTimeout === "function" ? scope.setTimeout.bind(scope) : setTimeout;
   const cancelTimer =
     typeof scope.clearTimeout === "function" ? scope.clearTimeout.bind(scope) : clearTimeout;
+
+  const onKeydown = () => {
+    lastKeydownAt = getNow();
+  };
+
+  const attachKeyListener = () => {
+    if (!keyListenerAttached && keyTarget && typeof keyTarget.addEventListener === "function") {
+      keyTarget.addEventListener("keydown", onKeydown, { capture: true, passive: true });
+      keyListenerAttached = true;
+    }
+  };
+
+  const detachKeyListener = () => {
+    if (keyListenerAttached && keyTarget && typeof keyTarget.removeEventListener === "function") {
+      keyTarget.removeEventListener("keydown", onKeydown, { capture: true });
+    }
+    keyListenerAttached = false;
+  };
 
   const clearDeferredFlush = () => {
     if (deferredFlushTimer !== null) {
@@ -87,6 +116,9 @@ export function createHomeRowWindow({
   };
 
   const isCameraScrolling = () => Boolean(root?.classList?.contains?.("is-camera-scrolling"));
+  const shouldDeferEntries = () =>
+    isCameraScrolling() ||
+    (lastKeydownAt > 0 && getNow() - lastKeydownAt < DEFERRED_KEYDOWN_QUIET_MS);
 
   const applyEntries = (entries) => {
     const leaving = [];
@@ -132,7 +164,7 @@ export function createHomeRowWindow({
       return;
     }
     if (!deferredFlushDeadline) {
-      deferredFlushDeadline = Date.now() + DEFERRED_SCROLL_MAX_WAIT_MS;
+      deferredFlushDeadline = getNow() + DEFERRED_SCROLL_MAX_WAIT_MS;
     }
     const onFlushTimer = () => {
       deferredFlushTimer = null;
@@ -140,7 +172,7 @@ export function createHomeRowWindow({
         clearDeferredFlush();
         return;
       }
-      if (isCameraScrolling() && Date.now() < deferredFlushDeadline) {
+      if (shouldDeferEntries() && getNow() < deferredFlushDeadline) {
         deferredFlushTimer = scheduleTimer(onFlushTimer, DEFERRED_SCROLL_POLL_MS);
         return;
       }
@@ -158,7 +190,7 @@ export function createHomeRowWindow({
     if (!entries?.length) {
       return;
     }
-    if (isCameraScrolling()) {
+    if (shouldDeferEntries()) {
       entries.forEach((entry) => {
         if (entry?.target) {
           deferredEntries.set(entry.target, entry);
@@ -182,6 +214,7 @@ export function createHomeRowWindow({
   };
 
   const connect = () => {
+    attachKeyListener();
     observer = new scope.IntersectionObserver(onEntries, { root: root || null, rootMargin });
     observed.forEach((section) => observer.observe(section));
   };
@@ -270,6 +303,8 @@ export function createHomeRowWindow({
     // waking 30 rows only to hide them restyled ~1900 elements on the way out.
     destroy() {
       clearDeferredFlush();
+      detachKeyListener();
+      lastKeydownAt = 0;
       observer?.disconnect();
       observer = null;
       observed.clear();
