@@ -377,15 +377,21 @@ test("Home pool prefers dataUrl without creating or revoking poster object URLs 
   }
 });
 
-test("visible completions settle on next rAF (capped per frame), offscreen drains on idle and promotes on priority-0 request", async () => {
+test("visible completions pause during active camera scroll, flush 1/frame on first idle rAF, and offscreen drains on idle or promotes on priority-0", async () => {
   const origRaf = globalThis.requestAnimationFrame;
   const origCancelRaf = globalThis.cancelAnimationFrame;
   const origIdle = globalThis.requestIdleCallback;
   const origCancelIdle = globalThis.cancelIdleCallback;
+  const origDocument = globalThis.document;
 
   let nextId = 1;
+  let cameraScrolling = true;
   const rafs = new Map();
   const idles = new Map();
+  globalThis.document = {
+    querySelector: (selector) =>
+      selector === ".is-camera-scrolling" && cameraScrolling ? {} : null
+  };
   globalThis.requestAnimationFrame = (cb) => {
     const id = nextId++;
     rafs.set(id, cb);
@@ -423,14 +429,13 @@ test("visible completions settle on next rAF (capped per frame), offscreen drain
         return value;
       });
 
-    // Queue 3 visible (priority 0) + 2 offscreen (priority 2) jobs.
+    // Queue 2 visible (priority 0) + 2 offscreen (priority 2) jobs.
     const v1 = track("v1", rescaleHomeArtwork("https://art/v1.jpg", { ...BOX, priority: 0 }));
     const v2 = track("v2", rescaleHomeArtwork("https://art/v2.jpg", { ...BOX, priority: 0 }));
-    const v3 = track("v3", rescaleHomeArtwork("https://art/v3.jpg", { ...BOX, priority: 0 }));
     const o1 = track("o1", rescaleHomeArtwork("https://art/o1.jpg", { ...BOX, priority: 2 }));
     const o2 = track("o2", rescaleHomeArtwork("https://art/o2.jpg", { ...BOX, priority: 2 }));
 
-    // Deliver all 5 worker responses.
+    // Deliver all 4 worker responses while camera scroll is active.
     for (let round = 0; round < 10; round += 1) {
       const worker = created.find((candidate) => !candidate.terminated && candidate.posted.length);
       if (!worker) break;
@@ -449,34 +454,52 @@ test("visible completions settle on next rAF (capped per frame), offscreen drain
     assert.equal(rafs.size, 1, "one rAF scheduled for visible completions");
     assert.equal(idles.size, 0, "offscreen idle drain waits until visible queue is empty");
 
-    // Frame 1: settles at most 2 visible completions.
+    // While .is-camera-scrolling is active, rAF defers without settling anything.
     assert.equal(flushOneRaf(), true);
-    await Promise.all([v1, v2]);
-    assert.deepEqual(settled, ["v1", "v2"]);
+    await Promise.resolve();
+    assert.deepEqual(settled, [], "no poster commits during active camera scroll");
+    assert.equal(rafs.size, 1, "re-arms next rAF while scroll is active");
+
+    // First idle frame after .is-camera-scrolling clears: settles 1 visible completion.
+    cameraScrolling = false;
+    assert.equal(flushOneRaf(), true);
+    await v1;
+    assert.deepEqual(settled, ["v1"]);
     assert.equal(rafs.size, 1, "remaining visible completion schedules next rAF");
     assert.equal(idles.size, 0);
 
-    // Frame 2: settles 3rd visible completion and arms idle drain for offscreen.
+    // Frame 2: settles 2nd visible completion and arms idle drain for offscreen.
     assert.equal(flushOneRaf(), true);
-    await v3;
-    assert.deepEqual(settled, ["v1", "v2", "v3"]);
+    await v2;
+    assert.deepEqual(settled, ["v1", "v2"]);
     assert.equal(rafs.size, 0);
     assert.equal(idles.size, 1, "offscreen completions drain via requestIdleCallback");
 
-    // Promote o2 to priority 0 -> moves immediately to visible rAF queue and cancels idle drain.
+    // If camera scroll resumes when idle callback fires, offscreen does NOT settle.
+    cameraScrolling = true;
+    assert.equal(flushOneIdle(), true);
+    await Promise.resolve();
+    assert.deepEqual(
+      settled,
+      ["v1", "v2"],
+      "offscreen idle callback re-defers during camera scroll"
+    );
+
+    // Promote o2 to priority 0 -> moves immediately to visible rAF queue.
+    cameraScrolling = false;
     const promoted = rescaleHomeArtwork("https://art/o2.jpg", { ...BOX, priority: 0 });
     assert.equal(rafs.size, 1, "promoted offscreen completion schedules visible rAF");
     assert.equal(idles.size, 0, "idle drain cancelled while promoted visible item is pending");
 
     assert.equal(flushOneRaf(), true);
     assert.equal(await promoted, await o2);
-    assert.deepEqual(settled, ["v1", "v2", "v3", "o2"]);
+    assert.deepEqual(settled, ["v1", "v2", "o2"]);
     assert.equal(idles.size, 1, "remaining offscreen o1 re-arms idle drain");
 
     // Idle tick drains o1.
     assert.equal(flushOneIdle(), true);
     await o1;
-    assert.deepEqual(settled, ["v1", "v2", "v3", "o2", "o1"]);
+    assert.deepEqual(settled, ["v1", "v2", "o2", "o1"]);
     assert.equal(rafs.size, 0);
     assert.equal(idles.size, 0);
 
@@ -500,5 +523,7 @@ test("visible completions settle on next rAF (capped per frame), offscreen drain
     else globalThis.requestIdleCallback = origIdle;
     if (origCancelIdle === undefined) delete globalThis.cancelIdleCallback;
     else globalThis.cancelIdleCallback = origCancelIdle;
+    if (origDocument === undefined) delete globalThis.document;
+    else globalThis.document = origDocument;
   }
 });

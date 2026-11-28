@@ -510,10 +510,17 @@ export function shouldRescaleHomeArtwork() {
 // would stay blank, which is worse than the oversized decode this replaces.
 const JOB_TIMEOUT_MS = 15000;
 const WORKER_JOB_SLOTS = 2;
-const MAX_VISIBLE_COMPLETIONS_PER_FRAME = 2;
-const VISIBLE_FRAME_BUDGET_MS = 6;
+const MAX_VISIBLE_COMPLETIONS_PER_FRAME = 1;
 const OFFSCREEN_IDLE_TIMEOUT_MS = 250;
 const OFFSCREEN_FALLBACK_DELAY_MS = 32;
+
+function isCameraScrolling() {
+  try {
+    return Boolean(globalThis.document?.querySelector?.(".is-camera-scrolling"));
+  } catch (_) {
+    return false;
+  }
+}
 
 function hasPendingCompletions(state) {
   return Boolean(state && (state.pendingVisible.length || state.pendingOffscreen.length));
@@ -534,11 +541,14 @@ function flushVisibleCompletions(state) {
   if (!state || state.disposed) {
     return;
   }
-  const nowFn =
-    typeof globalThis.performance?.now === "function"
-      ? () => globalThis.performance.now()
-      : () => Date.now();
-  const startedAt = nowFn();
+  // Never dump poster data:/blob: commits into an active camera-scroll frame;
+  // defer to the next rAF so visible posters flush on the very first idle frame.
+  if (isCameraScrolling()) {
+    if (hasPendingCompletions(state)) {
+      scheduleCompletionDrain(state);
+    }
+    return;
+  }
   let settled = 0;
   while (state.pendingVisible.length && settled < MAX_VISIBLE_COMPLETIONS_PER_FRAME) {
     const entry = state.pendingVisible.shift();
@@ -551,12 +561,6 @@ function flushVisibleCompletions(state) {
     }
     entry.job.settle(entry.ok ? entry.payload : null, entry.reason);
     settled += 1;
-    if (
-      settled < MAX_VISIBLE_COMPLETIONS_PER_FRAME &&
-      nowFn() - startedAt >= VISIBLE_FRAME_BUDGET_MS
-    ) {
-      break;
-    }
   }
   pump(state);
   if (hasPendingCompletions(state)) {
@@ -568,7 +572,7 @@ function flushOffscreenCompletion(state) {
   if (!state || state.disposed) {
     return;
   }
-  if (state.pendingVisible.length) {
+  if (state.pendingVisible.length || isCameraScrolling()) {
     scheduleCompletionDrain(state);
     return;
   }
@@ -612,6 +616,10 @@ function scheduleCompletionDrain(state) {
     state.offscreenTimer = null;
     flushOffscreenCompletion(state);
   };
+  if (isCameraScrolling()) {
+    state.offscreenTimer = setTimeout(runOffscreen, OFFSCREEN_FALLBACK_DELAY_MS);
+    return;
+  }
   if (typeof globalThis.requestIdleCallback === "function") {
     state.offscreenIdleId = globalThis.requestIdleCallback(runOffscreen, {
       timeout: OFFSCREEN_IDLE_TIMEOUT_MS
