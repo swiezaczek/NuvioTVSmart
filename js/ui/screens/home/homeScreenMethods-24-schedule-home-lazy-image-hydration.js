@@ -10,7 +10,30 @@ import { getTvArtworkPixelRatio } from "../../../platform/tvRuntimePerformance.j
 import { getArtworkEvictIdleMs, getArtworkEvictMarginPx, getDeviceMemoryGb } from "../../../platform/tvPerformancePolicy.js";
 
 export function createHomeScreenMethods24() {
-  const HOME_BOUNDED_HYDRATION_PACE_QUIET_MS = 375;
+  const HOME_BOUNDED_HYDRATION_PACE_QUIET_MS = 220;
+  const HOME_ACTIVE_STEPPING_QUIET_MS = 750;
+  const PENDING_ARTWORK_SELECTOR = ".content-poster[data-src], .home-poster-landscape-logo[data-src], .home-continue-bg[data-src]";
+  const hasNearbyPendingArtwork = (anchorNode) => {
+    if (!anchorNode) {
+      return false;
+    }
+    if (anchorNode.querySelector?.(PENDING_ARTWORK_SELECTOR)) {
+      return true;
+    }
+    let next = anchorNode.nextElementSibling;
+    for (let step = 0; step < 4 && next; step += 1, next = next.nextElementSibling) {
+      if (next.querySelector?.(PENDING_ARTWORK_SELECTOR)) {
+        return true;
+      }
+    }
+    let prev = anchorNode.previousElementSibling;
+    for (let step = 0; step < 2 && prev; step += 1, prev = prev.previousElementSibling) {
+      if (prev.querySelector?.(PENDING_ARTWORK_SELECTOR)) {
+        return true;
+      }
+    }
+    return false;
+  };
   const imageRequests = new WeakMap();
   const {
     MODERN_HOME_CONSTANTS,
@@ -72,10 +95,7 @@ export function createHomeScreenMethods24() {
         !this.homeLazyImageHydrationRaf &&
         !includeNeighborRows &&
         !viewportChanged &&
-        !(
-          this.shouldUseBoundedHomeImageHydration() &&
-          anchorNode?.querySelector?.(".content-poster[data-src], .home-poster-landscape-logo[data-src], .home-continue-bg[data-src]")
-        )
+        !(this.shouldUseBoundedHomeImageHydration() && hasNearbyPendingArtwork(anchorNode))
       ) {
         // Avoid scheduling another animation-frame callback until the DOM,
         // viewport, or focused image changes. Smart-TV bounded hydration may
@@ -289,7 +309,7 @@ export function createHomeScreenMethods24() {
       const constrained = this.isPerformanceConstrained();
       const lastInputAt = Number(this.lastHomeInputAt || 0);
       const isActiveDpadStepping = Boolean(
-        useBoundedTvHydration && !includeNeighborRows && lastInputAt > 0 && Date.now() - lastInputAt < 1600
+        useBoundedTvHydration && !includeNeighborRows && lastInputAt > 0 && Date.now() - lastInputAt < HOME_ACTIVE_STEPPING_QUIET_MS
       );
       if (includeNeighborRows && this.homeLazyImageQuietPrefetchTimer) {
         clearTimeout(this.homeLazyImageQuietPrefetchTimer);
@@ -298,12 +318,13 @@ export function createHomeScreenMethods24() {
       // Android prefetches the visible window plus a small row/card neighborhood.
       // Keep the browser's DOM-mounted rows from turning every vertical focus
       // move into a burst of eager image requests. During active D-pad stepping
-      // on TV, keep focused + visible cards hydrated and defer neighbor rows
-      // until input rests for 1600ms.
-      const verticalMargin = isActiveDpadStepping ? 0 : useBoundedTvHydration ? 480 : constrained ? 720 : 1200;
-      const horizontalMargin = isActiveDpadStepping ? 160 : useBoundedTvHydration ? 320 : constrained ? 520 : 1000;
+      // on TV, keep visible cards plus 1 row ahead (360px) and ~3.5 horizontal
+      // focused-row cards prefetched and defer deeper neighbor rows until input
+      // rests for 750ms.
+      const verticalMargin = isActiveDpadStepping ? 360 : useBoundedTvHydration ? 540 : constrained ? 720 : 1200;
+      const horizontalMargin = isActiveDpadStepping ? 360 : useBoundedTvHydration ? 480 : constrained ? 640 : 1000;
       const focusedRow = Boolean(anchorRow && anchorRow === anchorNode?.closest?.(HOME_LAZY_IMAGE_ROW_SELECTOR));
-      const focusedRowMargin = focusedRow ? Math.max(96, Math.round(Number(anchorNode?.offsetWidth || 0) * 0.65)) : horizontalMargin;
+      const focusedRowMargin = focusedRow ? Math.max(760, Math.round(Number(anchorNode?.offsetWidth || 248) * 3.5)) : horizontalMargin;
       const pendingLoads = [];
       candidateRows.forEach(({ row, isFocusedRow, images }) => {
         // Android's LazyRow loads the visible cards plus a small prefetch
@@ -399,7 +420,7 @@ export function createHomeScreenMethods24() {
         }
         const scheduleQuietPrefetch = () => {
           const latestInputAt = Number(this.lastHomeInputAt || 0);
-          const remainingQuietMs = latestInputAt > 0 ? Math.max(0, 1600 - (Date.now() - latestInputAt)) : 0;
+          const remainingQuietMs = latestInputAt > 0 ? Math.max(0, HOME_ACTIVE_STEPPING_QUIET_MS - (Date.now() - latestInputAt)) : 0;
           if (remainingQuietMs > 0) {
             this.homeLazyImageQuietPrefetchTimer = setTimeout(onQuietPrefetch, remainingQuietMs);
             return;
@@ -420,7 +441,7 @@ export function createHomeScreenMethods24() {
           }
           scheduleQuietPrefetch();
         };
-        const initialWaitMs = Math.max(50, 1600 - (Date.now() - lastInputAt));
+        const initialWaitMs = Math.max(50, HOME_ACTIVE_STEPPING_QUIET_MS - (Date.now() - lastInputAt));
         this.homeLazyImageQuietPrefetchTimer = setTimeout(onQuietPrefetch, initialWaitMs);
       }
     },

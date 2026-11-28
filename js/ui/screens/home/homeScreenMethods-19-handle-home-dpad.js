@@ -5,7 +5,7 @@ import * as internals from "./homeScreenContext.js";
 const HOME_POINTER_HOVER_GRACE_MS = 250;
 
 export function createHomeScreenMethods19() {
-  const HOME_BOUNDED_HYDRATION_PACE_QUIET_MS = 375;
+  const HOME_BOUNDED_HYDRATION_PACE_QUIET_MS = 220;
   const {
     getLegacySidebarSelectedNode,
     getModernSidebarSelectedNode,

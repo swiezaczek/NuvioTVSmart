@@ -155,7 +155,7 @@ function makeTrackFixture(context) {
   };
 
   const firstImg = makeCardImage("https://art/visible.jpg", 120);
-  const incomingImg = makeCardImage("https://art/incoming.jpg", 2600);
+  const incomingImg = makeCardImage("https://art/incoming.jpg", 2900);
   const anchor = new context.HTMLElement();
   anchor.isConnected = true;
   anchor.offsetWidth = 220;
@@ -522,12 +522,12 @@ test("scheduleHomeLazyImageHydration avoids eager anchor querySelector and hydra
     return img;
   };
 
-  // Horizontal .home-track: 1 on-screen card + 1 offscreen-right cutoff card + 3 further-right cards.
+  // Horizontal .home-track: 1 on-screen card + 1 offscreen-right cutoff card (past 770px focused lookahead) + 3 further-right cards.
   const visible = makeLazyCard("https://art/0.jpg", 120);
-  const cutoff = makeLazyCard("https://art/1.jpg", 2500);
-  const tail1 = makeLazyCard("https://art/2.jpg", 2800);
-  const tail2 = makeLazyCard("https://art/3.jpg", 3100);
-  const tail3 = makeLazyCard("https://art/4.jpg", 3400);
+  const cutoff = makeLazyCard("https://art/1.jpg", 2800);
+  const tail1 = makeLazyCard("https://art/2.jpg", 3100);
+  const tail2 = makeLazyCard("https://art/3.jpg", 3400);
+  const tail3 = makeLazyCard("https://art/4.jpg", 3700);
 
   const screen = Object.assign(Object.create(context.hydrationApi), {
     container: {
@@ -640,22 +640,22 @@ test("bounded TV hydration and viewport scroll handler defer past 375ms post-inp
     return origHydrate(...args);
   };
 
-  // 1. Viewport scroll event inside <375ms post-input must defer settle hydration and skip premature viewport check.
+  // 1. Viewport scroll event inside <220ms post-input must defer settle hydration and skip premature viewport check.
   const startAt = Date.now();
   screen.bindHomeViewportEvents();
   listeners.get("scroll")({ target: viewport });
-  await new Promise((r) => setTimeout(r, 150));
-  assert.equal(viewportRectReads, 0, "must skip isNodeWithinMainViewport inside 375ms window");
-  assert.equal(hydrationTimes.length, 0, "must not hydrate inside 375ms post-input window");
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(viewportRectReads, 0, "must skip isNodeWithinMainViewport inside 220ms window");
+  assert.equal(hydrationTimes.length, 0, "must not hydrate inside 220ms post-input window");
 
-  await new Promise((r) => setTimeout(r, 270));
-  assert.equal(hydrationTimes.length, 1, "must hydrate once 375ms pace window clears");
+  await new Promise((r) => setTimeout(r, 170));
+  assert.equal(hydrationTimes.length, 1, "must hydrate once 220ms pace window clears");
   assert.ok(
-    hydrationTimes[0] - startAt >= 365,
+    hydrationTimes[0] - startAt >= 210,
     `viewport settle hydration ran too early (${hydrationTimes[0] - startAt}ms)`
   );
 
-  // 2. Direct deferred scheduleHomeLazyImageHydration also waits >= 375ms after lastHomeInputAt.
+  // 2. Direct deferred scheduleHomeLazyImageHydration also waits >= 220ms after lastHomeInputAt.
   hydrationTimes = [];
   const secondStart = Date.now();
   screen.lastHomeInputAt = secondStart;
@@ -663,12 +663,12 @@ test("bounded TV hydration and viewport scroll handler defer past 375ms post-inp
     deferUntilVerticalSettle: true,
     viewportChanged: true
   });
-  await new Promise((r) => setTimeout(r, 200));
-  assert.equal(hydrationTimes.length, 0, "retryAfterVerticalSettle must wait past 375ms");
-  await new Promise((r) => setTimeout(r, 230));
+  await new Promise((r) => setTimeout(r, 110));
+  assert.equal(hydrationTimes.length, 0, "retryAfterVerticalSettle must wait past 220ms");
+  await new Promise((r) => setTimeout(r, 160));
   assert.equal(hydrationTimes.length, 1);
   assert.ok(
-    hydrationTimes[0] - secondStart >= 365,
+    hydrationTimes[0] - secondStart >= 210,
     `retryAfterVerticalSettle ran too early (${hydrationTimes[0] - secondStart}ms)`
   );
   if (screen.homeLazyImageQuietPrefetchTimer) {
@@ -677,7 +677,7 @@ test("bounded TV hydration and viewport scroll handler defer past 375ms post-inp
   }
 });
 
-test("bounded TV hydration clamps margins during active D-pad stepping and prefetches neighbor rows after 1600ms quiet", async () => {
+test("bounded TV hydration prefetches 1 row + ~3.5 horizontal cards ahead and far neighbor rows after 750ms quiet", async () => {
   const { context } = buildCombinedHarness();
   const viewport = {
     isConnected: true,
@@ -691,7 +691,7 @@ test("bounded TV hydration clamps margins during active D-pad stepping and prefe
     })
   };
 
-  const makeRowWithCard = (top, src) => {
+  const makeRowWithCard = (top, src, left = 120) => {
     const r = new context.HTMLElement();
     r.isConnected = true;
     r.getBoundingClientRect = () => ({ top, bottom: top + 320, left: 0, right: 1920 });
@@ -706,8 +706,8 @@ test("bounded TV hydration clamps margins during active D-pad stepping and prefe
     img.getBoundingClientRect = () => ({
       top,
       bottom: top + 320,
-      left: 120,
-      right: 340,
+      left,
+      right: left + 220,
       width: 220,
       height: 320
     });
@@ -723,24 +723,40 @@ test("bounded TV hydration clamps margins during active D-pad stepping and prefe
     return { row: r, img };
   };
 
-  const visible = makeRowWithCard(400, "https://art/visible-row.jpg");
-  // top=1120 is 40px below 1080: outside clamped 0px vertical stepping margin, inside normal 480px margin.
-  const neighbor = makeRowWithCard(1120, "https://art/neighbor-row.jpg");
+  const visible = makeRowWithCard(400, "https://art/visible-row.jpg", 120);
+  // Horizontal lookahead on focused row: left=2600 is 680px past right=1920, inside Math.max(760, 248*3.5=868).
+  const lookaheadCard = makeRowWithCard(400, "https://art/lookahead-card.jpg", 2600);
+  lookaheadCard.img.closest = (sel) => (sel === ROW_SELECTOR ? visible.row : null);
+  // top=1200 is 120px below 1080: inside 360px ahead-row prefetch margin during stepping!
+  const nextRow = makeRowWithCard(1200, "https://art/next-row.jpg");
+  // top=1500 is 420px below 1080: outside 360px stepping margin, inside normal 540px margin.
+  const farNeighbor = makeRowWithCard(1500, "https://art/far-neighbor-row.jpg");
+  const sibling3 = {
+    querySelector: (sel) => (sel.includes("data-src") ? lookaheadCard.img : null),
+    nextElementSibling: null,
+    previousElementSibling: null
+  };
   const anchor = new context.HTMLElement();
   anchor.isConnected = true;
-  anchor.offsetWidth = 220;
+  anchor.offsetWidth = 248;
   anchor.closest = (sel) => (sel === ROW_SELECTOR ? visible.row : null);
+  anchor.querySelector = () => null;
+  anchor.nextElementSibling = {
+    querySelector: () => null,
+    nextElementSibling: { querySelector: () => null, nextElementSibling: sibling3 }
+  };
 
   const screen = Object.assign(Object.create(context.hydrationApi), {
     container: {
       querySelector: (sel) => (sel === ".home-modern-rows-viewport" ? viewport : null),
-      querySelectorAll: () => [visible.img, neighbor.img]
+      querySelectorAll: () => [visible.img, lookaheadCard.img, nextRow.img, farNeighbor.img]
     },
     homeLazyImageHydrationIndex: [
-      { row: visible.row, images: [visible.img] },
-      { row: neighbor.row, images: [neighbor.img] }
+      { row: visible.row, images: [visible.img, lookaheadCard.img] },
+      { row: nextRow.row, images: [nextRow.img] },
+      { row: farNeighbor.row, images: [farNeighbor.img] }
     ],
-    lastHomeLazyImageHydrationAnchorRow: null,
+    lastHomeLazyImageHydrationAnchorRow: visible.row,
     lastHomeInputAt: Date.now(),
     isPerformanceConstrained: () => false,
     isLegacyTvRuntime: () => false,
@@ -748,28 +764,41 @@ test("bounded TV hydration clamps margins during active D-pad stepping and prefe
     getCurrentFocusedNode: () => anchor
   });
 
-  screen.hydrateHomeLazyImages(anchor, { forceFullScan: true });
+  // Same-row sibling lookahead must bypass early-return guard when an upcoming sibling still has data-src.
+  screen.scheduleHomeLazyImageHydration(anchor);
+  await new Promise((r) => setTimeout(r, 30));
   assert.equal(
     visible.img.src,
     "https://art/visible-row.jpg",
     "visible card must hydrate immediately"
   );
   assert.equal(
-    neighbor.img.src,
-    "",
-    "40px-offscreen neighbor row must stay deferred under 0px active vertical stepping margin"
-  );
-  assert.ok(
-    screen.homeLazyImageQuietPrefetchTimer,
-    "must arm 1600ms quiet neighbor prefetch timer"
+    lookaheadCard.img.src,
+    "https://art/lookahead-card.jpg",
+    "horizontal sibling lookahead + 868px focusedRowMargin must prefetch ~3.5 cards ahead"
   );
 
-  // Wait for 1600ms quiet prefetch to fire with includeNeighborRows: true (480px margin).
-  await new Promise((r) => setTimeout(r, 1700));
+  // Full vertical scan (cross-row / initial) prefetches 1 row ahead (360px) and defers far neighbor until 750ms quiet.
+  screen.lastHomeLazyImageHydrationAnchorRow = null;
+  screen.hydrateHomeLazyImages(anchor, { forceFullScan: true });
   assert.equal(
-    neighbor.img.src,
-    "https://art/neighbor-row.jpg",
-    "neighbor row must hydrate once 1600ms quiet prefetch completes"
+    nextRow.img.src,
+    "https://art/next-row.jpg",
+    "1 row ahead (120px below fold) must prefetch immediately under 360px vertical stepping margin"
+  );
+  assert.equal(
+    farNeighbor.img.src,
+    "",
+    "420px-offscreen far row must stay deferred under 360px active stepping margin"
+  );
+  assert.ok(screen.homeLazyImageQuietPrefetchTimer, "must arm 750ms quiet neighbor prefetch timer");
+
+  // Wait for 750ms quiet prefetch to fire with includeNeighborRows: true (540px margin).
+  await new Promise((r) => setTimeout(r, 850));
+  assert.equal(
+    farNeighbor.img.src,
+    "https://art/far-neighbor-row.jpg",
+    "far neighbor row must hydrate once 750ms quiet prefetch completes"
   );
   if (screen.homeLazyImageQuietPrefetchTimer) {
     clearTimeout(screen.homeLazyImageQuietPrefetchTimer);
