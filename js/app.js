@@ -306,8 +306,8 @@ function watchTvFramePace() {
   if (!profile.isTvRuntime || profile.isPerformanceConstrained) {
     return;
   }
-  const FAST_BURST_KEY_GAP_MS = 220;
-  const FAST_BURST_SUPPRESS_MS = 400;
+  const FAST_BURST_KEY_GAP_MS = 380;
+  const FAST_BURST_SUPPRESS_MS = 450;
   let lastHomeKeyAt = 0;
   let burstSuppressUntil = 0;
   const nowMs = () =>

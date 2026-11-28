@@ -73,6 +73,12 @@ test("watchTvFramePace in js/app.js guards non-home routes, suppresses fast-scro
   assert.match(source, /if \(!shouldSampleHomeRoute\(\)\) \{\s*return;\s*\}/);
   assert.match(source, /Boolean\(event\?\.repeat\)/);
   assert.match(source, /FAST_BURST_KEY_GAP_MS/);
+  const burstGapMatch = source.match(/const FAST_BURST_KEY_GAP_MS = (\d+)/);
+  assert.ok(burstGapMatch, "FAST_BURST_KEY_GAP_MS constant should exist");
+  assert.ok(
+    Number(burstGapMatch[1]) >= TV_FRAME_PACE_POLICY.windowMs,
+    "FAST_BURST_KEY_GAP_MS must cover the full 350ms frame-pace sample window"
+  );
   assert.match(source, /burstSuppressUntil = now \+ FAST_BURST_SUPPRESS_MS/);
   assert.match(source, /removeEventListener\("keydown",\s*onKeyDown,\s*true\)/);
 });
