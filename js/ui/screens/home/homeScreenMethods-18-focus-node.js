@@ -92,8 +92,18 @@ export function createHomeScreenMethods18() {
             : null;
         const targetMainAnchor = currentMainAnchor ? this.getMainFocusAnchor(target) : null;
         const sameModernRowAnchor = Boolean(currentMainAnchor && targetMainAnchor && currentMainAnchor === targetMainAnchor);
+        const isVerticalMove = direction === "up" || direction === "down";
+        const targetNavCol = Number(target?.dataset?.navCol || 0);
+        const isVerticalAtTrackOrigin =
+          this.layoutMode === "modern" &&
+          isVerticalMove &&
+          !scrollAdjustments.horizontal &&
+          targetNavCol === 0 &&
+          Number(target?.closest?.(".home-track")?.scrollLeft || 0) <= 1;
         if (!usingDelayedCameraFollow) {
-          this.ensureTrackHorizontalVisibility(target, direction, scrollAdjustments.horizontal);
+          if (!isVerticalAtTrackOrigin) {
+            this.ensureTrackHorizontalVisibility(target, direction, scrollAdjustments.horizontal);
+          }
           const sameHorizontalRow =
             (direction === "left" || direction === "right") &&
             !scrollAdjustments.vertical &&
@@ -103,7 +113,9 @@ export function createHomeScreenMethods18() {
             this.ensureMainVerticalVisibility(target, direction, current, scrollAdjustments.vertical);
           }
         }
-        this.scheduleModernTrackPaginationForFocus(target);
+        if (!(this.layoutMode === "modern" && isVerticalMove && targetNavCol === 0)) {
+          this.scheduleModernTrackPaginationForFocus(target);
+        }
         this.ensureContinueWatchingRenderAhead(target);
         if (shouldDeferFocusEffects) {
           this.cancelPendingHeroFocus();

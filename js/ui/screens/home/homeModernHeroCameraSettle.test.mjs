@@ -675,3 +675,92 @@ test("focusNode defers collection GIF hydration into 380ms timer on bounded TV a
   assert.equal(gifHydrations.length, 2);
   assert.equal(gifHydrations[1].id, "col-a");
 });
+
+test("focusNode skips track horizontal alignment and pagination at col 0 on vertical moves when scrollLeft <= 1", () => {
+  const context = vm.createContext({
+    internals: {
+      HOME_PERF_DEBUG: false,
+      homePerfNow: () => 0,
+      logHomePerf: () => {},
+      groupNodesByOffsetTop: () => []
+    }
+  });
+  context.globalThis = context;
+  vm.runInContext(`${source18}\nglobalThis.api = createHomeScreenMethods18();`, context);
+
+  const trackAtOrigin = { scrollLeft: 0 };
+  const scrolledTrack = { scrollLeft: 120 };
+  const makeCard = (id, navCol, track, anchor) => {
+    const classes = new Set();
+    return {
+      id,
+      anchor,
+      dataset: { navZone: "main", navCol: String(navCol) },
+      closest: (selector) => (selector === ".home-track" ? track : null),
+      classList: {
+        add: (name) => classes.add(name),
+        remove: (name) => classes.delete(name),
+        contains: (name) => classes.has(name)
+      }
+    };
+  };
+
+  const row1 = { id: "r1" };
+  const row2 = { id: "r2" };
+  const r1c0 = makeCard("r1c0", 0, trackAtOrigin, row1);
+  const r2c0 = makeCard("r2c0", 0, trackAtOrigin, row2);
+  const r2c2 = makeCard("r2c2", 2, trackAtOrigin, row2);
+  const r1c0Scrolled = makeCard("r1c0s", 0, scrolledTrack, row1);
+
+  let horizCalls = 0;
+  let paginationCalls = 0;
+  const screen = Object.assign(Object.create(context.api), {
+    layoutMode: "modern",
+    refreshPendingHomeTrailerCleanup() {},
+    getExpandedPosterScrollAdjustments: () => ({ horizontal: 0, vertical: 0 }),
+    focusWithoutAutoScroll() {},
+    setCurrentFocusedNode() {},
+    isPerformanceConstrained: () => false,
+    isLegacyTvRuntime: () => false,
+    shouldUseImmediateFocusScroll: () => false,
+    scheduleHomeLazyImageHydration() {},
+    isCollectionFolderNode: () => false,
+    setSidebarExpanded() {},
+    isSidebarNode: () => false,
+    isMainNode: () => true,
+    rememberMainRowFocus() {},
+    shouldDeferContinueWatchingFocusEffects: () => false,
+    scheduleModernCameraFollow: () => false,
+    getMainFocusAnchor: (node) => node?.anchor || null,
+    ensureTrackHorizontalVisibility() {
+      horizCalls += 1;
+    },
+    ensureMainVerticalVisibility() {},
+    scheduleModernTrackPaginationForFocus() {
+      paginationCalls += 1;
+    },
+    ensureContinueWatchingRenderAhead() {},
+    scheduleModernHeroUpdate() {},
+    scheduleFocusedPosterFlow() {}
+  });
+
+  // 1. Vertical move to navCol=0 with scrollLeft<=1 skips both horizontal align & pagination.
+  screen.focusNode(r1c0, r2c0, "down");
+  assert.equal(horizCalls, 0);
+  assert.equal(paginationCalls, 0);
+
+  // 2. Vertical move to navCol>0 keeps both horizontal align & pagination.
+  screen.focusNode(r1c0, r2c2, "down");
+  assert.equal(horizCalls, 1);
+  assert.equal(paginationCalls, 1);
+
+  // 3. Vertical move to navCol=0 when track.scrollLeft > 1 still aligns horizontally.
+  screen.focusNode(r2c0, r1c0Scrolled, "up");
+  assert.equal(horizCalls, 2);
+  assert.equal(paginationCalls, 1);
+
+  // 4. Horizontal move back to navCol=0 keeps both horizontal align & pagination.
+  screen.focusNode(r2c2, r2c0, "left");
+  assert.equal(horizCalls, 3);
+  assert.equal(paginationCalls, 2);
+});
