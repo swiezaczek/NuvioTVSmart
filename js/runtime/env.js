@@ -25,6 +25,8 @@
       typeof existing.YOUTUBE_PROXY_URL === "undefined"
         ? "youtube-proxy.html"
         : existing.YOUTUBE_PROXY_URL,
+    TRAILER_API_URL:
+      typeof existing.TRAILER_API_URL === "undefined" ? "" : existing.TRAILER_API_URL,
     INTRODB_API_URL:
       typeof existing.INTRODB_API_URL === "undefined"
         ? "https://api.introdb.app/"
@@ -33,10 +35,6 @@
       typeof existing.IMDB_RATINGS_API_BASE_URL === "undefined"
         ? ""
         : existing.IMDB_RATINGS_API_BASE_URL,
-    IMDB_TAPFRAME_API_BASE_URL:
-      typeof existing.IMDB_TAPFRAME_API_BASE_URL === "undefined"
-        ? ""
-        : existing.IMDB_TAPFRAME_API_BASE_URL,
     AVATAR_PUBLIC_BASE_URL:
       typeof existing.AVATAR_PUBLIC_BASE_URL === "undefined" ? "" : existing.AVATAR_PUBLIC_BASE_URL,
     UNIQUE_CONTRIBUTIONS_BASE_URL:

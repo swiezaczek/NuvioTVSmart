@@ -383,6 +383,10 @@ export function createMetaDetailsScreenMethods17() {
       );
     },
     detachTrailerMediaListeners() {
+      if (this.trailerUnmuteFallbackTimer) {
+        clearTimeout(this.trailerUnmuteFallbackTimer);
+        this.trailerUnmuteFallbackTimer = null;
+      }
       (this.trailerMediaListeners || []).forEach(({ target, eventName, handler }) => {
         target?.removeEventListener?.(eventName, handler);
       });

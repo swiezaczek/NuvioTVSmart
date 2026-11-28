@@ -818,6 +818,9 @@ test("staged webOS native playback continues when proxy rewrites currentPlayback
     },
     {
       observeProxyRedirects: () => () => {},
+      attachClearKeyMediaKeys: async () => null,
+      releaseClearKeyGuard: () => {},
+      normalizeClearKeys: () => null,
       describeSourceHost: () => "",
       isDirectMediaProbeResponse: () => false,
       resolveTizenDirectRedirect: async () => ({})
@@ -836,6 +839,7 @@ test("staged webOS native playback continues when proxy rewrites currentPlayback
       load() {}
     },
     playRequestToken: 0,
+    stopTizenDtsAudioTranscode() {},
     stopWebOsDtsAudioTranscode() {},
     stopProgressSaving() {},
     cancelProgressSyncAfterSeek() {},

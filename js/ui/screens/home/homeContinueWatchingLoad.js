@@ -1,6 +1,5 @@
 import * as internals from "./homeScreenContext.js";
 import { stabilizeImmediateContinueWatchingItems } from "./continueWatchingStability.js";
-import { waitForHomeInputQuiet } from "./homeScreenMethods-27-enrich-continue-watching.js";
 
 export function startHomeContinueWatchingLoad(context) {
   const {
@@ -153,12 +152,6 @@ export function startHomeContinueWatchingLoad(context) {
         return;
       }
       if (!suppressContinueWatchingLoading) {
-        if ((this.hasPaintedInitialHomeContent === true || this.isInitialHomeLoading === false) && Number(this.lastHomeInputAt || 0) > 0) {
-          const settledBeforeDisplay = await waitForHomeInputQuiet(this, isCurrentHomeContinueWatchingLoad);
-          if (!settledBeforeDisplay || !isCurrentHomeContinueWatchingLoad()) {
-            return;
-          }
-        }
         // Publish the raw in-progress state immediately. Metadata and Next Up are enriched
         // asynchronously below, matching Android's initial render and avoiding a CW skeleton
         // when the local progress already contains a title or artwork.
@@ -199,10 +192,7 @@ export function startHomeContinueWatchingLoad(context) {
         ) {
           this.forceInitialContinueWatchingFocus = true;
         }
-        if (
-          !this.isInitialHomeLoading &&
-          (previousLoadingState !== this.continueWatchingLoading || previousDisplaySignature !== immediateDisplaySignature)
-        ) {
+        if (previousLoadingState !== this.continueWatchingLoading || previousDisplaySignature !== immediateDisplaySignature) {
           this.requestBackgroundRender();
         }
       }
@@ -263,9 +253,6 @@ export function startHomeContinueWatchingLoad(context) {
           shouldContinue: isCurrentHomeContinueWatchingLoad
         });
         if (!isCurrentHomeContinueWatchingLoad()) {
-          return;
-        }
-        if (!(await waitForHomeInputQuiet(this, isCurrentHomeContinueWatchingLoad)) || !isCurrentHomeContinueWatchingLoad()) {
           return;
         }
         const nextDisplayStrict = buildVisibleContinueWatchingItems(enriched, {

@@ -205,16 +205,10 @@ import { normalizeCatalogItem } from "./homeScreenHelpers-08-partition-continue-
 // render pass from bumping cachedAt; older entries are refreshed so the 14-day
 // cache age still revalidates their metadata.
 const CW_ENRICHMENT_WRITE_DEDUPE_MS = 60 * 60 * 1000;
-const CW_ENRICHMENT_FLUSH_DEBOUNCE_MS = 600;
 
 let cwEnrichmentMemoRaw;
 let cwEnrichmentMemoRevision = -1;
 let cwEnrichmentMemoCache = null;
-let cwEnrichmentPendingCache = null;
-let cwEnrichmentPendingBaseRevision = -1;
-let cwEnrichmentPendingBaseRaw;
-let cwEnrichmentFlushTimer = null;
-let cwEnrichmentLifecycleHooksBound = false;
 
 function readRawCwEnrichmentText() {
   try {
@@ -225,30 +219,7 @@ function readRawCwEnrichmentText() {
   }
 }
 
-function cancelPendingCwEnrichmentFlush() {
-  if (cwEnrichmentFlushTimer) {
-    clearTimeout(cwEnrichmentFlushTimer);
-    cwEnrichmentFlushTimer = null;
-  }
-  cwEnrichmentPendingCache = null;
-  cwEnrichmentPendingBaseRevision = -1;
-  cwEnrichmentPendingBaseRaw = undefined;
-}
-
-function hasExternalCwEnrichmentMutation() {
-  if (LocalStore.revision(CW_ENRICHMENT_CACHE_KEY) !== cwEnrichmentPendingBaseRevision) {
-    return true;
-  }
-  return cwEnrichmentPendingBaseRaw !== undefined && readRawCwEnrichmentText() !== cwEnrichmentPendingBaseRaw;
-}
-
 function getMemoizedContinueWatchingEnrichmentCache() {
-  if (cwEnrichmentPendingCache) {
-    if (!hasExternalCwEnrichmentMutation()) {
-      return cwEnrichmentPendingCache;
-    }
-    cancelPendingCwEnrichmentFlush();
-  }
   const raw = readRawCwEnrichmentText();
   const revision = LocalStore.revision(CW_ENRICHMENT_CACHE_KEY);
   if (cwEnrichmentMemoCache && raw !== undefined && raw === cwEnrichmentMemoRaw && revision === cwEnrichmentMemoRevision) {
@@ -259,43 +230,6 @@ function getMemoizedContinueWatchingEnrichmentCache() {
   cwEnrichmentMemoRaw = raw;
   cwEnrichmentMemoRevision = revision;
   return cwEnrichmentMemoCache;
-}
-
-function bindCwEnrichmentLifecycleFlushHooks() {
-  if (cwEnrichmentLifecycleHooksBound) {
-    return;
-  }
-  cwEnrichmentLifecycleHooksBound = true;
-  const onVisibilityChange = () => {
-    if (globalThis.document?.hidden) {
-      flushContinueWatchingEnrichmentCache();
-    }
-  };
-  const onFlushEvent = () => {
-    flushContinueWatchingEnrichmentCache();
-  };
-  globalThis.document?.addEventListener?.("visibilitychange", onVisibilityChange);
-  globalThis.document?.addEventListener?.("nuvio:beforeExitApp", onFlushEvent);
-  globalThis.window?.addEventListener?.("pagehide", onFlushEvent);
-}
-
-/** Persist any deferred Continue Watching enrichment batch once, unless cleared externally. */
-export function flushContinueWatchingEnrichmentCache() {
-  if (!cwEnrichmentPendingCache) {
-    cancelPendingCwEnrichmentFlush();
-    return false;
-  }
-  if (hasExternalCwEnrichmentMutation()) {
-    cancelPendingCwEnrichmentFlush();
-    return false;
-  }
-  const cacheToWrite = cwEnrichmentPendingCache;
-  cancelPendingCwEnrichmentFlush();
-  LocalStore.set(CW_ENRICHMENT_CACHE_KEY, cacheToWrite);
-  cwEnrichmentMemoCache = cacheToWrite;
-  cwEnrichmentMemoRaw = readRawCwEnrichmentText();
-  cwEnrichmentMemoRevision = LocalStore.revision(CW_ENRICHMENT_CACHE_KEY);
-  return true;
 }
 
 function cwEnrichmentEntryEquals(left, right) {
@@ -374,21 +308,12 @@ export function applyCachedContinueWatchingEnrichment(item = {}) {
   });
 }
 
-export function saveContinueWatchingEnrichment(item = {}, { deferWrite = false } = {}) {
-  const normalized = normalizeContinueWatchingItem(item);
-  if (!normalized?.contentId || isRawContinueWatchingTitle(normalized) || !hasContinueWatchingArtwork(normalized)) {
-    return;
-  }
-  const key = continueWatchingEnrichmentCacheKey(normalized);
-  if (!key) {
-    return;
-  }
-  const cache = getMemoizedContinueWatchingEnrichmentCache();
-  const enrichmentCacheLimit = getTvRuntimePerformanceProfile().isPerformanceConstrained ? 50 : 200;
-  const cacheSize = Object.keys(cache).length;
-  const now = Date.now();
-  const prev = cache[key];
-  const nextEntry = {
+function continueWatchingEnrichmentCacheLimit() {
+  return getTvRuntimePerformanceProfile().isPerformanceConstrained ? 50 : 200;
+}
+
+function buildContinueWatchingEnrichmentEntry(normalized, now) {
+  return {
     cachedAt: now,
     title: normalized.title,
     name: normalized.name,
@@ -415,44 +340,68 @@ export function saveContinueWatchingEnrichment(item = {}, { deferWrite = false }
     continueWatchingMetaResolved: true,
     serverSeriesIdentityChecked: normalized.serverSeriesIdentityChecked === true
   };
+}
+
+function stageContinueWatchingEnrichment(cache, item, now, enrichmentCacheLimit) {
+  const normalized = normalizeContinueWatchingItem(item);
+  if (!normalized?.contentId || isRawContinueWatchingTitle(normalized) || !hasContinueWatchingArtwork(normalized)) {
+    return false;
+  }
+  const key = continueWatchingEnrichmentCacheKey(normalized);
+  if (!key) {
+    return false;
+  }
+  const cacheSize = Object.keys(cache).length;
+  const prev = cache[key];
+  const nextEntry = buildContinueWatchingEnrichmentEntry(normalized, now);
   if (
     prev &&
     cacheSize <= enrichmentCacheLimit &&
     now - Number(prev.cachedAt || 0) < CW_ENRICHMENT_WRITE_DEDUPE_MS &&
     cwEnrichmentEntryEquals(prev, nextEntry)
   ) {
-    return;
+    return false;
   }
   cache[key] = nextEntry;
+  return true;
+}
+
+function writeContinueWatchingEnrichmentCache(cache, enrichmentCacheLimit) {
   let nextCache = cache;
-  if ((prev ? cacheSize : cacheSize + 1) > enrichmentCacheLimit) {
+  if (Object.keys(cache).length > enrichmentCacheLimit) {
     const entries = Object.entries(cache)
       .sort(([, left], [, right]) => Number(right?.cachedAt || 0) - Number(left?.cachedAt || 0))
       .slice(0, enrichmentCacheLimit);
     nextCache = Object.fromEntries(entries);
   }
-  if (deferWrite) {
-    bindCwEnrichmentLifecycleFlushHooks();
-    if (!cwEnrichmentPendingCache) {
-      cwEnrichmentPendingBaseRevision = LocalStore.revision(CW_ENRICHMENT_CACHE_KEY);
-      cwEnrichmentPendingBaseRaw = cwEnrichmentMemoRaw !== undefined ? cwEnrichmentMemoRaw : readRawCwEnrichmentText();
-    }
-    cwEnrichmentPendingCache = nextCache;
-    cwEnrichmentMemoCache = nextCache;
-    if (cwEnrichmentFlushTimer) {
-      clearTimeout(cwEnrichmentFlushTimer);
-    }
-    cwEnrichmentFlushTimer = setTimeout(() => {
-      cwEnrichmentFlushTimer = null;
-      flushContinueWatchingEnrichmentCache();
-    }, CW_ENRICHMENT_FLUSH_DEBOUNCE_MS);
-    return;
-  }
-  cancelPendingCwEnrichmentFlush();
   LocalStore.set(CW_ENRICHMENT_CACHE_KEY, nextCache);
   cwEnrichmentMemoCache = nextCache;
   cwEnrichmentMemoRaw = readRawCwEnrichmentText();
   cwEnrichmentMemoRevision = LocalStore.revision(CW_ENRICHMENT_CACHE_KEY);
+}
+
+export function saveContinueWatchingEnrichment(item = {}) {
+  const cache = getMemoizedContinueWatchingEnrichmentCache();
+  const enrichmentCacheLimit = continueWatchingEnrichmentCacheLimit();
+  if (!stageContinueWatchingEnrichment(cache, item, Date.now(), enrichmentCacheLimit)) {
+    return;
+  }
+  writeContinueWatchingEnrichmentCache(cache, enrichmentCacheLimit);
+}
+
+// One enrichment pass stages every item in memory and persists the map once, so
+// Smart TV localStorage serialization runs per pass instead of per item.
+export function saveContinueWatchingEnrichments(items = []) {
+  const cache = getMemoizedContinueWatchingEnrichmentCache();
+  const enrichmentCacheLimit = continueWatchingEnrichmentCacheLimit();
+  const now = Date.now();
+  let changed = false;
+  for (const item of items) {
+    changed = stageContinueWatchingEnrichment(cache, item, now, enrichmentCacheLimit) || changed;
+  }
+  if (changed) {
+    writeContinueWatchingEnrichmentCache(cache, enrichmentCacheLimit);
+  }
 }
 
 export function readContinueWatchingDisplaySnapshot(scopeKey) {

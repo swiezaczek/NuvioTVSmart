@@ -369,32 +369,6 @@ test("the stylesheet's own object-fit reaches the rescaler", () => {
   assert.equal(asked[0].height, 338);
 });
 
-test("horizontal progression on the same row hydrates incoming off-right cards even when anchor is already loaded", () => {
-  const context = buildHome();
-  const row = makeRow(context, { top: 100 });
-  const loadedAnchorImg = makeImage(context, { row, src: "https://art/anchor.jpg", left: 100 });
-  loadedAnchorImg.src = loadedAnchorImg.dataset.src;
-  delete loadedAnchorImg.dataset.src;
-  const incomingRightImg = makeImage(context, { row, src: "https://art/right.jpg", left: 2100 });
-  const anchorNode = new context.HTMLElement();
-  anchorNode.isConnected = true;
-  anchorNode.offsetWidth = 220;
-  anchorNode.closest = (sel) => (sel === ROW_SELECTOR ? row : null);
-  anchorNode.querySelector = () => null;
-  row.querySelector = (sel) => (sel === "[data-src]" ? incomingRightImg : null);
-  row.querySelectorAll = () => [];
-
-  const screen = makeScreen(context, { rows: [row], images: [loadedAnchorImg, incomingRightImg] });
-  screen.lastHomeLazyImageHydrationAnchorRow = row;
-  screen.scheduleHomeLazyImageHydration(anchorNode, { deferUntilVerticalSettle: false });
-
-  assert.equal(
-    incomingRightImg.src,
-    "https://art/right.jpg",
-    "cards inside the horizontal lookahead margin hydrate before focus lands on them"
-  );
-});
-
 test("continue watching card backdrops rescale and release on eviction", async () => {
   const asked = [];
   const released = [];

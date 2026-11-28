@@ -1,6 +1,6 @@
-/* eslint-disable no-unused-vars */
 import * as internals from "./metaDetailsScreenContext.js";
 import { addonEpisodeAirDates } from "../../../data/repository/episodeRatingsAlignment.js";
+import { withResolvedTrailerSource } from "../../../core/media/trailerApi.js";
 
 export function createMetaDetailsScreenMethods06() {
   const {
@@ -11,7 +11,6 @@ export function createMetaDetailsScreenMethods06() {
     TMDB_API_KEY,
     TMDB_BASE_URL,
     isSeriesDetailMeta,
-    resolveMetaImdbId,
     resolveMetaTmdbId,
     extractCast,
     mergeGenreLists,
@@ -205,7 +204,6 @@ export function createMetaDetailsScreenMethods06() {
         if (!meta?.id || !episodes?.length) {
           return {};
         }
-        const imdbId = resolveMetaImdbId(meta, this.params);
         const knownTmdbId = resolveMetaTmdbId(meta, this.params);
         const tmdbId =
           knownTmdbId ||
@@ -214,11 +212,10 @@ export function createMetaDetailsScreenMethods06() {
             // enrichment, matching Android TV's detail-screen behavior.
             requireEnabled: false
           }));
-        if (!imdbId && !tmdbId) {
+        if (!tmdbId) {
           return {};
         }
         return await imdbEpisodeRatingsRepository.getEpisodeRatings({
-          imdbId,
           tmdbId,
           // The add-on episodes shown here, so ratings follow its season split (Android).
           addonEpisodes: addonEpisodeAirDates(episodes)
@@ -234,6 +231,20 @@ export function createMetaDetailsScreenMethods06() {
       }
       const settings = TmdbSettingsStore.get();
       const fallbackSource = resolveTrailerSource(meta);
+      const trailerHints = {
+        title: String(meta?.name || "").trim(),
+        year: String(meta?.releaseInfo || "").match(/\b(19|20)\d{2}\b/)?.[0] || ""
+      };
+      const resolveDirectSource = async (source) => {
+        const resolved = await withResolvedTrailerSource(source, trailerHints);
+        if (resolved?.kind === "video") {
+          return resolved;
+        }
+        return typeof upgradeTrailerSourceWithVetroResolver === "function" ? upgradeTrailerSourceWithVetroResolver(resolved) : resolved;
+      };
+      if (!settings.enabled || !settings.useTrailers || !TMDB_API_KEY) {
+        return resolveDirectSource(fallbackSource);
+      }
       const itemType = String(meta?.type || this.params?.itemType || "movie");
       const resolutionKey = [meta?.id, itemType, settings.language, settings.enabled, settings.useTrailers].join("|");
       if (this.trailerSourceResolutionKey === resolutionKey) {
@@ -244,12 +255,7 @@ export function createMetaDetailsScreenMethods06() {
           return this.trailerSourceResolutionResult;
         }
       }
-      const resolutionPromise =
-        !settings.enabled || !settings.useTrailers || !TMDB_API_KEY
-          ? typeof upgradeTrailerSourceWithVetroResolver === "function"
-            ? upgradeTrailerSourceWithVetroResolver(fallbackSource)
-            : Promise.resolve(fallbackSource)
-          : resolveTmdbTrailerSource(meta, itemType);
+      const resolutionPromise = resolveTmdbTrailerSource(meta, itemType).then(resolveDirectSource);
       this.trailerSourceResolutionKey = resolutionKey;
       this.trailerSourceResolutionPromise = resolutionPromise;
       try {

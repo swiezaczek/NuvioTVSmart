@@ -257,12 +257,12 @@ export async function resolveTmdbTrailerSource(meta = {}, itemType = "movie") {
   const fallbackSource = resolveTrailerSource(meta);
   const settings = TmdbSettingsStore.get();
   if (!settings.enabled || !settings.useTrailers || !TMDB_API_KEY || !meta?.id) {
-    return upgradeTrailerSourceWithVetroResolver(fallbackSource);
+    return fallbackSource;
   }
   try {
     const tmdbId = await withTimeout(TmdbService.ensureTmdbId(meta.id, itemType), 1800, null);
     if (!tmdbId) {
-      return upgradeTrailerSourceWithVetroResolver(fallbackSource);
+      return fallbackSource;
     }
     const trailers = await withTimeout(
       TmdbMetadataService.fetchTrailerCandidates({
@@ -273,9 +273,9 @@ export async function resolveTmdbTrailerSource(meta = {}, itemType = "movie") {
       2200,
       []
     );
-    return upgradeTrailerSourceWithVetroResolver(resolveTrailerSource({ trailers }) || fallbackSource);
+    return resolveTrailerSource({ trailers }) || fallbackSource;
   } catch (_) {
-    return upgradeTrailerSourceWithVetroResolver(fallbackSource);
+    return fallbackSource;
   }
 }
 

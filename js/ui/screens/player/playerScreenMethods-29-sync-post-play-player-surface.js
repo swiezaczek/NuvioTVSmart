@@ -411,7 +411,7 @@ export function createPlayerScreenMethods29() {
       return Boolean((this.loadingVisible && !this.hasPresentedPlaybackFrame) || this.episodeAutoPlaySearching);
     },
     isBufferingSpinnerVisible() {
-      if (Environment.isWebOS() && PlayerController.isWebOsDtsAudioBuffering?.()) {
+      if ((Environment.isWebOS() && PlayerController.isWebOsDtsAudioBuffering?.()) || PlayerController.isTizenDtsAudioBuffering?.()) {
         return !this.isStartupLoadingVisible() && !this.isExternalFrameMode() && !this.isStartupErrorVisible();
       }
       if (this.seekLoading) {

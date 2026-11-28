@@ -34,7 +34,6 @@ function createDetailScreen({ constrained = false, legacy = false } = {}) {
       DETAIL_SCROLL_DAMPING_RATIO: 1,
       DETAIL_SCROLL_MAX_FRAME_SECONDS: 0.034,
       escapeSelectorValue: String,
-      resolveVetroDirectTrailer: null,
       detailTrailerCaptionOptions: () => ({})
     }
   });

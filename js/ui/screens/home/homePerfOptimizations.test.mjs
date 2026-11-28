@@ -616,6 +616,7 @@ test("resetForSignOut discards preserved TV Home DOM and resets rescaler pool", 
     resetHomeArtworkRescaler: () => {
       resetRescalerCalls += 1;
     },
+    resetHeroArtworkWorker: () => {},
     resetHeroLogoRescaleCache: () => {},
     internals: {
       ScreenUtils: {

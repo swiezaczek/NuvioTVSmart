@@ -1,4 +1,28 @@
 import * as internals from "./homeScreenContext.js";
+import { withResolvedTrailerSource } from "../../../core/media/trailerApi.js";
+
+// YouTube draws its own startup chrome (title, share, transport controls) even
+// with controls=0 and only hides it a few seconds after playback starts. Keep
+// the layer covered by the backdrop until then so Home previews stay as clean
+// as Android's chromeless trailer player.
+const YOUTUBE_TRAILER_CHROME_SETTLE_MS = 4500;
+// The raw fallback embed has no API signal: its window starts at the iframe
+// load state, which arrives before the player paints.
+const YOUTUBE_FALLBACK_CHROME_SETTLE_MS = 5000;
+
+function setTrailerFrameMuted(frame, muted) {
+  try {
+    frame.contentWindow?.postMessage(
+      {
+        source: "nuvio-detail-trailer",
+        type: "command",
+        command: "setMuted",
+        payload: { muted: Boolean(muted) }
+      },
+      "*"
+    );
+  } catch (_) {}
+}
 
 export function createHomeScreenMethods13() {
   const {
@@ -7,6 +31,7 @@ export function createHomeScreenMethods13() {
     resolveTrailerSource,
     withTimeout,
     resolveTrailerMetaWithTmdbFallback,
+    extractYear,
     LayoutPreferences,
     homeTrailerCaptionOptions,
     applyTrailerAudioPreferences,
@@ -42,6 +67,11 @@ export function createHomeScreenMethods13() {
               "*"
             );
           } catch (_) {}
+          // The proxy holds audio until a reveal; a re-focused trailer has
+          // already been revealed once, so restore its sound here.
+          if (source.muted === false) {
+            setTrailerFrameMuted(existingFrame, false);
+          }
           container.classList.add("is-active");
           (this.mountedHomeTrailerLayers ||= new Set()).add(container);
           onReady?.();
@@ -112,6 +142,11 @@ export function createHomeScreenMethods13() {
             if (revealed || !frame.isConnected || frame.parentElement !== container) {
               return;
             }
+            // Focus moved away while the startup chrome was settling: the layer
+            // was paused and hidden, so a late reveal would bring back a still.
+            if (frame.dataset.ambientTrailerPlaying === "false") {
+              return;
+            }
             revealed = true;
             frame.dataset.trailerRevealed = "true";
             if (fallbackTimer) {
@@ -119,6 +154,11 @@ export function createHomeScreenMethods13() {
               fallbackTimer = 0;
             }
             container.classList.add("is-active");
+            // Home keeps the layer covered until YouTube's startup chrome
+            // settles, so the proxy holds its audio until this reveal.
+            if (source.muted === false) {
+              setTrailerFrameMuted(frame, false);
+            }
             onReady?.();
           }, delayMs);
         };
@@ -144,7 +184,7 @@ export function createHomeScreenMethods13() {
           }
           if (data.type === "firstFrame") {
             frame.dataset.ambientTrailerPlaying = String(frame.dataset.ambientTrailerLooped !== "true");
-            reveal(0);
+            reveal(YOUTUBE_TRAILER_CHROME_SETTLE_MS);
             return;
           }
           const state = data.type === "state" && data.state && typeof data.state === "object" ? data.state : null;
@@ -166,9 +206,9 @@ export function createHomeScreenMethods13() {
             );
           }
           if (state && Number(state.currentTime || 0) > 0 && state.paused === false) {
-            reveal(0);
+            reveal(YOUTUBE_TRAILER_CHROME_SETTLE_MS);
           } else if (state && state.controllable === false && state.loading === false) {
-            reveal(1200);
+            reveal(YOUTUBE_FALLBACK_CHROME_SETTLE_MS);
           }
         };
         const cleanup = () => {
@@ -220,9 +260,6 @@ export function createHomeScreenMethods13() {
         video.setAttribute("webkit-playsinline", "");
         video.setAttribute("muted", "");
         try {
-          video.volume = 0;
-        } catch (_) {}
-        try {
           video.disableRemotePlayback = true;
         } catch (_) {}
 
@@ -251,41 +288,28 @@ export function createHomeScreenMethods13() {
           didActivate = true;
           container.classList.add("is-active");
           if (!shouldMute) {
-            let policyReverted = false;
-            const revertToMuted = () => {
-              if (policyReverted) {
+            const settleUnmute = () => {
+              if (video.muted || video.isConnected === false || !container.classList?.contains?.("is-active")) {
                 return;
               }
-              policyReverted = true;
+              // Autoplay policy paused the unmuted trailer: resume it muted so
+              // the reveal never lands on a frozen frame.
+              if (!video.paused) {
+                return;
+              }
               video.muted = true;
               video.setAttribute?.("muted", "");
-              try {
-                video.volume = 0;
-              } catch (_) {}
               const retryPlay = video.play?.();
               if (retryPlay?.catch) {
                 retryPlay.catch(() => {});
               }
             };
-            const onPolicyPause = () => {
-              if (video.isConnected === false || !container.classList?.contains?.("is-active")) {
-                return;
-              }
-              revertToMuted();
-            };
-            video.addEventListener("pause", onPolicyPause, { once: true });
-            const policyTimer = setTimeout(() => {
-              video.removeEventListener?.("pause", onPolicyPause);
-            }, 120);
             video.muted = false;
             video.removeAttribute?.("muted");
-            try {
-              video.volume = 1;
-            } catch (_) {}
             if (video.paused) {
-              clearTimeout(policyTimer);
-              video.removeEventListener?.("pause", onPolicyPause);
-              revertToMuted();
+              settleUnmute();
+            } else {
+              setTimeout(settleUnmute, 120);
             }
           }
           onReady?.();
@@ -306,8 +330,8 @@ export function createHomeScreenMethods13() {
           video.addEventListener("playing", tryActivateOnPlaybackFrame);
         }
         let lastVideoTime = 0;
-        video.addEventListener("timeupdate", () => {
-          if (typeof video.requestVideoFrameCallback !== "function" || Number(video.currentTime || 0) > 0) {
+        const syncTrailerState = () => {
+          if (Number(video.currentTime || 0) > 0) {
             tryActivateOnPlaybackFrame();
           }
           if (video.currentTime + 1 < lastVideoTime) {
@@ -315,10 +339,13 @@ export function createHomeScreenMethods13() {
           }
           lastVideoTime = video.currentTime;
           this.trackHomeTrailerHandoff?.(container, source, {
-            currentTime: video.currentTime,
-            muted: shouldMute ? true : video.muted,
-            paused: video.paused
+            currentTime: Number(video.currentTime || 0),
+            muted: shouldMute || Boolean(video.muted),
+            paused: Boolean(video.paused)
           });
+        };
+        ["timeupdate", "play", "pause"].forEach((eventName) => {
+          video.addEventListener(eventName, syncTrailerState);
         });
         video.addEventListener(
           "error",
@@ -489,11 +516,14 @@ export function createHomeScreenMethods13() {
           inlineSource ||
           inlineFallbackSource ||
           (result?.status === "success" ? resolveTrailerSource({ ...(result?.data || {}), id: itemId, type: itemType }) : null);
-        if (
-          youtubeSource?.kind === "youtube" &&
-          youtubeSource.ytId &&
-          typeof resolveVetroDirectTrailer === "function"
-        ) {
+        const apiResolved = await withResolvedTrailerSource(youtubeSource, {
+          title: String(itemMeta.name || "").trim(),
+          year: typeof extractYear === "function" ? extractYear(itemMeta) : ""
+        });
+        if (apiResolved?.kind === "video" && apiResolved.url) {
+          return apiResolved;
+        }
+        if (youtubeSource?.kind === "youtube" && youtubeSource.ytId && typeof resolveVetroDirectTrailer === "function") {
           const captionOptions = typeof homeTrailerCaptionOptions === "function" ? homeTrailerCaptionOptions() : {};
           const directSource = await resolveVetroDirectTrailer({
             ytId: youtubeSource.ytId,
@@ -506,7 +536,7 @@ export function createHomeScreenMethods13() {
             };
           }
         }
-        return youtubeSource;
+        return apiResolved;
       } catch (error) {
         console.warn("Home trailer preview lookup failed", error);
         return null;
@@ -546,6 +576,8 @@ export function createHomeScreenMethods13() {
       const ytId = String(source?.ytId || "");
       const url = String(source?.url || "");
       if (!itemKey || (!ytId && !url)) {
+        // Direct <video> trailers have no YouTube id, but their progress feeds
+        // the same Home-to-detail handoff.
         return;
       }
       this.homeTrailerHandoff = {

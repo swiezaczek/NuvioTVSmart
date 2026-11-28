@@ -303,14 +303,18 @@ export function createHomeScreenMethods12() {
       }
       this.homeTrailerLayerCleanupTimers ||= new WeakMap();
       const pendingCleanup = this.homeTrailerLayerCleanupTimers.get(container);
-      const hasMedia = Boolean(container.firstElementChild || container.querySelector?.("iframe, video"));
-      if (!hasMedia && !container.classList?.contains?.("is-active") && !pendingCleanup) {
+      // Home mounts an empty trailer layer per poster: arming a timer on those
+      // would only run clearTrailerLayer on nothing after every focus move.
+      if (!pendingCleanup && !container.classList.contains("is-active") && !container.firstElementChild) {
         return;
       }
       this.pauseTrailerLayer(container);
       container.classList.remove("is-active");
       this.scheduleTrailerLayerHide(container);
-      if (pendingCleanup && !pendingCleanup.completed) {
+      // Never slide a pending deadline: every later focus move calls this
+      // through collapseFocusedPoster, which used to keep the paused player
+      // alive for the whole navigation.
+      if (pendingCleanup) {
         return;
       }
       const cleanupState = { idleId: 0, timeoutId: 0, completed: false };
