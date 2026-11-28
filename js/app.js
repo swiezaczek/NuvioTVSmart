@@ -34,7 +34,11 @@ import {
   getTvRuntimePerformanceProfile,
   resetTvRuntimePerformanceProfile
 } from "./platform/tvRuntimePerformance.js";
-import { createFramePaceMonitor, storeMeasuredTvTier } from "./platform/tvAdaptiveTier.js";
+import {
+  createFramePaceMonitor,
+  storeMeasuredTvTier,
+  TV_FRAME_PACE_POLICY
+} from "./platform/tvAdaptiveTier.js";
 import { LocalStore } from "./core/storage/localStore.js";
 import { I18n } from "./i18n/index.js";
 import { getLatestAppUpdateWithRetry } from "./core/update/appUpdateService.js";
@@ -321,8 +325,15 @@ function watchTvFramePace() {
   };
   const shouldSampleHomeRoute = () => Router.getCurrent() === "home";
   const shouldSampleFramePace = () => shouldSampleHomeRoute() && nowMs() >= burstSuppressUntil;
+  const isModernTizen = profile.platform === "tizen" && !profile.isLegacyTvRuntime;
+  const pacePolicy = {
+    ...TV_FRAME_PACE_POLICY,
+    slowLostMs: isModernTizen ? 90 : TV_FRAME_PACE_POLICY.slowLostMs,
+    consecutiveSlowWindows: 2
+  };
   const monitor = createFramePaceMonitor({
     shouldSample: shouldSampleFramePace,
+    policy: pacePolicy,
     onSlow: (lostMs) => {
       detachListener();
       storeMeasuredTvTier({ tier: "constrained", appVersion: APP_VERSION, lostMs });
