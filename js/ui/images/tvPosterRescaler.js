@@ -501,7 +501,7 @@ const CAMERA_SCROLL_POLL_MS = 60;
 const CAMERA_SCROLL_MAX_WAIT_MS = 450;
 const DPAD_PACE_QUIET_MS = 380;
 const DPAD_PACE_MAX_WAIT_MS = 650;
-const MAX_COMPLETIONS_PER_FRAME = 2;
+const MAX_COMPLETIONS_PER_FRAME = 1;
 
 let lastDpadKeydownAt = 0;
 let keydownListenerBound = false;
@@ -537,7 +537,7 @@ function isDpadPaceActive() {
 }
 
 function shouldDeferCompletionFlush() {
-  return isCameraScrollingActive() || isDpadPaceActive();
+  return isDpadPaceActive() || isCameraScrollingActive();
 }
 
 function scheduleNextCompletionChunk(state) {
@@ -710,9 +710,13 @@ function spawnWorker(state) {
       state.jobs.delete(id);
       clearTimeout(job.timer);
     }
-    if (shouldDeferCompletionFlush()) {
+    if (shouldDeferCompletionFlush() || lastDpadKeydownAt > 0) {
       state.pendingCompletions.push({ job, worker, ok, blob, reason });
-      scheduleCompletionFlush(state);
+      if (shouldDeferCompletionFlush()) {
+        scheduleCompletionFlush(state);
+      } else {
+        scheduleNextCompletionChunk(state);
+      }
       return;
     }
     if (job) {

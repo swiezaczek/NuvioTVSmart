@@ -505,7 +505,7 @@ test("worker completions defer URL.createObjectURL and pump while .is-camera-scr
     });
     assert.equal(posterBlobUrls.length, 2, "must still defer initially while stuck scrolling");
 
-    await new Promise((r) => setTimeout(r, 560));
+    await new Promise((r) => setTimeout(r, 680));
     assert.equal(
       posterBlobUrls.length,
       8,
@@ -534,7 +534,7 @@ test("worker completions defer URL.createObjectURL and pump while .is-camera-scr
   }
 });
 
-test("worker completions and pump defer past 380ms keydown pace window and chunk flushes at 2 per frame", async () => {
+test("worker completions and pump defer past 380ms keydown pace window and chunk flushes at 1 per frame even between keys", async () => {
   const posterBlobUrls = [];
   const origWorker = globalThis.Worker;
   const origOffscreenCanvas = globalThis.OffscreenCanvas;
@@ -650,22 +650,21 @@ test("worker completions and pump defer past 380ms keydown pace window and chunk
     await new Promise((r) => setTimeout(r, 250));
     assert.equal(posterBlobUrls.length, 0, "must defer completions inside 380ms keydown window");
 
-    // After 380ms clears, first tick flushes max 2 completions and schedules rAF for each 2-item slice.
+    // After 380ms clears, each tick flushes max 1 completion and schedules rAF for the next slice.
     await new Promise((r) => setTimeout(r, 190));
-    assert.equal(posterBlobUrls.length, 2, "first flush tick must cap at 2 completions");
+    assert.equal(posterBlobUrls.length, 1, "first flush tick must cap at 1 completion");
     assert.equal(chunkRafCallbacks.length, 1, "remaining completions must wait for next rAF");
 
-    chunkRafCallbacks.shift()();
-    assert.equal(posterBlobUrls.length, 4, "second chunk flushes next 2 completions");
-    assert.equal(chunkRafCallbacks.length, 1, "final 2 completions must wait for next rAF");
-
-    chunkRafCallbacks.shift()();
-    assert.equal(posterBlobUrls.length, 6, "third chunk flushes remaining 2 completions");
-    assert.equal(chunkRafCallbacks.length, 0);
+    for (let step = 2; step <= 6; step += 1) {
+      chunkRafCallbacks.shift()();
+      assert.equal(posterBlobUrls.length, step, `chunk ${step} flushes exactly 1 completion`);
+      assert.equal(chunkRafCallbacks.length, step < 6 ? 1 : 0);
+    }
     const settled = await Promise.all(promises2);
     assert.equal(settled.filter(Boolean).length, 6);
 
-    // Also verify pump() itself defers new worker dispatch while inside the 380ms keydown window.
+    // Also verify pump() itself defers new worker dispatch while inside the 380ms keydown window,
+    // and returning worker completions after 380ms still chunk at <=1 per rAF frame.
     const countBeforeDefer = createdWorkers.reduce((sum, w) => sum + w.posted.length, 0);
     keydownHandler();
     const deferredPumpPromise = rescaler.rescaleHomeArtwork("https://art/pump-deferred.jpg", {
@@ -692,6 +691,13 @@ test("worker completions and pump defer past 380ms keydown pace window and chunk
     deferredMsg.w.onmessage({
       data: { id: deferredMsg.msg.id, ok: true, blob: { isPosterBlob: true } }
     });
+    assert.equal(
+      posterBlobUrls.length,
+      6,
+      "interactive returning worker completion after 380ms must still defer to rAF chunking"
+    );
+    assert.equal(chunkRafCallbacks.length, 1);
+    chunkRafCallbacks.shift()();
     assert.equal(await deferredPumpPromise, "blob:poster/7");
 
     rescaler.resetHomeArtworkRescaler();
