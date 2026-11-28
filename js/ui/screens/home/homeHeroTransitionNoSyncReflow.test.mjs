@@ -504,34 +504,43 @@ test("preloadHeroBackdrop bypasses CPU resizeWidth for <=1920px headers, uses tr
       return `blob:logo/${logoBlobUrlCount}`;
     };
 
-    // In-thread <=660px logo (w500) skips OffscreenCanvas & createObjectURL.
-    const png500 = makePngBytes(500, 140);
+    // In-thread <=1000x500 logo (including 800x310 HD Clearlogo) skips OffscreenCanvas & createObjectURL.
+    const png800 = makePngBytes(800, 310);
     const png1200 = makePngBytes(1200, 320);
+    const pngTall = makePngBytes(900, 600);
     globalThis.fetch = async (url) => ({
       ok: true,
       async blob() {
-        return makeByteBlob(url.includes("big") ? png1200 : png500);
+        if (url.includes("big")) return makeByteBlob(png1200);
+        if (url.includes("tall")) return makeByteBlob(pngTall);
+        return makeByteBlob(png800);
       }
     });
-    const smallLogoInThread = await modFallback.preloadHeroLogo("https://art/logo-w500.png");
-    assert.deepEqual(smallLogoInThread, { loaded: true, src: "https://art/logo-w500.png" });
-    assert.equal(logoBlobUrlCount, 0, "<=660px logo must not allocate a blob URL");
+    const smallLogoInThread = await modFallback.preloadHeroLogo("https://art/logo-800x310.png");
+    assert.deepEqual(smallLogoInThread, { loaded: true, src: "https://art/logo-800x310.png" });
+    assert.equal(logoBlobUrlCount, 0, "<=1000x500 logo must not allocate a blob URL");
 
     const bigLogoInThread = await modFallback.preloadHeroLogo("https://art/logo-big.png");
     assert.deepEqual(bigLogoInThread, { loaded: true, src: "blob:logo/1" });
-    assert.equal(logoBlobUrlCount, 1, ">660px logo still rescales to bounded WebP blob");
+    assert.equal(logoBlobUrlCount, 1, ">1000px wide logo still rescales to bounded WebP blob");
+
+    const tallLogoInThread = await modFallback.preloadHeroLogo("https://art/logo-tall.png");
+    assert.deepEqual(tallLogoInThread, { loaded: true, src: "blob:logo/2" });
+    assert.equal(logoBlobUrlCount, 2, ">500px tall logo still rescales to bounded WebP blob");
 
     // Worker path: skippedSmall short-circuits before URL.createObjectURL; oversized logo encodes blob.
     failWorkerCtor = false;
+    const workerPosts = [];
     class FakeLogoWorker {
       constructor() {
         this.onmessage = null;
       }
       postMessage(msg) {
+        workerPosts.push(msg);
         queueMicrotask(() => {
-          if (msg.url.includes("w500")) {
+          if (msg.url.includes("800x310")) {
             this.onmessage?.({
-              data: { id: msg.id, ok: true, skippedSmall: true, width: 500, height: 140 }
+              data: { id: msg.id, ok: true, skippedSmall: true, width: 800, height: 310 }
             });
           } else {
             this.onmessage?.({ data: { id: msg.id, ok: true, blob: new Blob(["webp"]) } });
@@ -544,16 +553,20 @@ test("preloadHeroBackdrop bypasses CPU resizeWidth for <=1920px headers, uses tr
     const modWorkerLogo = await import(
       `./homeScreenHelpers-02-extract-release-date-text.js?workerlogo=${Date.now()}`
     );
-    const smallWorkerLogo = await modWorkerLogo.preloadHeroLogo("https://art/logo-worker-w500.png");
-    assert.deepEqual(smallWorkerLogo, { loaded: true, src: "https://art/logo-worker-w500.png" });
-    assert.equal(logoBlobUrlCount, 1, "worker skippedSmall must not call URL.createObjectURL");
+    const smallWorkerLogo = await modWorkerLogo.preloadHeroLogo(
+      "https://art/logo-worker-800x310.png"
+    );
+    assert.deepEqual(smallWorkerLogo, { loaded: true, src: "https://art/logo-worker-800x310.png" });
+    assert.equal(workerPosts[0].maxSmallWidth, 1000);
+    assert.equal(workerPosts[0].maxSmallHeight, 500);
+    assert.equal(logoBlobUrlCount, 2, "worker skippedSmall must not call URL.createObjectURL");
     assert.ok(
       workerScripts[0].includes("skippedSmall: true"),
       "worker source must handle small-logo bypass before OffscreenCanvas/convertToBlob"
     );
     const bigWorkerLogo = await modWorkerLogo.preloadHeroLogo("https://art/logo-worker-big.png");
-    assert.deepEqual(bigWorkerLogo, { loaded: true, src: "blob:logo/2" });
-    assert.equal(logoBlobUrlCount, 2);
+    assert.deepEqual(bigWorkerLogo, { loaded: true, src: "blob:logo/3" });
+    assert.equal(logoBlobUrlCount, 3);
   } finally {
     if (prevNavigatorUa) Object.defineProperty(globalThis.navigator, "userAgent", prevNavigatorUa);
     if (prevNavigatorMem)

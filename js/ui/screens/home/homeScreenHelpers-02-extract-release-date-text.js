@@ -342,7 +342,7 @@ function headerWidth(bytes) {
   return Number(headerDimensions(bytes)?.width || 0);
 }
 self.onmessage = async (event) => {
-  const { id, kind, url, resizeWidth, targetWidth, targetHeight, maxSmallWidth, timeoutMs } = event.data || {};
+  const { id, kind, url, resizeWidth, targetWidth, targetHeight, maxSmallWidth, maxSmallHeight, timeoutMs } = event.data || {};
   const hasTimeout = Number(timeoutMs) > 0 && typeof AbortController === "function";
   const controller = hasTimeout ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), Number(timeoutMs)) : 0;
@@ -363,7 +363,7 @@ self.onmessage = async (event) => {
         self.postMessage({ id, ok: true, skippedSmall: true });
         return;
       }
-      if (dims.width <= maxSmallWidth) {
+      if (dims.width <= maxSmallWidth && (!maxSmallHeight || !dims.height || dims.height <= maxSmallHeight)) {
         self.postMessage({ id, ok: true, skippedSmall: true, width: dims.width, height: dims.height });
         return;
       }
@@ -701,7 +701,8 @@ export function preloadHeroLogo(src) {
     entry.settled = true;
     return { loaded: true, src: objectUrl };
   };
-  const smallWidthThreshold = Math.round(HERO_LOGO_RESCALE_WIDTH_PX * 1.5);
+  const smallWidthThreshold = 1000;
+  const smallHeightThreshold = 500;
   const worker = typeof globalThis.Worker === "function" ? getHeroBackdropWorker() : null;
   if (worker) {
     entry.promise = new Promise((resolve, reject) => {
@@ -715,6 +716,7 @@ export function preloadHeroLogo(src) {
           targetWidth: target.width,
           targetHeight: target.height,
           maxSmallWidth: smallWidthThreshold,
+          maxSmallHeight: smallHeightThreshold,
           timeoutMs: HERO_IMAGE_PRELOAD_TIMEOUT_MS
         });
       } catch (error) {
@@ -759,7 +761,7 @@ export function preloadHeroLogo(src) {
       if (!dimensions) {
         throw new Error("unsupported logo");
       }
-      if (dimensions.width <= smallWidthThreshold) {
+      if (dimensions.width <= smallWidthThreshold && (!dimensions.height || dimensions.height <= smallHeightThreshold)) {
         throw new Error("logo already small");
       }
       const bitmap = await globalThis.createImageBitmap(blob, {
