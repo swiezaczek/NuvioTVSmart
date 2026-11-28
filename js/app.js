@@ -306,6 +306,12 @@ function watchTvFramePace() {
   if (!profile.isTvRuntime || profile.isPerformanceConstrained) {
     return;
   }
+  const FAST_BURST_KEY_GAP_MS = 220;
+  const FAST_BURST_SUPPRESS_MS = 400;
+  let lastHomeKeyAt = 0;
+  let burstSuppressUntil = 0;
+  const nowMs = () =>
+    typeof globalThis.performance?.now === "function" ? globalThis.performance.now() : Date.now();
   let onKeyDown = null;
   const detachListener = () => {
     if (onKeyDown) {
@@ -314,8 +320,9 @@ function watchTvFramePace() {
     }
   };
   const shouldSampleHomeRoute = () => Router.getCurrent() === "home";
+  const shouldSampleFramePace = () => shouldSampleHomeRoute() && nowMs() >= burstSuppressUntil;
   const monitor = createFramePaceMonitor({
-    shouldSample: shouldSampleHomeRoute,
+    shouldSample: shouldSampleFramePace,
     onSlow: (lostMs) => {
       detachListener();
       storeMeasuredTvTier({ tier: "constrained", appVersion: APP_VERSION, lostMs });
@@ -326,8 +333,16 @@ function watchTvFramePace() {
   });
   // Readable from the remote inspector when a set's tier is in question.
   globalThis.__NUVIO_FRAME_PACE__ = monitor;
-  onKeyDown = () => {
+  onKeyDown = (event) => {
     if (!shouldSampleHomeRoute()) {
+      return;
+    }
+    const now = nowMs();
+    const isFastRepeatOrBurst =
+      Boolean(event?.repeat) || (lastHomeKeyAt > 0 && now - lastHomeKeyAt < FAST_BURST_KEY_GAP_MS);
+    lastHomeKeyAt = now;
+    if (isFastRepeatOrBurst) {
+      burstSuppressUntil = now + FAST_BURST_SUPPRESS_MS;
       return;
     }
     monitor.noteKey();
