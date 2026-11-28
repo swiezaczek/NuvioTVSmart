@@ -516,6 +516,7 @@ const DPAD_PACE_QUIET_MS = 355;
 const DPAD_PACE_MAX_WAIT_MS = 650;
 const DPAD_POST_SETTLE_SPACING_MS = 20;
 const DPAD_POST_SETTLE_WINDOW_MS = 1050;
+const DPAD_OFFSCREEN_FLUSH_QUIET_MS = 1150;
 const MAX_COMPLETIONS_PER_FRAME = 1;
 
 let lastDpadKeydownAt = 0;
@@ -555,6 +556,32 @@ function shouldDeferCompletionFlush() {
   return isDpadPaceActive() || isCameraScrollingActive();
 }
 
+function nextFlushableCompletionIndex(state, now = Date.now()) {
+  if (!state?.pendingCompletions?.length) {
+    return -1;
+  }
+  let bestIndex = -1;
+  let bestPriority = Infinity;
+  for (let index = 0; index < state.pendingCompletions.length; index += 1) {
+    const priority = state.pendingCompletions[index].job?.priority ?? 2;
+    if (priority < bestPriority) {
+      bestPriority = priority;
+      bestIndex = index;
+      if (bestPriority === 0) {
+        break;
+      }
+    }
+  }
+  if (
+    bestPriority > 0 &&
+    lastDpadKeydownAt > 0 &&
+    now - lastDpadKeydownAt < DPAD_OFFSCREEN_FLUSH_QUIET_MS
+  ) {
+    return -1;
+  }
+  return bestIndex;
+}
+
 function scheduleNextCompletionChunk(state) {
   if (
     !state ||
@@ -565,6 +592,27 @@ function scheduleNextCompletionChunk(state) {
     !state.pendingCompletions.length
   ) {
     return;
+  }
+  const now = Date.now();
+  const flushIndex = nextFlushableCompletionIndex(state, now);
+  if (flushIndex < 0) {
+    state.flushWaitStartedAt = 0;
+    state.flushWaitingOnKeydown = false;
+    if (!state.restDrainTimer) {
+      const remaining = Math.max(16, DPAD_OFFSCREEN_FLUSH_QUIET_MS - (now - lastDpadKeydownAt));
+      state.restDrainTimer = setTimeout(() => {
+        state.restDrainTimer = null;
+        if (!state || state.disposed || !state.pendingCompletions.length) {
+          return;
+        }
+        scheduleNextCompletionChunk(state);
+      }, remaining);
+    }
+    return;
+  }
+  if (state.restDrainTimer) {
+    clearTimeout(state.restDrainTimer);
+    state.restDrainTimer = null;
   }
   const onTick = () => {
     if (!state || state.disposed || !state.pendingCompletions.length) {
@@ -583,7 +631,7 @@ function scheduleNextCompletionChunk(state) {
     }
     flushPendingCompletions(state);
   };
-  if (lastDpadKeydownAt > 0 && Date.now() - lastDpadKeydownAt < DPAD_POST_SETTLE_WINDOW_MS) {
+  if (lastDpadKeydownAt > 0 && now - lastDpadKeydownAt < DPAD_POST_SETTLE_WINDOW_MS) {
     state.chunkTimer = setTimeout(() => {
       state.chunkTimer = null;
       onTick();
@@ -607,13 +655,17 @@ function flushPendingCompletions(state) {
   if (!state || state.disposed) {
     return;
   }
-  const batch = state.pendingCompletions.splice(0, MAX_COMPLETIONS_PER_FRAME);
-  if (!batch.length) {
+  const flushIndex = nextFlushableCompletionIndex(state);
+  if (flushIndex < 0) {
     state.flushWaitStartedAt = 0;
     state.flushWaitingOnKeydown = false;
     pump(state);
+    if (state.pendingCompletions.length) {
+      scheduleNextCompletionChunk(state);
+    }
     return;
   }
+  const batch = state.pendingCompletions.splice(flushIndex, MAX_COMPLETIONS_PER_FRAME);
   for (let index = 0; index < batch.length; index += 1) {
     const entry = batch[index];
     if (entry.job) {
@@ -688,6 +740,7 @@ function createPool({ preferDataUrl = false } = {}) {
     flushWaitingOnKeydown: false,
     chunkTimer: null,
     chunkRaf: 0,
+    restDrainTimer: null,
     nextId: 1,
     cache: new Map(),
     failed: new Map(),
@@ -999,6 +1052,7 @@ function rescaleWithPool(state, url, { width, height, fit, priority = 2, isStale
   }
   const pendingJob = state.inflight.get(key);
   if (pendingJob) {
+    const prevPriority = pendingJob.priority;
     pendingJob.priority = Math.min(pendingJob.priority, priority);
     // A second card wanting the same artwork means the queued job is no longer
     // stale just because the first card went away.
@@ -1008,6 +1062,13 @@ function rescaleWithPool(state, url, { width, height, fit, priority = 2, isStale
     // zero while another card is still painting it, and trimCache would then
     // revoke a url that is on screen.
     pendingJob.waiters += 1;
+    if (
+      prevPriority > 0 &&
+      pendingJob.priority === 0 &&
+      state.pendingCompletions.some((entry) => entry.job === pendingJob)
+    ) {
+      scheduleNextCompletionChunk(state);
+    }
     return pendingJob.promise;
   }
   const job = {
@@ -1197,6 +1258,10 @@ function resetPool(state) {
   if (state.chunkTimer) {
     clearTimeout(state.chunkTimer);
     state.chunkTimer = null;
+  }
+  if (state.restDrainTimer) {
+    clearTimeout(state.restDrainTimer);
+    state.restDrainTimer = null;
   }
   if (state.chunkRaf && typeof globalThis.cancelAnimationFrame === "function") {
     globalThis.cancelAnimationFrame(state.chunkRaf);

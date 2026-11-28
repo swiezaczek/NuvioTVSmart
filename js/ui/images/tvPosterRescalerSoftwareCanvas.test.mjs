@@ -636,7 +636,8 @@ test("worker completions and pump defer past 380ms keydown pace window and chunk
       rescaler.rescaleHomeArtwork(`https://art/chunk2-${index}.jpg`, {
         width: 220,
         height: 338,
-        fit: "cover"
+        fit: "cover",
+        priority: 0
       })
     );
     assert.equal(addKeydownListenerCalls, 1, "keydown listener registration must be idempotent");
@@ -645,7 +646,7 @@ test("worker completions and pump defer past 380ms keydown pace window and chunk
     // Trigger keydown while .is-camera-scrolling is false:
     // - completions must defer 355ms before URL.createObjectURL
     // - worker slots (3 workers x 2 slots = 6) must release and pump remaining 2 jobs immediately
-    // - after 355ms, all 8 completions drain at 20ms spacing with no 3-poster cap.
+    // - after 355ms, all 8 priority-0 completions drain at 20ms spacing with no 3-poster cap.
     keydownHandler();
     const firstMsgs = createdWorkers.slice(-3).flatMap((w) => w.posted.map((msg) => ({ w, msg })));
     assert.equal(firstMsgs.length, 6);
@@ -670,7 +671,7 @@ test("worker completions and pump defer past 380ms keydown pace window and chunk
     await new Promise((r) => setTimeout(r, 230));
     assert.equal(posterBlobUrls.length, 0, "must defer completions inside 355ms keydown window");
 
-    // After 355ms clears, completions drain one at a time spaced by 20ms setTimeout (not rAF).
+    // After 355ms clears, priority-0 completions drain one at a time spaced by 20ms setTimeout (not rAF).
     await new Promise((r) => setTimeout(r, 175));
     assert.ok(
       posterBlobUrls.length >= 1 && posterBlobUrls.length < 8,
@@ -686,19 +687,20 @@ test("worker completions and pump defer past 380ms keydown pace window and chunk
     assert.equal(
       posterBlobUrls.length,
       8,
-      "all 8 queued posters must finish draining at 20ms spacing without starvation cap"
+      "all 8 queued priority-0 posters must finish draining at 20ms spacing without starvation cap"
     );
     const settled = await Promise.all(promises2);
     assert.equal(settled.filter(Boolean).length, 8);
 
     // Verify pump() dispatches immediately inside 355ms keydown window while completion waits past 355ms,
-    // and completions arriving at rest (>1050ms) fall back to 16ms rAF chunking.
+    // and completions arriving at rest (>1150ms) fall back to 16ms rAF chunking.
     const countBeforeDefer = createdWorkers.reduce((sum, w) => sum + w.posted.length, 0);
     keydownHandler();
     const deferredPumpPromise = rescaler.rescaleHomeArtwork("https://art/pump-deferred.jpg", {
       width: 220,
       height: 338,
-      fit: "cover"
+      fit: "cover",
+      priority: 0
     });
     assert.equal(
       createdWorkers.reduce((sum, w) => sum + w.posted.length, 0),
@@ -721,8 +723,8 @@ test("worker completions and pump defer past 380ms keydown pace window and chunk
     await new Promise((r) => setTimeout(r, 410));
     assert.equal(await deferredPumpPromise, "blob:poster/9");
 
-    // Wait past 1050ms from last keydown; new completion at rest uses 16ms rAF chunking.
-    await new Promise((r) => setTimeout(r, 700));
+    // Wait past 1150ms from last keydown; new completion at rest uses 16ms rAF chunking.
+    await new Promise((r) => setTimeout(r, 780));
     const restPromise = rescaler.rescaleHomeArtwork("https://art/rest-raf.jpg", {
       width: 220,
       height: 338,
@@ -739,7 +741,7 @@ test("worker completions and pump defer past 380ms keydown pace window and chunk
     assert.equal(
       chunkRafCallbacks.length,
       1,
-      "completions at rest (>1050ms) must use rAF chunking"
+      "completions at rest (>1150ms) must use rAF chunking"
     );
     chunkRafCallbacks.shift()();
     assert.equal(await restPromise, "blob:poster/10");
@@ -1019,6 +1021,197 @@ test("Home rescaler prefers worker dataUrl (0 poster createObjectURL/revokeObjec
     globalThis.URL.createObjectURL = origCreateObjectURL;
     globalThis.URL.revokeObjectURL = origRevokeObjectURL;
     globalThis.Blob = origBlob;
+    if (origUserAgent) Object.defineProperty(globalThis.navigator, "userAgent", origUserAgent);
+    if (origDeviceMemory)
+      Object.defineProperty(globalThis.navigator, "deviceMemory", origDeviceMemory);
+    if (origTizen === undefined) delete globalThis.tizen;
+    else globalThis.tizen = origTizen;
+    if (origWebapis === undefined) delete globalThis.webapis;
+    else globalThis.webapis = origWebapis;
+  }
+});
+
+test("priority-0 onScreen completions flush at 20ms after 355ms while offscreen priority>0 wait until 1150ms rest unless promoted", async () => {
+  const origWorker = globalThis.Worker;
+  const origOffscreenCanvas = globalThis.OffscreenCanvas;
+  const origCreateImageBitmap = globalThis.createImageBitmap;
+  const origCreateObjectURL = globalThis.URL.createObjectURL;
+  const origRevokeObjectURL = globalThis.URL.revokeObjectURL;
+  const origDocument = globalThis.document;
+  const origAddEventListener = globalThis.addEventListener;
+  const origRaf = globalThis.requestAnimationFrame;
+  const origCancelRaf = globalThis.cancelAnimationFrame;
+  const origBlob = globalThis.Blob;
+  const origUserAgent = Object.getOwnPropertyDescriptor(globalThis.navigator, "userAgent");
+  const origDeviceMemory = Object.getOwnPropertyDescriptor(globalThis.navigator, "deviceMemory");
+  const origTizen = globalThis.tizen;
+  const origWebapis = globalThis.webapis;
+
+  const createdWorkers = [];
+  class FakeWorker {
+    constructor() {
+      this.onmessage = null;
+      this.onerror = null;
+      this.posted = [];
+      createdWorkers.push(this);
+    }
+    postMessage(msg) {
+      this.posted.push(msg);
+    }
+    terminate() {}
+  }
+  class FakeBlob {
+    constructor(parts, opts) {
+      this.parts = parts;
+      this.type = opts?.type || "";
+      this.isWorkerSource =
+        Array.isArray(parts) && typeof parts[0] === "string" && parts[0].includes("self.onmessage");
+    }
+  }
+
+  let keydownHandler = null;
+  const rafQueue = [];
+
+  try {
+    Object.defineProperty(globalThis.navigator, "userAgent", {
+      value:
+        "Mozilla/5.0 (SMART-TV; Linux; Tizen 9.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      configurable: true
+    });
+    Object.defineProperty(globalThis.navigator, "deviceMemory", {
+      value: 2,
+      configurable: true
+    });
+    globalThis.tizen = {};
+    globalThis.webapis = {};
+    globalThis.Worker = FakeWorker;
+    globalThis.OffscreenCanvas = function OffscreenCanvas() {};
+    globalThis.createImageBitmap = async () => ({ close() {} });
+    globalThis.document = { querySelector: () => null };
+    globalThis.addEventListener = (type, fn) => {
+      if (type === "keydown") keydownHandler = fn;
+    };
+    globalThis.requestAnimationFrame = (cb) => {
+      rafQueue.push(cb);
+      return rafQueue.length;
+    };
+    globalThis.cancelAnimationFrame = () => {};
+    globalThis.Blob = FakeBlob;
+    globalThis.URL.createObjectURL = () => "blob:worker/1";
+    globalThis.URL.revokeObjectURL = () => {};
+
+    const rescaler = await import(`./tvPosterRescaler.js?priorityGate=${Date.now()}`);
+    rescaler.resetHomeArtworkRescaler();
+
+    const settledFlags = { offA: false, offB: false, vis1: false, vis2: false };
+    const offA = rescaler
+      .rescaleHomeArtwork("https://art/offscreen-a.jpg", {
+        width: 220,
+        height: 338,
+        fit: "cover",
+        priority: 2
+      })
+      .then((u) => {
+        settledFlags.offA = true;
+        return u;
+      });
+    const offB = rescaler
+      .rescaleHomeArtwork("https://art/offscreen-b.jpg", {
+        width: 220,
+        height: 338,
+        fit: "cover",
+        priority: 2
+      })
+      .then((u) => {
+        settledFlags.offB = true;
+        return u;
+      });
+    const vis1 = rescaler
+      .rescaleHomeArtwork("https://art/visible-1.jpg", {
+        width: 220,
+        height: 338,
+        fit: "cover",
+        priority: 0
+      })
+      .then((u) => {
+        settledFlags.vis1 = true;
+        return u;
+      });
+    const vis2 = rescaler
+      .rescaleHomeArtwork("https://art/visible-2.jpg", {
+        width: 220,
+        height: 338,
+        fit: "cover",
+        priority: 0
+      })
+      .then((u) => {
+        settledFlags.vis2 = true;
+        return u;
+      });
+
+    keydownHandler();
+    const postedMsgs = createdWorkers.flatMap((w) => w.posted.map((msg) => ({ w, msg })));
+    assert.equal(postedMsgs.length, 4);
+    // Deliver offscreen completions FIRST, then visible completions.
+    postedMsgs.forEach(({ w, msg }) => {
+      w.onmessage({
+        data: { id: msg.id, ok: true, dataUrl: `data:image/jpeg;base64,${msg.id}` }
+      });
+    });
+
+    // Wait past 355ms + 20ms pacing (< 1150ms): visible priority-0 settle, offscreen priority-2 hold.
+    await new Promise((r) => setTimeout(r, 430));
+    assert.equal(settledFlags.vis1, true, "priority-0 visible-1 must drain after 355ms");
+    assert.equal(settledFlags.vis2, true, "priority-0 visible-2 must drain at 20ms after vis1");
+    assert.equal(settledFlags.offA, false, "priority-2 offscreen-a must wait until 1150ms rest");
+    assert.equal(settledFlags.offB, false, "priority-2 offscreen-b must wait until 1150ms rest");
+
+    // Promote offscreen-a via priority: 0 before 1150ms rest; must settle on next tick without re-fetch.
+    const postCountBeforePromote = createdWorkers.reduce((sum, w) => sum + w.posted.length, 0);
+    const promotedA = rescaler.rescaleHomeArtwork("https://art/offscreen-a.jpg", {
+      width: 220,
+      height: 338,
+      fit: "cover",
+      priority: 0
+    });
+    assert.equal(
+      createdWorkers.reduce((sum, w) => sum + w.posted.length, 0),
+      postCountBeforePromote,
+      "promoting a waiting completion must not dispatch a duplicate worker job"
+    );
+    await new Promise((r) => setTimeout(r, 45));
+    assert.equal(settledFlags.offA, true, "promoted offscreen-a must drain on the very next tick");
+    assert.equal(await promotedA, await offA);
+    assert.equal(
+      settledFlags.offB,
+      false,
+      "unpromoted offscreen-b must still wait for 1150ms rest"
+    );
+
+    // Wait past 1150ms quiet; restDrainTimer hands offscreen-b to rAF and resolves it.
+    await new Promise((r) => setTimeout(r, 760));
+    assert.equal(rafQueue.length, 1, "remaining offscreen-b must schedule rAF once 1150ms clears");
+    rafQueue.shift()();
+    assert.ok((await offB).startsWith("data:image/jpeg;base64,"));
+    assert.ok((await vis1).startsWith("data:image/jpeg;base64,"));
+    assert.ok((await vis2).startsWith("data:image/jpeg;base64,"));
+
+    rescaler.resetHomeArtworkRescaler();
+  } finally {
+    globalThis.Worker = origWorker;
+    globalThis.OffscreenCanvas = origOffscreenCanvas;
+    globalThis.createImageBitmap = origCreateImageBitmap;
+    globalThis.URL.createObjectURL = origCreateObjectURL;
+    globalThis.URL.revokeObjectURL = origRevokeObjectURL;
+    globalThis.Blob = origBlob;
+    if (origDocument === undefined) delete globalThis.document;
+    else globalThis.document = origDocument;
+    if (origAddEventListener === undefined) delete globalThis.addEventListener;
+    else globalThis.addEventListener = origAddEventListener;
+    if (origRaf === undefined) delete globalThis.requestAnimationFrame;
+    else globalThis.requestAnimationFrame = origRaf;
+    if (origCancelRaf === undefined) delete globalThis.cancelAnimationFrame;
+    else globalThis.cancelAnimationFrame = origCancelRaf;
     if (origUserAgent) Object.defineProperty(globalThis.navigator, "userAgent", origUserAgent);
     if (origDeviceMemory)
       Object.defineProperty(globalThis.navigator, "deviceMemory", origDeviceMemory);
