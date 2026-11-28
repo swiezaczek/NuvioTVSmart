@@ -237,6 +237,15 @@ export const HERO_IMAGE_PRELOAD_CACHE_LIMIT = 32;
 
 export const HERO_BACKDROP_BITMAP_CACHE_LIMIT = 4;
 
+export const HERO_BACKDROP_BITMAP_CACHE_LIMIT_MODERN = 8;
+
+export function getHeroBackdropBitmapCacheLimit(profile = getTvRuntimePerformanceProfile()) {
+  if (!profile?.isTvRuntime || profile.isLegacyTvRuntime || profile.isPerformanceConstrained) {
+    return HERO_BACKDROP_BITMAP_CACHE_LIMIT;
+  }
+  return HERO_BACKDROP_BITMAP_CACHE_LIMIT_MODERN;
+}
+
 // Android's hero Coil request is 220x100dp, which is the 440x200 box the web
 // hero paints at TV density. Addon logos can be 1664x437 or larger, and the
 // Tizen renderer decodes an <img> at natural size for every hero swap.
@@ -398,7 +407,7 @@ function heroLogoDimensions(bytes) {
   return jpegDimensions(bytes);
 }
 self.onmessage = async (event) => {
-  const { id, kind, url, resizeWidth, targetWidth, targetHeight, maxSmallWidth, maxSmallHeight, timeoutMs } = event.data || {};
+  const { id, kind, url, resizeWidth, targetWidth, targetHeight, maxSmallWidth, maxSmallHeight, timeoutMs, preferDataUrl } = event.data || {};
   const hasTimeout = Number(timeoutMs) > 0 && typeof AbortController === "function";
   const controller = hasTimeout ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), Number(timeoutMs)) : 0;
@@ -436,6 +445,15 @@ self.onmessage = async (event) => {
         const canvas = new OffscreenCanvas(w, h);
         canvas.getContext("2d", { alpha: true, willReadFrequently: true }).drawImage(bitmap, 0, 0, w, h);
         const outBlob = await canvas.convertToBlob({ type: "image/webp", quality: 0.92 });
+        if (preferDataUrl && typeof FileReaderSync === "function") {
+          try {
+            const dataUrl = new FileReaderSync().readAsDataURL(outBlob);
+            if (dataUrl) {
+              self.postMessage({ id, ok: true, dataUrl });
+              return;
+            }
+          } catch (_) {}
+        }
         self.postMessage({ id, ok: true, blob: outBlob });
       } finally {
         if (bitmap) bitmap.close();
@@ -494,7 +512,7 @@ function getHeroBackdropWorker() {
     workerUrl = globalThis.URL.createObjectURL(new Blob([HERO_BACKDROP_WORKER_SOURCE], { type: "text/javascript" }));
     const worker = new globalThis.Worker(workerUrl);
     worker.onmessage = (event) => {
-      const { id, ok, bitmap, blob, skippedSmall, width, height } = event.data || {};
+      const { id, ok, bitmap, blob, dataUrl, skippedSmall, width, height } = event.data || {};
       const job = heroBackdropWorkerJobs.get(id);
       if (!job) {
         bitmap?.close?.();
@@ -502,7 +520,7 @@ function getHeroBackdropWorker() {
       }
       heroBackdropWorkerJobs.delete(id);
       if (ok && job.kind === "logo") {
-        job.resolve(skippedSmall ? { skippedSmall: true, width, height } : { blob });
+        job.resolve(skippedSmall ? { skippedSmall: true, width, height } : dataUrl ? { dataUrl } : { blob });
         return;
       }
       if (ok && bitmap) {
@@ -611,7 +629,7 @@ export function preloadHeroBackdrop(src) {
     heroBackdropBitmapCache.set(normalized, cached);
     return cached;
   }
-  if (heroBackdropBitmapCache.size >= HERO_BACKDROP_BITMAP_CACHE_LIMIT) {
+  if (heroBackdropBitmapCache.size >= getHeroBackdropBitmapCacheLimit()) {
     const oldestSource = heroBackdropBitmapCache.keys().next().value;
     const oldest = heroBackdropBitmapCache.get(oldestSource);
     heroBackdropBitmapCache.delete(oldestSource);
@@ -745,7 +763,7 @@ function trimHeroLogoRescaleCache() {
     if (!entry.settled || isHeroLogoPainted(entry.objectUrl)) {
       continue;
     }
-    if (entry.objectUrl) {
+    if (entry.objectUrl && String(entry.objectUrl).startsWith("blob:")) {
       globalThis.URL.revokeObjectURL(entry.objectUrl);
     }
     heroLogoRescaleCache.delete(source);
@@ -758,8 +776,8 @@ function fallbackSource(src) {
 
 /**
  * Resolve the url the hero logo should paint from. On eligible Tizen sets it is
- * a bounded WebP blob; everywhere else, and for every failure or unsupported
- * format, it is the original source loaded by preloadImageSource.
+ * a bounded WebP data URL (or blob fallback); everywhere else, and for every
+ * failure or unsupported format, it is the original source loaded by preloadImageSource.
  */
 export function preloadHeroLogo(src) {
   const normalized = String(src || "").trim();
@@ -775,7 +793,15 @@ export function preloadHeroLogo(src) {
 
   const entry = { promise: null, objectUrl: "", settled: false };
   const target = heroLogoTargetSize();
-  const finishRescaledBlob = (resized) => {
+  const finishRescaledPayload = (resized) => {
+    if (typeof resized === "string") {
+      if (heroLogoRescaleCache.get(normalized) !== entry) {
+        return { loaded: true, src: normalized };
+      }
+      entry.objectUrl = resized;
+      entry.settled = true;
+      return { loaded: true, src: resized };
+    }
     const objectUrl = globalThis.URL.createObjectURL(resized);
     if (heroLogoRescaleCache.get(normalized) !== entry) {
       globalThis.URL.revokeObjectURL(objectUrl);
@@ -801,7 +827,8 @@ export function preloadHeroLogo(src) {
           targetHeight: target.height,
           maxSmallWidth: smallWidthThreshold,
           maxSmallHeight: smallHeightThreshold,
-          timeoutMs: HERO_IMAGE_PRELOAD_TIMEOUT_MS
+          timeoutMs: HERO_IMAGE_PRELOAD_TIMEOUT_MS,
+          preferDataUrl: true
         });
       } catch (error) {
         heroBackdropWorkerJobs.delete(id);
@@ -810,11 +837,12 @@ export function preloadHeroLogo(src) {
       }
     })
       .then((result) => {
-        if (result?.skippedSmall || !result?.blob) {
+        const payload = result?.dataUrl || result?.blob;
+        if (result?.skippedSmall || !payload) {
           entry.settled = true;
           return fallbackSource(normalized);
         }
-        return finishRescaledBlob(result.blob);
+        return finishRescaledPayload(payload);
       })
       .catch(() => {
         entry.settled = true;
@@ -862,7 +890,7 @@ export function preloadHeroLogo(src) {
         const canvas = new globalThis.OffscreenCanvas(width, height);
         canvas.getContext("2d", { alpha: true }).drawImage(bitmap, 0, 0, width, height);
         const resized = await canvas.convertToBlob({ type: "image/webp", quality: 0.92 });
-        return finishRescaledBlob(resized);
+        return finishRescaledPayload(resized);
       } finally {
         bitmap.close?.();
       }
@@ -880,7 +908,7 @@ export function preloadHeroLogo(src) {
 /** Drop every cached hero logo blob. Used when the Home DOM is discarded. */
 export function resetHeroLogoRescaleCache() {
   heroLogoRescaleCache.forEach((entry) => {
-    if (entry.objectUrl) {
+    if (entry.objectUrl && String(entry.objectUrl).startsWith("blob:")) {
       globalThis.URL?.revokeObjectURL?.(entry.objectUrl);
     }
   });

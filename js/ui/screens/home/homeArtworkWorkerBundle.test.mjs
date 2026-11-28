@@ -197,7 +197,8 @@ test("minified HERO_BACKDROP_WORKER_SOURCE executes JPEG/PNG/WebP backdrop and l
       targetWidth: 440,
       targetHeight: 200,
       maxSmallWidth: 1000,
-      maxSmallHeight: 500
+      maxSmallHeight: 500,
+      preferDataUrl: true
     }
   });
   await workerContext.self.onmessage({
@@ -229,11 +230,52 @@ test("minified HERO_BACKDROP_WORKER_SOURCE executes JPEG/PNG/WebP backdrop and l
   assert.equal(messages[1].ok, true, "small WebP backdrop decoded in minified worker");
   assert.equal(bitmapOptions[1], null, "already-small backdrop skips resizeWidth");
   assert.equal(messages[2].ok, true, "large PNG logo rescaled in minified worker");
-  assert.ok(messages[2].blob, "rescaled logo returns WebP blob");
+  assert.ok(messages[2].blob, "falls back to WebP blob when FileReaderSync is absent");
   assert.equal(messages[3].ok, true);
   assert.equal(messages[3].skippedSmall, true, "small PNG logo skipped before decode");
   assert.equal(messages[4].ok, true);
   assert.equal(messages[4].skippedSmall, true, "animated WebP logo skipped safely");
+
+  // With FileReaderSync present, preferDataUrl returns a data: URL instead of a Blob.
+  const dataUrlMessages = [];
+  const dataUrlContext = vm.createContext({
+    Blob,
+    Uint8Array,
+    setTimeout,
+    clearTimeout,
+    FileReaderSync: class FileReaderSync {
+      readAsDataURL() {
+        return "data:image/webp;base64,UklGRg==";
+      }
+    },
+    self: { postMessage: (msg) => dataUrlMessages.push(msg) },
+    fetch: async (url) => makeBlobResponse(files.get(url)),
+    createImageBitmap: async () => ({ width: 440, height: 110, close() {} }),
+    OffscreenCanvas: class OffscreenCanvas {
+      getContext() {
+        return { drawImage() {} };
+      }
+      async convertToBlob() {
+        return { type: "image/webp", size: 12 };
+      }
+    }
+  });
+  vm.runInContext(workerSource, dataUrlContext);
+  await dataUrlContext.self.onmessage({
+    data: {
+      id: 6,
+      kind: "logo",
+      url: "https://cdn.example/logo-large.png",
+      targetWidth: 440,
+      targetHeight: 200,
+      maxSmallWidth: 1000,
+      maxSmallHeight: 500,
+      preferDataUrl: true
+    }
+  });
+  assert.equal(dataUrlMessages.length, 1);
+  assert.equal(dataUrlMessages[0].ok, true);
+  assert.equal(dataUrlMessages[0].dataUrl, "data:image/webp;base64,UklGRg==");
 });
 
 test("minified tvPosterRescaler WORKER_SOURCE executes JPEG/WebP/PNG jobs with zero ReferenceError", async () => {

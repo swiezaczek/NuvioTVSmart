@@ -353,3 +353,31 @@ test("the hero swap paints the bounded blob and keeps the original source", asyn
   assert.equal(fetches, 1, "the processed logo is not fetched again");
   assert.equal(parent.children.length, 1, "the transition ghost is gone");
 });
+
+test("hero backdrop bitmap cache limit is 8 on modern non-constrained TVs and 4 on constrained/legacy/non-TV", () => {
+  assert.equal(
+    mod.getHeroBackdropBitmapCacheLimit({
+      isTvRuntime: true,
+      isLegacyTvRuntime: false,
+      isPerformanceConstrained: false
+    }),
+    8
+  );
+  assert.equal(
+    mod.getHeroBackdropBitmapCacheLimit({
+      isTvRuntime: true,
+      isLegacyTvRuntime: false,
+      isPerformanceConstrained: true
+    }),
+    4
+  );
+  assert.equal(
+    mod.getHeroBackdropBitmapCacheLimit({
+      isTvRuntime: true,
+      isLegacyTvRuntime: true,
+      isPerformanceConstrained: false
+    }),
+    4
+  );
+  assert.equal(mod.getHeroBackdropBitmapCacheLimit({ isTvRuntime: false }), 4);
+});
