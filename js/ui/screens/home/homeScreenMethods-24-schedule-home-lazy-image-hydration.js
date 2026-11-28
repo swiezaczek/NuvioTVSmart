@@ -318,13 +318,13 @@ export function createHomeScreenMethods24() {
       // Android prefetches the visible window plus a small row/card neighborhood.
       // Keep the browser's DOM-mounted rows from turning every vertical focus
       // move into a burst of eager image requests. During active D-pad stepping
-      // on TV, keep visible cards plus 1 row ahead (300px) and 3 horizontal
-      // focused-row cards prefetched and defer deeper neighbor rows until input
-      // rests for 1450ms.
-      const verticalMargin = isActiveDpadStepping ? 300 : useBoundedTvHydration ? 540 : constrained ? 720 : 1200;
-      const horizontalMargin = isActiveDpadStepping ? 300 : useBoundedTvHydration ? 480 : constrained ? 640 : 1000;
+      // on TV, prefetch 2+ horizontal focused-row cards and next-row edges into
+      // workers (offscreen completions wait in RAM until rest) and defer full
+      // neighbor rows until input rests for 1450ms.
+      const verticalMargin = isActiveDpadStepping ? 180 : useBoundedTvHydration ? 540 : constrained ? 720 : 1200;
+      const horizontalMargin = isActiveDpadStepping ? 260 : useBoundedTvHydration ? 480 : constrained ? 640 : 1000;
       const focusedRow = Boolean(anchorRow && anchorRow === anchorNode?.closest?.(HOME_LAZY_IMAGE_ROW_SELECTOR));
-      const focusedRowMargin = focusedRow ? Math.max(640, Math.round(Number(anchorNode?.offsetWidth || 248) * 3.0)) : horizontalMargin;
+      const focusedRowMargin = focusedRow ? Math.max(540, Math.round(Number(anchorNode?.offsetWidth || 248) * 2.2)) : horizontalMargin;
       const pendingLoads = [];
       candidateRows.forEach(({ row, isFocusedRow, images }) => {
         // Android's LazyRow loads the visible cards plus a small prefetch

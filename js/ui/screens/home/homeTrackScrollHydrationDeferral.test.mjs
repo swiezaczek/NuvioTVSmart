@@ -677,7 +677,7 @@ test("bounded TV hydration and viewport scroll handler defer past 375ms post-inp
   }
 });
 
-test("bounded TV hydration prefetches 1 row + 3 horizontal cards ahead and far neighbor rows after 1450ms quiet", async () => {
+test("bounded TV hydration prefetches next-row edge + 2+ horizontal cards ahead and far neighbor rows after 1450ms quiet", async () => {
   const { context } = buildCombinedHarness();
   const viewport = {
     isConnected: true,
@@ -724,12 +724,12 @@ test("bounded TV hydration prefetches 1 row + 3 horizontal cards ahead and far n
   };
 
   const visible = makeRowWithCard(400, "https://art/visible-row.jpg", 120);
-  // Horizontal lookahead on focused row: left=2600 is 680px past right=1920, inside Math.max(640, 248*3.0=744).
-  const lookaheadCard = makeRowWithCard(400, "https://art/lookahead-card.jpg", 2600);
+  // Horizontal lookahead on focused row: left=2320 is 400px past right=1920, inside Math.max(540, 248*2.2=546).
+  const lookaheadCard = makeRowWithCard(400, "https://art/lookahead-card.jpg", 2320);
   lookaheadCard.img.closest = (sel) => (sel === ROW_SELECTOR ? visible.row : null);
-  // top=1200 is 120px below 1080: inside 300px ahead-row prefetch margin during stepping!
+  // top=1200 is 120px below 1080: inside 180px ahead-row prefetch margin during stepping!
   const nextRow = makeRowWithCard(1200, "https://art/next-row.jpg");
-  // top=1500 is 420px below 1080: outside 300px stepping margin, inside normal 540px margin.
+  // top=1500 is 420px below 1080: outside 180px stepping margin, inside normal 540px margin.
   const farNeighbor = makeRowWithCard(1500, "https://art/far-neighbor-row.jpg");
   const sibling3 = {
     querySelector: (sel) => (sel.includes("data-src") ? lookaheadCard.img : null),
@@ -775,21 +775,21 @@ test("bounded TV hydration prefetches 1 row + 3 horizontal cards ahead and far n
   assert.equal(
     lookaheadCard.img.src,
     "https://art/lookahead-card.jpg",
-    "horizontal sibling lookahead + 744px focusedRowMargin must prefetch 3 cards ahead"
+    "horizontal sibling lookahead + 546px focusedRowMargin must prefetch 2+ cards ahead"
   );
 
-  // Full vertical scan (cross-row / initial) prefetches 1 row ahead (300px) and defers far neighbor until 1450ms quiet.
+  // Full vertical scan (cross-row / initial) prefetches next-row edge (180px) and defers far neighbor until 1450ms quiet.
   screen.lastHomeLazyImageHydrationAnchorRow = null;
   screen.hydrateHomeLazyImages(anchor, { forceFullScan: true });
   assert.equal(
     nextRow.img.src,
     "https://art/next-row.jpg",
-    "1 row ahead (120px below fold) must prefetch immediately under 300px vertical stepping margin"
+    "next-row edge (120px below fold) must prefetch immediately under 180px vertical stepping margin"
   );
   assert.equal(
     farNeighbor.img.src,
     "",
-    "420px-offscreen far row must stay deferred under 300px active stepping margin"
+    "420px-offscreen far row must stay deferred under 180px active stepping margin"
   );
   assert.ok(
     screen.homeLazyImageQuietPrefetchTimer,
