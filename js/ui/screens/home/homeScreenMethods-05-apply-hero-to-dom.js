@@ -204,7 +204,11 @@ export function createHomeScreenMethods05() {
       }
       if (!this.heroDescriptionAutoScroller) {
         this.heroDescriptionAutoScroller = createHeroDescriptionAutoScroller({
-          isPaused: () => this.isTrailerPlaying?.() === true || this.pauseOverlayVisible === true,
+          isPaused: () =>
+            this.isTrailerPlaying?.() === true ||
+            this.pauseOverlayVisible === true ||
+            Boolean(this.isModernHydrationScrollActive?.()) ||
+            (Number(this.lastHomeInputAt || 0) > 0 && Date.now() - Number(this.lastHomeInputAt || 0) < 1600),
           onHoldChange: (holding) => {
             this.heroDescriptionScrollHolding = Boolean(holding);
           }
@@ -225,6 +229,7 @@ export function createHomeScreenMethods05() {
         });
       };
       if (Number(this.lastHomeInputAt || 0) > 0 && (this.isLegacyTvRuntime?.() || this.shouldUseBoundedHomeImageHydration?.())) {
+        this.heroDescriptionAutoScroller?.stop();
         this.heroDescriptionAutoScrollDelayTimer = setTimeout(() => {
           this.heroDescriptionAutoScrollDelayTimer = null;
           scheduleApplyFrame();

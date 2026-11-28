@@ -165,6 +165,8 @@ test("applyHeroDescriptionAutoScroll defers rAF by 1500ms during active TV navig
     .replace(/^export /gm, "");
 
   const applyCalls = [];
+  const stopCalls = [];
+  let scrollerOptions = null;
   const rafQueue = [];
   const context = vm.createContext({
     setTimeout,
@@ -176,16 +178,20 @@ test("applyHeroDescriptionAutoScroll defers rAF by 1500ms during active TV navig
     cancelAnimationFrame: () => {},
     ensureHeroMdbListRatings: () => {},
     registerHomeDomNodes: () => {},
-    createHeroDescriptionAutoScroller: () => ({
-      apply: (node, enabled) => applyCalls.push({ node, enabled }),
-      stop: () => {}
-    }),
+    createHeroDescriptionAutoScroller: (opts) => {
+      scrollerOptions = opts;
+      return {
+        apply: (node, enabled) => applyCalls.push({ node, enabled }),
+        stop: () => stopCalls.push(Date.now())
+      };
+    },
     internals: {
       ScreenUtils: { hide: () => {} }
     }
   });
   vm.runInContext(`${raw05}\nglobalThis.methods = createHomeScreenMethods05();`, context);
 
+  let hydrationScrollActive = false;
   const descNode = { isConnected: true };
   const screen = Object.assign(Object.create(context.methods), {
     container: {
@@ -194,17 +200,25 @@ test("applyHeroDescriptionAutoScroll defers rAF by 1500ms during active TV navig
     layoutPrefs: { heroDescriptionAutoScrollEnabled: true },
     lastHomeInputAt: Date.now(),
     shouldUseBoundedHomeImageHydration: () => true,
-    isLegacyTvRuntime: () => false
+    isLegacyTvRuntime: () => false,
+    isModernHydrationScrollActive: () => hydrationScrollActive
   });
 
-  // Initial call schedules 1500ms timer instead of immediate rAF.
+  // Initial call stops any active scroller and schedules 1500ms timer instead of immediate rAF.
   screen.applyHeroDescriptionAutoScroll();
+  assert.equal(stopCalls.length, 1, "must stop active auto-scroller before deferring TV re-entry");
   assert.equal(rafQueue.length, 0, "must not schedule rAF before 1500ms TV settle delay");
   assert.ok(screen.heroDescriptionAutoScrollDelayTimer);
+  assert.equal(
+    scrollerOptions.isPaused(),
+    true,
+    "auto-scroller isPaused() must pause during <1600ms home input window"
+  );
 
-  // Rapid re-entry cancels the previous timer and resets the 1500ms wait.
+  // Rapid re-entry stops again, cancels the previous timer, and resets the 1500ms wait.
   const firstTimer = screen.heroDescriptionAutoScrollDelayTimer;
   screen.applyHeroDescriptionAutoScroll();
+  assert.equal(stopCalls.length, 2);
   assert.notEqual(screen.heroDescriptionAutoScrollDelayTimer, firstTimer);
 
   // Unmount (container cleared) before 1500ms fires makes timer a clean no-op.
@@ -223,4 +237,15 @@ test("applyHeroDescriptionAutoScroll defers rAF by 1500ms during active TV navig
   rafQueue.shift()();
   assert.equal(applyCalls.length, 1);
   assert.equal(applyCalls[0].node, descNode);
+
+  // Once input ages >= 1600ms and hydration scroll is inactive, isPaused() clears;
+  // active modern hydration scroll pauses again.
+  screen.lastHomeInputAt = Date.now() - 1700;
+  assert.equal(scrollerOptions.isPaused(), false, "isPaused() must clear after 1600ms rest");
+  hydrationScrollActive = true;
+  assert.equal(
+    scrollerOptions.isPaused(),
+    true,
+    "isPaused() must pause while modern hydration scroll is active"
+  );
 });
